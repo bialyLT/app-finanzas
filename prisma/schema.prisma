@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MovementKind {
+  INCOME
+  EXPENSE
+}
+
+model Category {
+  id        String       @id @default(cuid())
+  name      String
+  kind      MovementKind
+  createdAt DateTime     @default(now())
+  movements Movement[]
+
+  @@unique([name, kind])
+}
+
+model Movement {
+  id          String       @id @default(cuid())
+  kind        MovementKind
+  amount      Float
+  description String?
+  date        DateTime
+  isFixed     Boolean      @default(false)
+  categoryId  String
+  category    Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt   DateTime     @default(now())
+
+  @@index([date])
+  @@index([kind])
+  @@index([categoryId])
+}
