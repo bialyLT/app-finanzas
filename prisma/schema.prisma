@@ -1,3 +1,88 @@
+// ═════════════════════════════════════════════════════════════════════════════
+// MODELO DE DATOS — Mis Finanzas
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// LA REGLA CENTRAL DEL MODELO
+// ─────────────────────────────────────────────────────────────────────────────
+// Un movimiento de plata entre DOS BOLSILLOS TUYOS nunca es un ingreso ni un
+// gasto. Es una TRANSFERENCIA.
+//
+// Suena obvio y es exactamente lo que el modelo anterior no podía expresar:
+// tenía sólo `INCOME` y `EXPENSE`, así que pagar la tarjeta, pasarte plata del
+// banco al efectivo o cobrar un préstamo sólo se podían registrar como gasto o
+// ingreso — y las dos cosas son mentira. El resultado es que los números de la
+// app describían una economía que no era la tuya.
+//
+// EL CASO QUE LO EXPONE (números reales de este proyecto):
+//   Sueldo 800.000 · Gastos 600.000 · Préstamo 500.000 a TNA 60% en 12 cuotas
+//
+//   Modelo viejo: la cuota entera (≈55.000) es un "gasto"  → ahorro = 49,51%
+//   Modelo nuevo:  de esa cuota, apenas el 26,14% es interés real.
+//                  El 73,86% restante es amortización de capital: bajás deuda,
+//                  no perdés plata.
+//                  → ahorro real = 21,88%
+//
+// La diferencia entre 49,51% y 21,88% no es un detalle de redondeo: es la
+// diferencia entre creerte rico y serlo.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// LOS TRES TIPOS DE MOVIMIENTO
+// ─────────────────────────────────────────────────────────────────────────────
+//   INCOME    → la plata entra al sistema desde afuera   (sueldo, venta)
+//   EXPENSE   → la plata sale del sistema hacia afuera   (supermercado, interés)
+//   TRANSFER  → la plata se mueve DENTRO del sistema     (pagar la tarjeta,
+//                                                         pasarme a efectivo)
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// CÓMO SE MODELA UN PRÉSTAMO Y UNA TARJETA
+// ─────────────────────────────────────────────────────────────────────────────
+// No son "tipos de gasto": son CUENTAS, y son cuentas de PASIVO (saldo negativo).
+//
+//   Tarjeta de crédito
+//     Compra con tarjeta  → EXPENSE con accountId = la tarjeta.
+//                           La tarjeta queda en −X: debés X.
+//     Pagás el resumen    → TRANSFER del banco a la tarjeta.
+//                           Baja el banco y baja la deuda. NO es un gasto:
+//                           ya lo registraste cuando compraste. Contarlo dos
+//                           veces es el error más común de las apps de finanzas.
+//
+//   Préstamo
+//     Te lo desembolsan   → TRANSFER de la cuenta préstamo a tu banco.
+//                           El préstamo queda en −500.000 y el banco sube.
+//                           Patrimonio neto: sin cambios. Cobrar un préstamo
+//                           NO es un ingreso.
+//     Pagás la cuota      → DOS movimientos, que es lo que realmente pasa:
+//                           · TRANSFER banco → préstamo  (amortizás capital)
+//                           · EXPENSE desde el banco      (el interés, que sí
+//                                                           es plata perdida)
+//
+// El interés es el único costo real del préstamo, y por eso es lo único que
+// aparece como gasto. Todo lo demás es mover plata entre tus propios bolsillos.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// LOS DOS ERRORES DE PRECISIÓN QUE ESTE ESQUEMA ELIMINA
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Float para plata. `Float` es IEEE-754 binario: no puede representar 0,10
+//    de forma exacta. Acumulado en cientos de movimientos, el saldo deja de
+//    cerrar y la app "pierde" centavos. Acá: Decimal(18,2) — aritmética exacta,
+//    la misma que usa cualquier sistema contable.
+//    (Decimal(18,2) llega hasta 9.999.999.999.999.999,99. Un `Int` de centavos
+//     se queda corto en $21.474.836,47 — ridículo en pesos argentinos.)
+//
+// 2. `DateTime` para fechas de calendario. Una fecha de calendario no tiene
+//    hora ni zona horaria: "el alquiler vence el 1 de noviembre" es cierto en
+//    Buenos Aires y en Tokio. Guardarla como instante hace que un gasto del
+//    1 de noviembre aparezca en octubre si el servidor corre en UTC.
+//    Acá: @db.Date — sin hora, sin zona, sin ambigüedad.
+//
+//    Verificado en esta máquina (TZ America/Buenos_Aires, UTC−3):
+//      · new Date("2026-10-15") se mostraba como "14 oct" — un día menos.
+//      · new Date("2026-11-01T00:00:00Z").getDate() devolvía 31 → el gasto de
+//        noviembre se contaba en octubre.
+//      · El mes de octubre abarcaba [01/10 03:00Z … 01/11 02:59:59Z], así que
+//        TODO el 1 de noviembre entraba en el balance de octubre.
+// ═════════════════════════════════════════════════════════════════════════════
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,33 +92,185 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Tipo de cuenta. Los dos primeros son ACTIVOS (plata tuya); los dos últimos
+/// son PASIVOS (plata que debés).
+enum AccountKind {
+  /// Efectivo, billetera, caja de ahorro en pesos.
+  CASH
+  /// Cuenta bancaria, billetera virtual (Mercado Pago, Ualá).
+  BANK
+  /// Tarjeta de crédito. Es una cuenta de deuda, no un medio de pago mágico.
+  CREDIT_CARD
+  /// Préstamo, crédito, financiación en cuotas.
+  LOAN
+}
+
+/// Tipo de movimiento. Ver la explicación de arriba.
 enum MovementKind {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+/// Tipo de categoría. Es un enum SEPARADO de MovementKind a propósito: así es
+/// imposible en el tipo crear una categoría de tipo TRANSFER. Las
+/// transferencias no se categorizan porque no son ni ingreso ni gasto —
+/// y el sistema no te debería dejar decir lo contrario.
+enum CategoryKind {
   INCOME
   EXPENSE
 }
 
-model Category {
-  id        String       @id @default(cuid())
-  name      String
-  kind      MovementKind
-  createdAt DateTime     @default(now())
-  movements Movement[]
+// ─────────────────────────────────────────────────────────────────────────────
+// Account — los bolsillos
+// ─────────────────────────────────────────────────────────────────────────────
 
-  @@unique([name, kind])
+/// Un "bolsillo": dónde está tu plata o cuánta debés.
+///
+/// Las cuentas NO se borran, se ARCHIVAN. Borrar una cuenta dejaría sus
+/// movimientos huérfanos y con ellos se iría la explicación de cómo llegaste
+/// a tu patrimonio actual. El historial es el producto.
+model Account {
+  id String @id @default(cuid())
+
+  /// Nombre visible: "Efectivo", "Banco Galicia", "Visa Santander".
+  name String
+  kind AccountKind
+
+  /// Saldo inicial de la cuenta.
+  ///
+  /// Existe para que puedas empezar a usar la app HOY sin cargar tres años de
+  /// movimientos viejos. En un préstamo ya desembolsado, acá va lo que todavía
+  /// debés (en negativo).
+  openingBalance Decimal @db.Decimal(18,2) @default(0)
+
+  // ── Parámetros del préstamo. Sólo se usan si kind = LOAN ──────────────────
+
+  /// Monto original que te prestaron.
+  principal Decimal? @db.Decimal(18,2)
+
+  /// Tasa Nominal Anual en PORCENTAJE (60 significa 60% TNA, no 0,60).
+  ///
+  /// Se guarda el porcentaje y no la fracción porque es como lo dice el banco:
+  /// "TNA 60%". Si guardásemos 0,60, alguien iba a asumir que 60 es 60.
+  tnaPercent Decimal? @db.Decimal(7,4)
+
+  /// Cuántas cuotas pactaste en total.
+  installmentCount Int?
+
+  /// Fecha de la primera cuota. Las siguientes se calculan sumando meses.
+  firstInstallmentDate DateTime? @db.Date
+
+  /// Las cuentas archivadas no aparecen al cargar movimientos, pero su historia
+  /// sigue contando en los totales.
+  archived Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Movimientos que SALEN de esta cuenta (o donde entra un ingreso).
+  movements Movement[] @relation("MovementFromAccount")
+
+  /// Transferencias que LLEGAN a esta cuenta.
+  incomingTransfers Movement[] @relation("MovementToAccount")
+
+  /// El nombre tiene que ser único: dos cuentas llamadas "Efectivo" harían
+  /// que el usuario no sepa cuál está eligiendo.
+  @@unique([name])
+  @@index([archived, kind])
 }
 
-model Movement {
-  id          String       @id @default(cuid())
-  kind        MovementKind
-  amount      Float
-  description String?
-  date        DateTime
-  isFixed     Boolean      @default(false)
-  categoryId  String
-  category    Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  createdAt   DateTime     @default(now())
+// ─────────────────────────────────────────────────────────────────────────────
+// Category — para qué fue
+// ─────────────────────────────────────────────────────────────────────────────
 
-  @@index([date])
+/// Categoría de un movimiento. Sólo aplica a INCOME y EXPENSE.
+model Category {
+  id String @id @default(cuid())
+
+  /// El nombre tal como lo escribió la persona: "Comida".
+  name String
+
+  /// El nombre normalizado (sin mayúsculas, sin acentos, sin espacios de más):
+  /// "comida".
+  ///
+  /// POR QUÉ EXISTE ESTE CAMPO: el esquema anterior tenía `@@unique([name])`,
+  /// que en Postgres es SENSIBLE A MAYÚSCULAS. Escribir "Comida" y después
+  /// "comida" creaba DOS categorías distintas, y el gráfico de gastos partía
+  /// el mismo concepto en dos porciones. Contra eso se agrega una columna
+  /// normalizada con el índice único encima. El nombre real se conserva para
+  /// mostrarlo; la deduplicación se hace sobre la versión normalizada.
+  normalizedName String
+
+  kind CategoryKind
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  movements Movement[]
+
+  @@unique([normalizedName])
   @@index([kind])
-  @@index([categoryId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Movement — la plata que se mueve
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Un movimiento de dinero.
+model Movement {
+  id String @id @default(cuid())
+
+  kind MovementKind
+
+  /// Monto SIEMPRE POSITIVO. El signo lo determina `kind`, no el número.
+  ///
+  /// Guardar el monto con signo permitiría estados imposibles: un EXPENSE de
+  /// −500 sería un gasto que suma plata. Manteniendo el signo en el tipo, el
+  /// dato no puede contradecirse a sí mismo. Hay un CHECK en la base que lo
+  /// hace cumplir (ver la migración).
+  amount Decimal @db.Decimal(18,2)
+
+  /// Fecha de CALENDARIO: sin hora, sin zona horaria. Ver la nota de arriba.
+  date DateTime @db.Date
+
+  description String @default("")
+
+  /// Categoría. Obligatoria en INCOME y EXPENSE; prohibida en TRANSFER.
+  /// `onDelete: SetNull` porque borrar una categoría no debería borrar el
+  /// movimiento: el gasto existió aunque ya no te interese cómo lo agrupaste.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  /// Cuenta de origen:
+  ///   INCOME   → dónde ENTRA la plata
+  ///   EXPENSE  → de dónde SALE
+  ///   TRANSFER → de dónde SALE
+  ///
+  /// `onDelete: Restrict` es deliberado: la base se niega a borrar una cuenta
+  /// que tiene movimientos. La alternativa (Cascade) borraría tu historial sin
+  /// avisar, y SetNull dejaría movimientos sin cuenta — es decir, plata que
+  /// apareció de la nada.
+  accountId String
+  account   Account @relation("MovementFromAccount", fields: [accountId], references: [id], onDelete: Restrict)
+
+  /// Sólo TRANSFER: la cuenta de DESTINO.
+  /// En INCOME y EXPENSE es NULL (hay un CHECK que lo exige).
+  toAccountId String?
+  toAccount   Account? @relation("MovementToAccount", fields: [toAccountId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Índices pensados para las consultas reales de la app:
+  // ordenar por fecha, filtrar por tipo+mes, y calcular el saldo de una cuenta.
+  @@index([date])
+  @@index([kind, date])
+  @@index([accountId, date])
+  @@index([toAccountId, date])
+  @@index([categoryId, date])
 }
