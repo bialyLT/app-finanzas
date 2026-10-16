@@ -8,7 +8,7 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 
 ## Estado verificado (2026-10-16)
 
-- `main` tiene el rediseño completo del modelo de dinero en 6 commits (infra, auth, dominio, UI, tests, docs).
+- `main` tiene el rediseño completo del modelo de dinero en 7 commits (infra, auth, dominio, UI, tests, docs), ya pusheados a `origin` (`bialyLT/app-finanzas`).
 - Batería verde: 90 tests de vitest (64 unitarios + 26 de integración), 52 aserciones de smoke, 6 flows de Maestro en ~4 minutos, build de producción limpio.
 - Fases 0, 1 y 2 cerradas; fases 4, 5, 6, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
@@ -71,7 +71,10 @@ Alternativas, en orden de costo/beneficio: Fase 5 (cuotas y resumen de tarjeta),
 
 - **Neon producción**: rotar credenciales y respaldar antes de migrar; falta el `DATABASE_URL` de producción.
 - **Vercel**: reactivar la protección de deployment (que pida autenticación) antes de volver a levantar el sitio.
-- **Push a GitHub desde esta máquina**: la autenticación inicial con GitHub la completa la persona (Git Credential Manager abre el flujo de login); una vez hecha, queda guardada para los siguientes pushes.
+
+## Acceso a GitHub (resuelto)
+
+El 2026-10-16 la credencial quedó guardada en el Administrador de Credenciales de Windows (usuario `bialyLT`; el repo usa el helper local `wincred`): los pushes desde esta máquina funcionan sin pasos extra. Para rehacerla: flujo de código de dispositivo de GitHub (client id `01ab8ac9400c4e429b23`) y `git credential approve`. Desde otra máquina hay que autenticarse ahí.
 
 ## Nota del entorno (no perseguir fantasmas)
 
