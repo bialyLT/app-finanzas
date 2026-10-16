@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -22,14 +22,43 @@ import {
   todayCalendar,
   type PeriodMode,
 } from "@/lib/dates";
-import { MOVEMENTS_MAX_ROWS, type MovementDTO, type MovementKindDTO } from "@/lib/finance";
+import type { PeriodTotalsDTO, ReportsResponse } from "@/lib/finance";
 import {
   centsToString,
   formatMoney,
   formatPercent,
-  sumAmounts,
   toCents,
 } from "@/lib/format";
+
+/**
+ * Análisis del período: tarjetas, torta por categoría y evolución por día.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LOS AGREGADOS VIENEN DEL SERVIDOR Y NO SE SUMAN ACÁ
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Antes esta pantalla pedía los movimientos a `/api/transactions` —topeada en
+ * `MOVEMENTS_MAX_ROWS`— y sumaba esa lista en el cliente. A partir del
+ * movimiento 501 las tarjetas, la torta y las barras quedaban subestimadas, y
+ * un cartel de aviso no arreglaba nada: el número mal seguía grande y arriba.
+ *
+ * Ahora todo sale de `/api/reports`, que agrega en la base con `groupBy` sobre
+ * el período COMPLETO (ver `lib/queries.ts`). El tope sigue existiendo donde
+ * tiene sentido —la lista que se muestra— y ningún número depende de él.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LOS FILTROS VIAJAN AL SERVIDOR
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Cuando el filtro se aplicaba en el cliente, filtrar era gratis: se recorría
+ * la lista que ya estaba en memoria. Con los agregados en la base, el filtro
+ * tiene que llegar ANTES del `groupBy` para que los números correspondan a lo
+ * que la pantalla está mostrando. De ahí que `categoryId` y `q` sean parámetros
+ * del request.
+ *
+ * El selector de categorías es la excepción: se puebla con todas las categorías
+ * con movimientos en el período, SIN los filtros de pantalla. Si se filtrara a
+ * sí mismo, elegir una categoría dejaría sólo esa opción en la lista y no
+ * habría forma de volver a agrandar el período.
+ */
 
 type ViewMode = PeriodMode;
 
@@ -44,6 +73,34 @@ const MODE_LABEL: Record<ViewMode, string> = {
   year: "Año",
 };
 
+/**
+ * Cuánto se espera antes de mandar la búsqueda de texto al servidor.
+ *
+ * Antes no hacía falta: la lista ya estaba en memoria y filtrarla era gratis.
+ * Ahora cada búsqueda es un viaje a la base, así que sin retardo se dispararía
+ * un request por tecla. 300 ms es el punto donde la mayoría de la gente ya
+ * terminó de escribir la palabra y la pantalla sigue sintiéndose instantánea.
+ */
+const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * Totales de un período vacío (y respaldo seguro del render).
+ *
+ * `stats` se calcula en cada render —los hooks no se saltean— aunque la
+ * pantalla no llegue a mostrar sus números: mientras carga o si la carga
+ * falló, lo que se ve es "Cargando…" o el error, nunca estas tarjetas.
+ * Coincide con lo que devuelve el servidor para un período sin movimientos,
+ * así que tampoco distorsiona ese caso.
+ */
+const EMPTY_TOTALS: PeriodTotalsDTO = {
+  income: "0.00",
+  expenses: "0.00",
+  transfers: "0.00",
+  incomeCount: 0,
+  expenseCount: 0,
+  transferCount: 0,
+};
+
 export default function AnalisisPage() {
   const [mode, setMode] = useState<ViewMode>("month");
 
@@ -53,22 +110,33 @@ export default function AnalisisPage() {
   // semana equivocada sin que nadie lo notara.
   const [anchor, setAnchor] = useState(() => todayCalendar());
 
-  const [movements, setMovements] = useState<MovementDTO[]>([]);
+  /**
+   * La respuesta de `/api/reports`, tal cual llega.
+   *
+   * Es UN estado y no cuatro (totales, torta, barras, categorías) porque la
+   * respuesta es atómica: guardarlos por separado permitiría renders con totales
+   * de un pedido y torta de otro.
+   */
+  const [report, setReport] = useState<ReportsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
 
   /**
-   * `true` si el período tiene más movimientos que el tope de la consulta.
+   * El error de la última carga, si hubo ("" si no).
    *
-   * Esta pantalla importa mucho más que el panel: acá TODO se calcula sobre la
-   * lista —los totales, el gráfico de torta y las barras—, así que con la lista
-   * truncada los tres están incompletos. El panel, en cambio, recibe los totales
-   * ya sumados en la base y el truncado sólo afecta a la lista.
-   *
-   * Por eso el aviso acá es obligatorio y va ARRIBA de los números, no abajo.
+   * Es un estado APARTE y no un `report` en null: la pantalla necesita
+   * distinguir "el período no tiene movimientos" —estado vacío— de "no se pudo
+   * preguntar" —error—. Si se mezclan, un problema de red se disfraza de mes
+   * sin gastos, con las tarjetas en $ 0,00 como si fueran datos.
    */
-  const [truncated, setTruncated] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [categoryFilter, setCategoryFilter] = useState("");
+  const [loadError, setLoadError] = useState("");
+
+  // ── Los filtros ───────────────────────────────────────────────────────────
+  // `categoryId` guarda el ID de la categoría, no su nombre: el nombre es texto
+  // para mostrar y cambia (se puede renombrar), el ID es la identidad y es lo
+  // que viaja al servidor.
+  const [categoryId, setCategoryId] = useState("");
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   // ── El rango del período ───────────────────────────────────────────────────
   // Se calcula con `periodRange`, que sabe que febrero tiene 28 o 29 días y que
@@ -78,107 +146,115 @@ export default function AnalisisPage() {
   const range = useMemo(() => periodRange(mode, anchor), [mode, anchor]);
   const label = useMemo(() => formatPeriodLabel(mode, range), [mode, range]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      // Sin `kind`: la página necesita TODOS los movimientos para poder mostrar
-      // las transferencias y para que los totales de ingresos y gastos convivan
-      // con la realidad del mes.
-      const response = await fetch(
-        `/api/transactions?from=${range.from}&to=${range.to}`,
-      );
-      const data = (await response.json()) as {
-        movements?: MovementDTO[];
-        truncated?: boolean;
-      };
-      setMovements(data.movements ?? []);
-      setTruncated(data.truncated ?? false);
-    } catch {
-      setMovements([]);
-      setTruncated(false);
-    } finally {
-      setLoading(false);
-    }
-  }, [range.from, range.to]);
-
+  // ── El retardo de la búsqueda ──────────────────────────────────────────────
+  // `search` es lo que la persona ve mientras escribe; `debouncedSearch` es lo
+  // que dispara el request y sólo cambia 300 ms después de la última tecla.
   useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // ── La carga ───────────────────────────────────────────────────────────────
+  //
+  // ─────────────────────────────────────────────────────────────────────────────
+  // LA CARRERA QUE HAY QUE EVITAR
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Con cada tecla y cada cambio de período hay un request en vuelo. Dos
+  // respuestas pueden llegar DESORDENADAS: la de una búsqueda vieja después de
+  // la nueva. Sin protección, la vieja pisaría a la nueva y la pantalla
+  // mostraría resultados que no corresponden a lo escrito — un bug que aparece
+  // justo cuando la red es lenta.
+  //
+  // El `AbortController` de cada efecto cancela el request anterior cuando los
+  // filtros cambian, así que la respuesta vieja ni siquiera llega. Los chequeos
+  // de `signal.aborted` cubren los bordes: un fetch abortado rechaza con
+  // AbortError (no es un error que haya que mostrar) y `finally` no tiene que
+  // apagar el `loading` del efecto que ya quedó atrás.
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function load() {
+      setLoading(true);
+      setLoadError("");
+      try {
+        const params = new URLSearchParams({ from: range.from, to: range.to });
+        if (categoryId) params.set("categoryId", categoryId);
+        const query = debouncedSearch.trim();
+        if (query) params.set("q", query);
+
+        const response = await fetch(`/api/reports?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`La API de reportes respondió ${response.status}.`);
+        }
+
+        setReport((await response.json()) as ReportsResponse);
+      } catch {
+        if (controller.signal.aborted) return;
+        // Error de red o del servidor: la pantalla muestra un error propio.
+        //
+        // Antes esto caía en el estado vacío, y el estado vacío miente en dos
+        // formas: las tarjetas quedan en $ 0,00 —un número que nadie calculó—
+        // y "No hay gastos en este período" le echa la culpa al período de un
+        // problema que es de conexión. Un cero mostrado donde no hubo
+        // respuesta no es un dato: es un invento.
+        setReport(null);
+        setLoadError(
+          "No se pudieron cargar los datos del período. Revisá que la base esté levantada y recargá.",
+        );
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    }
+
     load();
-  }, [load]);
+    return () => controller.abort();
+  }, [range.from, range.to, categoryId, debouncedSearch]);
 
   function shift(direction: number) {
     setAnchor(shiftPeriod(mode, anchor, direction));
   }
 
-  // ── Las categorías que aparecen en el período ─────────────────────────────
-  const allCategories = useMemo(() => {
-    const map = new Map<string, MovementKindDTO>();
-    for (const movement of movements) {
-      if (movement.category && !map.has(movement.category.name)) {
-        map.set(movement.category.name, movement.kind);
-      }
-    }
-    return [...map.entries()]
-      .map(([name, kind]) => ({ name, kind }))
-      .sort((a, b) => a.name.localeCompare(b.name, "es"));
-  }, [movements]);
-
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return movements.filter((movement) => {
-      if (categoryFilter && movement.category?.name !== categoryFilter) return false;
-      if (query) {
-        const haystack = [
-          movement.category?.name ?? "",
-          movement.description,
-          movement.account.name,
-          movement.toAccount?.name ?? "",
-        ]
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-      return true;
-    });
-  }, [movements, categoryFilter, search]);
-
   // ── Estadísticas ───────────────────────────────────────────────────────────
+  // Acá ya no se suma ningún movimiento: todo llega agregado. Lo que queda es
+  // presentación — porcentajes, orden y buckets — que es lo único que depende
+  // de la pantalla.
   const stats = useMemo(() => {
-    // Las transferencias se separan del cálculo desde el principio. No son
-    // ingreso ni gasto, y mezclarlas en cualquiera de los dos totales desarma
-    // todo el análisis: pagar la tarjeta inflaría los "gastos" del mes con plata
-    // que ya se había contado cuando se compró.
-    const income = filtered.filter((m) => m.kind === "INCOME");
-    const expenses = filtered.filter((m) => m.kind === "EXPENSE");
-    const transfers = filtered.filter((m) => m.kind === "TRANSFER");
+    const totals = report?.totals ?? EMPTY_TOTALS;
+    const byCategory = report?.byCategory ?? [];
+    const byDate = report?.byDate ?? [];
 
-    const incomeTotal = sumAmounts(income.map((m) => m.amount));
-    const expenseTotal = sumAmounts(expenses.map((m) => m.amount));
-
-    const incomeCents = toCents(incomeTotal);
-    const expenseCents = toCents(expenseTotal);
+    // Las transferencias no entran acá desde ningún ángulo: `totals` las
+    // informa por separado, el servidor ya las excluyó de la torta y de las
+    // barras. Mezclarlas en ingresos o gastos desarmaría todo el análisis:
+    // pagar la tarjeta inflaría los "gastos" del mes con plata que ya se había
+    // contado cuando se compró.
+    const incomeCents = toCents(totals.income);
+    const expenseCents = toCents(totals.expenses);
     const resultCents = incomeCents - expenseCents;
 
-    const byCategory = new Map<string, number>();
-    for (const movement of expenses) {
-      byCategory.set(
-        movement.category?.name ?? "Sin categoría",
-        (byCategory.get(movement.category?.name ?? "Sin categoría") ?? 0) +
-          toCents(movement.amount),
-      );
-    }
-
-    const pie = [...byCategory.entries()]
-      .map(([name, cents]) => ({
-        name,
-        value: Number(centsToString(cents)),
-        sharePercent:
-          expenseCents === 0 ? "0.00" : ((cents / expenseCents) * 100).toFixed(2),
-      }))
+    // ── La torta ─────────────────────────────────────────────────────────────
+    // El porcentaje se calcula acá y no en el servidor porque depende del total
+    // que se está mostrando. Se hace con centavos ENTEROS: dividir los strings
+    // decimales como `number` acumularía error binario y la suma de las
+    // porciones podría dar 100,01 %.
+    const pie = byCategory
+      .map((row) => {
+        const cents = toCents(row.amount);
+        return {
+          name: row.name,
+          value: Number(centsToString(cents)),
+          sharePercent:
+            expenseCents === 0 ? "0.00" : ((cents / expenseCents) * 100).toFixed(2),
+        };
+      })
       .sort((a, b) => b.value - a.value);
 
     // ── Las barras del gráfico ───────────────────────────────────────────────
-    // El índice de cada movimiento se resuelve con `bucketIndex`, que compara
-    // FECHAS DE CALENDARIO.
+    // El servidor entrega los días con INCOME y EXPENSE por separado; acá se
+    // reparte cada día en su bucket con `bucketIndex`, que compara FECHAS DE
+    // CALENDARIO.
     //
     // La versión anterior hacía `new Date(m.date).getDate()` sobre un instante
     // UTC. Con offset −3, un gasto del 1 de noviembre daba `getDate() === 31` y
@@ -190,19 +266,16 @@ export default function AnalisisPage() {
     const incomeBuckets = new Array<number>(bucketCount).fill(0);
     const expenseBuckets = new Array<number>(bucketCount).fill(0);
 
-    for (const movement of filtered) {
-      const index = bucketIndex(mode, range, movement.date);
+    for (const row of byDate) {
+      const index = bucketIndex(mode, range, row.date);
       // Fuera del rango: no se inventa una barra para meterlo.
       if (index === null || index < 0 || index >= bucketCount) continue;
 
-      if (movement.kind === "INCOME") {
-        incomeBuckets[index] += toCents(movement.amount);
-      } else if (movement.kind === "EXPENSE") {
-        expenseBuckets[index] += toCents(movement.amount);
+      if (row.kind === "INCOME") {
+        incomeBuckets[index] += toCents(row.amount);
+      } else {
+        expenseBuckets[index] += toCents(row.amount);
       }
-      // Las transferencias no entran en ninguna barra: no son ni una cosa ni la
-      // otra. Si se sumaran a los gastos, el gráfico mostraría un pico que no
-      // corresponde a ninguna pérdida de plata.
     }
 
     const bars = Array.from({ length: bucketCount }, (_, index) => {
@@ -237,22 +310,23 @@ export default function AnalisisPage() {
     });
 
     return {
-      incomeTotal,
-      expenseTotal,
+      incomeTotal: totals.income,
+      expenseTotal: totals.expenses,
       result: centsToString(resultCents),
       savingRate:
         incomeCents === 0 ? null : ((resultCents / incomeCents) * 100).toFixed(2),
       positive: resultCents >= 0,
       pie,
       bars,
-      incomeCount: income.length,
-      expenseCount: expenses.length,
-      transferCount: transfers.length,
-      transferTotal: sumAmounts(transfers.map((m) => m.amount)),
+      incomeCount: totals.incomeCount,
+      expenseCount: totals.expenseCount,
+      transferCount: totals.transferCount,
+      transferTotal: totals.transfers,
     };
-  }, [filtered, mode, range]);
+  }, [report, mode, range]);
 
-  const hasFilters = categoryFilter !== "" || search !== "";
+  const categories = report?.categories ?? [];
+  const hasFilters = categoryId !== "" || search !== "";
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
@@ -303,30 +377,39 @@ export default function AnalisisPage() {
       {/* ── Filtros ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-2">
         <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
           aria-label="Filtrar por categoría"
           className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm outline-none [&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
         >
           <option value="">Todas las categorías</option>
-          {allCategories.map((category) => (
-            <option key={category.name} value={category.name}>
+          {categories.map((category) => (
+            <option key={category.id} value={category.id}>
               {category.name}
             </option>
           ))}
         </select>
 
+        {/*
+          El `id` y el `aria-label` cierran un hueco de accesibilidad: lo único
+          que identificaba al campo era el placeholder, y un placeholder no es
+          un rótulo —desaparece al escribir y los lectores de pantalla no lo
+          anuncian—. El `id` además es el ancla estable de los tests
+          (`flows/06` lo toca por id, no por texto).
+        */}
         <input
+          id="analisis-search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Buscar…"
+          aria-label="Buscar movimientos"
           className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
         />
 
         {hasFilters && (
           <button
             onClick={() => {
-              setCategoryFilter("");
+              setCategoryId("");
               setSearch("");
             }}
             className="text-sm px-3 py-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
@@ -336,23 +419,21 @@ export default function AnalisisPage() {
         )}
       </div>
 
-      {/* ── Aviso de truncado ────────────────────────────────────────────── */}
-      {truncated && (
-        <p
-          role="alert"
-          className="rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950 px-4 py-3 text-sm text-amber-900 dark:text-amber-100"
-        >
-          Este período tiene más de {MOVEMENTS_MAX_ROWS} movimientos y la pantalla
-          carga sólo los primeros {MOVEMENTS_MAX_ROWS}. Los totales, el gráfico de
-          torta y las barras están calculados sobre <strong>esa parte</strong>, así
-          que están subestimados. Filtrá por categoría o por texto para achicar el
-          período y que los números sean completos.
-        </p>
-      )}
-
       {loading && <p className="text-center text-zinc-500 py-8">Cargando…</p>}
 
-      {!loading && (
+      {/* ── Error de carga ───────────────────────────────────────────────── */}
+      {/* Reemplaza tarjetas, torta y barras: mostrar los ceros de un fetch
+          fallido sería mostrar números inventados, y el estado vacío le echaría
+          la culpa al período. Un error de conexión tiene que parecer un error
+          de conexión. */}
+      {!loading && loadError && (
+        <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-rose-600 dark:text-rose-400">
+          <p className="text-3xl mb-2">⚠️</p>
+          <p role="alert">{loadError}</p>
+        </div>
+      )}
+
+      {!loading && !loadError && (
         <>
           {/* ── Resumen ─────────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -484,18 +565,32 @@ export default function AnalisisPage() {
                 ))}
               </ul>
             </div>
+          ) : hasFilters ? (
+            // El período sí tiene datos: el subconjunto lo vaciaron los
+            // filtros. Decir "No hay gastos en este período" sería culpar al
+            // período —y mandar a cargar un gasto que existe—. Un estado vacío
+            // honesto habla de los filtros y ofrece la salida.
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-zinc-500">
+              <p className="text-3xl mb-2">🔍</p>
+              <p className="font-medium">No hay gastos con esos filtros</p>
+              <button
+                onClick={() => {
+                  setCategoryId("");
+                  setSearch("");
+                }}
+                className="text-sm mt-2 underline text-emerald-600"
+              >
+                Limpiar filtros
+              </button>
+            </div>
           ) : (
-            !loading && (
-              <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-zinc-500">
-                <p className="text-3xl mb-2">📊</p>
-                <p className="font-medium">
-                  No hay gastos en este período
-                </p>
-                <p className="text-sm mt-1">
-                  Cargá un gasto para ver el desglose por categoría.
-                </p>
-              </div>
-            )
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-zinc-500">
+              <p className="text-3xl mb-2">📊</p>
+              <p className="font-medium">No hay gastos en este período</p>
+              <p className="text-sm mt-1">
+                Cargá un gasto para ver el desglose por categoría.
+              </p>
+            </div>
           )}
         </>
       )}

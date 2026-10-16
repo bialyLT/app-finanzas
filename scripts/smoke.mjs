@@ -508,6 +508,90 @@ async function main() {
     "0.00",
   );
 
+  // ── Los reportes de /analisis, agregados en el SERVIDOR ────────────────────
+  //
+  // /analisis ya no suma la lista topeada: pide sus tres agregados —totales,
+  // torta por categoría y barras por día— a /api/reports, que los calcula en la
+  // base sobre el período completo. Acá se verifica la coherencia interna de la
+  // respuesta y que los filtros achiquen el conjunto correcto.
+  section("Reportes server-side (los agregados de /analisis)");
+  {
+    const { status, body: reporte } = await api(
+      `/api/reports?from=${MES}-01&to=${MES}-31`,
+    );
+    check("/api/reports responde 200", status, 200);
+
+    // Los mismos números que ya verificó la sección anterior, ahora por la ruta
+    // que usa la pantalla de análisis.
+    check("totals.income = 800.000,00", reporte?.totals?.income, "800000.00");
+    check("totals.expenses = 490.000,00", reporte?.totals?.expenses, "490000.00");
+    check(
+      "totals.transfers = 31.412,71, informada aparte",
+      reporte?.totals?.transfers,
+      "31412.71",
+    );
+
+    const enCentavos = (rows) =>
+      rows.reduce((acc, row) => acc + Math.round(Number(row.amount) * 100), 0);
+
+    // Coherencia interna: la suma de las porciones de la torta es exactamente
+    // el total de gastos. Si la transferencia se colara en la torta, no
+    // cerraría: sobrarían 31.412,71.
+    check(
+      "la torta suma exactamente los gastos del período",
+      enCentavos(reporte?.byCategory ?? []),
+      Math.round(Number(reporte?.totals?.expenses ?? 0) * 100),
+    );
+
+    // Las barras: ingresos + gastos, sin la transferencia.
+    //   800.000,00 + 490.000,00 = 1.290.000,00 → 129.000.000 centavos.
+    checkTrue("las barras tienen datos", (reporte?.byDate ?? []).length > 0);
+    check(
+      "las barras suman ingresos + gastos, sin transferencias",
+      enCentavos(reporte?.byDate ?? []),
+      129000000,
+    );
+
+    // El filtro de texto: "octubre" está en las descripciones del sueldo y del
+    // alquiler, así que deja el ingreso intacto y achica los gastos a 250.000.
+    const { body: conTexto } = await api(
+      `/api/reports?from=${MES}-01&to=${MES}-31&q=octubre`,
+    );
+    check("q=octubre deja el sueldo: 800.000,00", conTexto?.totals?.income, "800000.00");
+    check(
+      "q=octubre achica los gastos a 250.000,00 (alquiler)",
+      conTexto?.totals?.expenses,
+      "250000.00",
+    );
+    checkTrue(
+      "el filtro achica los totales respecto del completo",
+      Math.round(Number(conTexto?.totals?.expenses ?? 0) * 100) <
+        Math.round(Number(reporte?.totals?.expenses ?? 0) * 100),
+    );
+    // El selector NO se filtra por el texto: sigue ofreciendo "Ropa", que no
+    // matchea "octubre". Si se filtrara a sí mismo, no se podría volver atrás.
+    checkTrue(
+      "el selector conserva todas las categorías del período",
+      (conTexto?.categories ?? []).some((category) => category.name === "Ropa"),
+    );
+
+    // El filtro por categoría: "Ropa" → sólo esa porción de la torta.
+    const { body: categorias } = await api("/api/categories?kind=EXPENSE");
+    const ropa = (categorias?.categories ?? []).find(
+      (category) => category.name === "Ropa",
+    );
+    const { body: soloRopa } = await api(
+      `/api/reports?from=${MES}-01&to=${MES}-31&categoryId=${ropa?.id}`,
+    );
+    check("categoryId=Ropa devuelve una sola porción", soloRopa?.byCategory?.length, 1);
+    check("y es la de Ropa, por 50.000,00", soloRopa?.byCategory?.[0]?.amount, "50000.00");
+    check(
+      "los gastos del subconjunto son 50.000,00",
+      soloRopa?.totals?.expenses,
+      "50000.00",
+    );
+  }
+
   // ── El borde del mes ───────────────────────────────────────────────────────
   section("El borde del mes (el bug B3)");
   {

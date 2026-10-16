@@ -9,16 +9,16 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-16)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: 90 tests de vitest (64 unitarios + 26 de integración), 52 aserciones de smoke, 6 flows de Maestro en ~4 minutos, build de producción limpio.
+- Batería verde: 91 tests de vitest (64 unitarios + 27 de integración), 59 aserciones de smoke, 8 flows de Maestro en ~8 minutos, build de producción limpio.
 - Fases 0, 1 y 2 cerradas; fases 4, 5, 6, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
 
-- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las once trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
+- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las doce trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
 - `README.md` — arquitectura, capas de test y cómo correr todo.
 - `agents/ui-tester.md` y `agents/security-auditor.md` — prompts de los subagentes autónomos (tester de UI con Maestro y auditor de seguridad).
-- `flows/README.md` — las **once trampas** de Maestro. Leer antes de tocar los flows.
+- `flows/README.md` — las **doce trampas** de Maestro. Leer antes de tocar los flows.
 - Memoria persistente **Engram** (si está disponible en la máquina): buscar por proyecto; hay observaciones de arquitectura, bugs y decisiones.
 
 ## Decisiones que no se negocian
@@ -47,9 +47,9 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 90 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 52 aserciones end-to-end (servidor arriba)
-npm run flows             # 6 flows de Maestro: siembra la base y corre; ~4 minutos
+npm test                  # 91 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 59 aserciones end-to-end (servidor arriba)
+npm run flows             # 8 flows de Maestro: siembra la base y corre; ~8 minutos
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -63,7 +63,7 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 6 — reportes que no mienten** (detalle en `ROADMAP.md`): `/analisis` todavía agrega en el cliente sobre la lista topeada (hoy al menos avisa con un cartel). Cerrarlo server-side: dos `groupBy` más (por `categoryId` con `kind: EXPENSE` y por `date`) y mandar los filtros de pantalla como parámetros del request. Es el único pendiente que corrige un número que hoy puede estar mal.
+**Fase 6 sigue** (detalle en `ROADMAP.md`): la capa de reportes server-side de `/analisis` quedó cerrada (ruta `/api/reports`, filtros por parámetro, flows 06 y 07 nuevos, suite 8/8). Lo más valioso que queda, en orden: la tarjeta **Flujo de caja** del panel (§5.2: entradas a cuentas activo − salidas; incluye el desembolso del préstamo; nunca etiquetarla «ahorro»), la **serie mensual de patrimonio** y la **reconciliación visible** (`ΔPatrimonio = Ahorro`), y los reportes de deuda (progreso, interés acumulado, meses restantes, DTI).
 
 Alternativas, en orden de costo/beneficio: Fase 5 (cuotas y resumen de tarjeta), Fase 3 (recurrencia), Fase 9 (endurecimiento si va a producción).
 

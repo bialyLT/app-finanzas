@@ -175,6 +175,72 @@ export interface MovementsResponse {
   totals: PeriodTotalsDTO;
 }
 
+/**
+ * Una porción de la torta: cuánto se gastó en una categoría en el período.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ ESTO LO CALCULA EL SERVIDOR
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Es la misma razón que la de `PeriodTotalsDTO`, aplicada a la torta de
+ * `/analisis`: el gráfico se armaba filtrando la lista de movimientos —topeada
+ * en `MOVEMENTS_MAX_ROWS`—, así que un período con más movimientos que el tope
+ * mostraba categorías con montos recortados. Una porción más chica de lo real
+ * se ve igual de convincente que una correcta.
+ *
+ * Array de filas y no un objeto `{ [categoría]: monto }` a propósito: el orden
+ * de inserción de un objeto no es parte del contrato de JSON, y acá el orden
+ * (monto descendente) es información útil para la torta.
+ */
+export interface CategoryBreakdownDTO {
+  /** `null` agrupa los movimientos sin categoría. Hoy la base los prohíbe en un EXPENSE, así que es defensivo. */
+  categoryId: string | null;
+  /** Nombre para mostrar. `"Sin categoría"` cuando `categoryId` es `null`. */
+  name: string;
+  /** Suma de los EXPENSE de esa categoría, como string decimal exacto. */
+  amount: string;
+}
+
+/**
+ * Un punto de las barras: cuánto entró o salió en un día del período.
+ *
+ * `kind` es sólo INCOME o EXPENSE porque las transferencias no están acá: una
+ * transferencia entre bolsillos propios no es plata que entra ni que sale del
+ * sistema, y si se sumara al gráfico mostraría un pico que no corresponde a
+ * ninguna ganancia ni pérdida.
+ */
+export interface DateBreakdownDTO {
+  /** Fecha de calendario `YYYY-MM-DD`. Nunca un ISO con hora: ver la nota de arriba. */
+  date: string;
+  kind: "INCOME" | "EXPENSE";
+  /** Suma de ese día para ese tipo, como string decimal exacto. */
+  amount: string;
+}
+
+/**
+ * Respuesta de `/api/reports`: los tres agregados del período, calculados en la
+ * base sobre el conjunto COMPLETO (sin el tope de la lista).
+ *
+ * El `where` del request —rango de fechas, categoría y texto— ya viene aplicado
+ * a `totals`, `byCategory` y `byDate`: son los números del subconjunto que la
+ * persona está mirando.
+ *
+ * `categories` es la excepción deliberada: viaja SIN los filtros de categoría y
+ * texto, por el mismo motivo por el que el selector de un formulario no se
+ * filtra a sí mismo — si eligieras "Alquiler" y la lista sólo pudiera mostrar
+ * las categorías ya filtradas, quedarías encerrado en "Alquiler" sin forma de
+ * volver a agrandar el período. Sólo respeta el rango de fechas: son las
+ * categorías con al menos un movimiento en el período.
+ */
+export interface ReportsResponse {
+  totals: PeriodTotalsDTO;
+  /** Sólo EXPENSE: alimenta la torta "En qué se fue". */
+  byCategory: CategoryBreakdownDTO[];
+  /** INCOME y EXPENSE por día: alimentan las barras de "Evolución". */
+  byDate: DateBreakdownDTO[];
+  /** Para poblar el selector de categorías. No lleva los filtros de pantalla. */
+  categories: CategoryDTO[];
+}
+
 export interface CategoriesResponse {
   categories: CategoryDTO[];
 }

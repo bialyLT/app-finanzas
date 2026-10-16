@@ -47,7 +47,7 @@ powershell -File scripts/maestro.ps1 test flows --env APP_PASSWORD=tu-password
 
 ### Por qué los datos se siembran aparte
 
-Los flows 02 a 05 **verifican**, no construyen. El escenario (banco, tarjeta,
+Los flows 02 a 07 **verifican**, no construyen. El escenario (banco, tarjeta,
 préstamo al 60%, sueldo, gastos, cuota) lo arma `scripts/smoke.mjs`, que además
 comprueba que cada número sea el esperado calculado a mano.
 
@@ -67,7 +67,7 @@ También podés ver las corridas en vivo en el **Maestro Viewer**:
 
 ---
 
-## Las once trampas
+## Las doce trampas
 
 Esta carpeta existe porque cada una de estas cosas nos costó una sesión de
 depuración. Están todas documentadas acá para que no vuelvan a pasar.
@@ -475,6 +475,40 @@ sólo la RAM de la trampa 5: es que comparten un archivo.
 
 ---
 
+### 12. Un `scrollUntilVisible` hacia arriba puede frenar DEBAJO del header pegajoso
+
+El header de la app es `sticky top-0 z-40` y semi-transparente. Un
+`scrollUntilVisible` hacia arriba frena **apenas el elemento entra al viewport**;
+si entra pegado al borde superior, queda **detrás del header**. Maestro lo
+considera visible, el `tapOn` se lo come el header, y el error aparece en el
+paso SIGUIENTE —"Element not found" sobre el popup que nunca abrió—, que manda a
+buscar el problema al lugar equivocado:
+
+```
+Tap on ".*Todas las categorías.*"... COMPLETED   ← "exitoso"… contra el header
+Tap on "Ropa"... FAILED: Element not found       ← el popup nunca se abrió
+```
+
+**La solución**: anclar el scroll en una línea que está ARRIBA del objetivo
+—por ejemplo la línea del rango del período, en `/analisis`— con
+`centerElement: true`. Así el objetivo queda centrado en el viewport, lejos
+del header:
+
+```yaml
+- scrollUntilVisible:
+    element:
+      text: ".*2026-10-01.*2026-10-31.*"
+    direction: UP
+    centerElement: true
+```
+
+La regla general: después de un scroll hacia arriba, un `tapOn` que dice
+"COMPLETED" no prueba que tocó lo que creías. Si el paso siguiente falla porque
+"no existe" el efecto de lo que tocaste, sospechá del header antes que del
+elemento.
+
+---
+
 ## Convenciones
 
 - **Textos sin emoji en las aserciones.** El emoji se renderiza distinto según la
@@ -492,14 +526,16 @@ sólo la RAM de la trampa 5: es que comparten un archivo.
 
 | Flow | Qué verifica | Estado |
 |---|---|---|
-| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (51s) |
-| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (27s) |
-| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), los saldos por cuenta, y que el **desembolso del préstamo no aparezca como ingreso** | ✅ Pasa (47s) |
-| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (37s) |
-| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (42s) |
-| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (32s) |
+| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (34s) |
+| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (31s) |
+| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), los saldos por cuenta, y que el **desembolso del préstamo no aparezca como ingreso** | ✅ Pasa (1m) |
+| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (45s) |
+| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (52s) |
+| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (41s) |
+| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 31s) |
+| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 15s) |
 
-**Suite completa: 6/6 en 3m56s.** Los tiempos no son decorativos: cuando había
+**Suite completa: 8/8 en 8m10s.** Los tiempos no son decorativos: cuando había
 servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
 tardaba **5m51s en fallar** y los otros cinco corrían entre 10 y 18 segundos más
 lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una

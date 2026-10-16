@@ -1,0 +1,214 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 07 · Análisis — períodos, meses vacíos y la ida y vuelta
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica el selector de período de /analisis con la capa server-side de la
+# Fase 6:
+#
+#   · Semana / Mes / Año cambian el rango que viaja a /api/reports.
+#   · Volver de un mes a otro NO cambia los números del mes (el ancla no se
+#     "arrastra": un mes visitado siempre muestra lo mismo).
+#   · Un mes SIN gastos muestra el estado vacío, y las transferencias —que no
+#     son gastos— no lo llenan.
+#   · El año suma TODOS los movimientos, incluidas las 3 transferencias.
+#   · En ningún estado aparece el cartel de truncado viejo ("más de 500").
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 02 a 06 antes que éste (el 03 agrega el Kiosco, el 04 la
+# transferencia al efectivo y el 05/06 necesitan ese mismo escenario).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ EL BLOQUE DE LA SEMANA NO AFIRMA MONTOS EXACTOS
+# ─────────────────────────────────────────────────────────────────────────────
+# La vista Semana muestra la semana que CONTIENE a hoy, y los flujos 03 y 04
+# fechan los movimientos que crean "hoy". Los montos de la semana actual
+# dependen entonces del día en que se corra la suite (el 16/10 la semana es
+# 12→18 y contiene 85.000 de gastos; el 19/10 pasaría a contener otros), así
+# que acá sólo se verifica la ESTRUCTURA (rango de 7 días y las tarjetas
+# vivas). Los montos exactos de la semana quedaron verificados a mano en el
+# informe de la ronda; si querés fijarlos en un flujo, recalculalos para el día
+# en que los corras.
+#
+# Los números de Mes / Año / Septiembre / Agosto SÍ son estables dentro de
+# octubre 2026 y van con montos exactos.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+#   Año 2026 completo:
+#     Ingresos          800.000,00   (sueldo, 1)
+#     Gastos            500.000,00   (6)
+#     Te quedó         +300.000,00   → 37,50 %
+#     Transferencias    581.412,71   (3: desembolso 500.000 del 30/09,
+#                                     capital de la cuota 31.412,71 y el paso
+#                                     al efectivo 50.000)
+#   Septiembre 2026: sólo el desembolso (transferencia 500.000) → 0 gastos →
+#     estado vacío de la torta.
+#   Agosto 2026: sin movimientos de ningún tipo.
+url: http://127.0.0.1:3000
+name: "07 · Análisis — períodos y meses vacíos"
+tags:
+  - smoke
+  - analisis
+  - periodos
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar e ir al análisis ──────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- openLink: "${BASE}/analisis"
+
+- extendedWaitUntil:
+    visible: ".*2026-10-01.*"
+    timeout: 90000
+
+# ── Semana: cambia el rango a una semana de 7 días ───────────────────────────
+- tapOn: "Semana"
+
+- extendedWaitUntil:
+    visible: ".*2026-10.*→.*2026-1[01].*"
+    timeout: 30000
+
+# Las tarjetas del período semanal renderizan (sin montos fijos: ver arriba).
+- assertVisible: ".*Te quedó.*"
+
+# ── Año: todo 2026 ───────────────────────────────────────────────────────────
+- tapOn: "Año"
+
+- extendedWaitUntil:
+    visible: ".*2026-01-01 → 2026-12-31.*"
+    timeout: 30000
+
+- assertVisible: '.*800\.000,00.*'
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: '.*300\.000,00.*'
+- assertVisible: '.*581\.412,71.*'
+- assertVisible: ".*3 movimientos entre tus cuentas.*"
+
+# ── Mes: octubre entero, como al principio ───────────────────────────────────
+- tapOn: "Mes"
+
+- extendedWaitUntil:
+    visible: ".*2026-10-01 → 2026-10-31.*"
+    timeout: 30000
+
+- assertVisible: '.*800\.000,00.*'
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: '.*300\.000,00.*'
+- assertVisible: '.*81\.412,71.*'
+- assertVisible: ".*2 movimientos entre tus cuentas.*"
+- assertNotVisible: ".*más de 500.*"
+
+# ── Septiembre: un solo movimiento, y es una transferencia ───────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EN /analisis LAS FLECHAS NO TIENEN id
+# ─────────────────────────────────────────────────────────────────────────────
+# En el panel son `btn-prev-month`/`btn-next-month`; acá sólo tienen aria-label
+# ("Período anterior"/"Período siguiente"). Se tocan por su texto: "←" y "→" son
+# el único contenido del botón y no hay otro igual en la página.
+- tapOn: "←"
+
+- extendedWaitUntil:
+    visible: ".*septiembre de 2026.*"
+    timeout: 30000
+
+- assertVisible: ".*Sin ingresos.*"
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: ".*1 movimiento entre tus cuentas.*"
+# Nada de octubre en pantalla.
+- assertNotVisible: '.*800\.000,00.*'
+
+# La torta vacía: el desembolso es una transferencia y una transferencia NO es
+# un gasto. Si acá apareciera una porción, el modelo volvió a contar plata que
+# sólo cambió de lugar como si se hubiera ido.
+- scrollUntilVisible:
+    element:
+      text: ".*No hay gastos en este período.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*No hay gastos en este período.*"
+
+# ── Agosto: un mes sin NINGÚN movimiento ─────────────────────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EL SCROLL HACIA ARRIBA Y EL HEADER PEGAJOSO (trampa 12 del README)
+# ─────────────────────────────────────────────────────────────────────────────
+# El header es `sticky top-0 z-40`: un elemento que el scroll deja pegado al
+# borde superior queda DETRÁS del header. Maestro lo ve visible y el tap se lo
+# come el header. Por eso el scroll hacia arriba se ancla en la línea del rango
+# con `centerElement: true`, que deja la tarjeta del período centrada.
+- scrollUntilVisible:
+    element:
+      text: ".*2026-09-01.*2026-09-30.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
+- tapOn: "←"
+
+- extendedWaitUntil:
+    visible: ".*agosto de 2026.*"
+    timeout: 30000
+
+- assertVisible: ".*Sin ingresos.*"
+- assertVisible: ".*0 movimientos entre tus cuentas.*"
+
+- scrollUntilVisible:
+    element:
+      text: ".*No hay gastos en este período.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*No hay gastos en este período.*"
+
+# ── La vuelta: septiembre y octubre, con los MISMOS números ──────────────────
+- scrollUntilVisible:
+    element:
+      text: ".*2026-08-01.*2026-08-31.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
+- tapOn: "→"
+
+- extendedWaitUntil:
+    visible: ".*septiembre de 2026.*"
+    timeout: 30000
+- assertVisible: ".*1 movimiento entre tus cuentas.*"
+
+- tapOn: "→"
+
+- extendedWaitUntil:
+    visible: ".*octubre de 2026.*"
+    timeout: 30000
+
+- assertVisible: '.*800\.000,00.*'
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: '.*300\.000,00.*'
+- assertVisible: '.*81\.412,71.*'
+- assertVisible: ".*2 movimientos entre tus cuentas.*"

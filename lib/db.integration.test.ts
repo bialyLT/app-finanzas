@@ -31,7 +31,12 @@ import { calendarToDb } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
-import { movementTotals } from "./queries";
+import {
+  categoriesInPeriod,
+  movementCategoryBreakdown,
+  movementDateBreakdown,
+  movementTotals,
+} from "./queries";
 
 const TEST_DATABASE_URL = process.env.DATABASE_URL_TEST;
 
@@ -900,5 +905,198 @@ describeDb("movementTotals · el tope limita lo que se muestra, no lo que se cal
     //     conjunto vacío es NULL, y sin el chequeo esto reventaría en el panel.
     expect(totals.transferCount).toBe(0);
     expect(totals.transfers).toBe("0.00");
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA TORTA Y LAS BARRAS, CON LA MISMA REGLA QUE LOS TOTALES
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `movementTotals` ya está cubierto arriba. Pero `/analisis` tenía DOS agregados
+ * más que sumaba en el cliente sobre la lista topeada —la torta "En qué se fue"
+ * y las barras "Evolución"—, así que sufrían exactamente el mismo bug: pasadas
+ * las 500 filas, las porciones y las barras quedaban recortadas y el gráfico
+ * mentía con la misma cara de confianza.
+ *
+ * El arreglo es el mismo (agregar en la base con `groupBy` sobre el período
+ * completo) y el test es el espejo del de arriba: sembrar más filas que el tope
+ * y comparar contra números calculados a mano. Si alguien vuelve a "simplificar"
+ * los agregados sumando la lista, acá se cae.
+ */
+describeDb("Los agregados de reportes · completos aunque la lista se topee", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  it("la torta suma el total de gastos y las barras cubren todos los días, con más de 500 movimientos", async () => {
+    const [gastos, compras, sueldo, vieja] = await Promise.all([
+      db.category.create({ data: { name: "Gastos", normalizedName: "gastos", kind: "EXPENSE" } }),
+      db.category.create({ data: { name: "Compras", normalizedName: "compras", kind: "EXPENSE" } }),
+      db.category.create({ data: { name: "Sueldo", normalizedName: "sueldo", kind: "INCOME" } }),
+      // Esta categoría sólo tiene un movimiento en SEPTIEMBRE: no tiene que
+      // aparecer en el selector de octubre, y sí en el de septiembre.
+      db.category.create({ data: { name: "Vieja", normalizedName: "vieja", kind: "EXPENSE" } }),
+    ]);
+
+    const [bank, cash] = await Promise.all([
+      db.account.create({ data: { name: "Banco", kind: "BANK" } }),
+      db.account.create({ data: { name: "Efectivo", kind: "CASH" } }),
+    ]);
+
+    // ── El sembrado: 507 filas en total, 506 dentro de octubre (el período que
+    //    se verifica), más que el tope de la lista ───────────────────────────
+    //
+    //     Gastos   300 × 10,00 = 3.000,00   (100 por día en 3 días)
+    //     Compras  100 × 15,00 = 1.500,00   ( 50 por día en 2 días)
+    //     Sueldo   105 × 100,00 = 10.500,00 ( 35 por día en 3 días)
+    //     ─────────────────────────────────
+    //     Gastos totales: 3.000 + 1.500 = 4.500,00
+    //
+    // Los días se eligieron para que cada fila de `byDate` dé un número redondo
+    // y distinto del total: si un día se perdiera por el camino, el mapa del
+    // final no tendría la fecha y el test falla NOMBRANDO el día que falta.
+    const GASTOS_GRANDES = 300;
+    const GASTOS_CHICOS = 100;
+    const INGRESOS = 105;
+
+    expect(GASTOS_GRANDES + GASTOS_CHICOS + INGRESOS).toBeGreaterThan(MOVEMENTS_MAX_ROWS);
+
+    const diasDeGastos = ["2026-10-05", "2026-10-12", "2026-10-19"];
+    const diasDeCompras = ["2026-10-08", "2026-10-22"];
+    const diasDeSueldo = ["2026-10-02", "2026-10-15", "2026-10-28"];
+
+    await db.movement.createMany({
+      data: [
+        ...diasDeGastos.flatMap((date) =>
+          Array.from({ length: 100 }, () => ({
+            kind: "EXPENSE" as const,
+            amount: "10.00",
+            date: calendarToDb(date),
+            accountId: bank.id,
+            categoryId: gastos.id,
+          })),
+        ),
+        ...diasDeCompras.flatMap((date) =>
+          Array.from({ length: 50 }, () => ({
+            kind: "EXPENSE" as const,
+            amount: "15.00",
+            date: calendarToDb(date),
+            accountId: bank.id,
+            categoryId: compras.id,
+          })),
+        ),
+        ...diasDeSueldo.flatMap((date) =>
+          Array.from({ length: 35 }, () => ({
+            kind: "INCOME" as const,
+            amount: "100.00",
+            date: calendarToDb(date),
+            accountId: bank.id,
+            categoryId: sueldo.id,
+          })),
+        ),
+        {
+          // Una transferencia más. NINGUNO de los agregados de reportes la
+          // puede contar: no es ingreso, no es gasto y no tiene categoría.
+          kind: "TRANSFER" as const,
+          amount: "500.00",
+          date: calendarToDb("2026-10-20"),
+          accountId: bank.id,
+          toAccountId: cash.id,
+        },
+        {
+          // El de septiembre, fuera del rango que verifica todo lo demás.
+          kind: "EXPENSE" as const,
+          amount: "1.00",
+          date: calendarToDb("2026-09-15"),
+          accountId: bank.id,
+          categoryId: vieja.id,
+        },
+      ],
+    });
+
+    const where = {
+      date: {
+        gte: calendarToDb("2026-10-01"),
+        lte: calendarToDb("2026-10-31"),
+      },
+    };
+
+    /** Suma montos en centavos enteros: comparar strings decimales no existe. */
+    const sumaEnCentavos = (rows: readonly { amount: string }[]): number =>
+      rows.reduce((total, row) => total + Math.round(Number(row.amount) * 100), 0);
+
+    // ── 1 · Los totales ──────────────────────────────────────────────────────
+    // Si `movementTotals` tomara el `take` de la lista, acá daría 5.000,00 y
+    // 2.500,00 en vez de 4.500,00 y 10.500,00 (las primeras 500 filas sembradas).
+    const totals = await movementTotals(db, where);
+    expect(totals.expenses).toBe("4500.00");
+    expect(totals.expenseCount).toBe(GASTOS_GRANDES + GASTOS_CHICOS);
+    expect(totals.income).toBe("10500.00");
+    expect(totals.incomeCount).toBe(INGRESOS);
+    expect(totals.transfers).toBe("500.00");
+    expect(totals.transferCount).toBe(1);
+
+    // ── 2 · La torta ─────────────────────────────────────────────────────────
+    // Dos porciones (Gastos y Compras), ordenadas de mayor a menor, y la suma
+    // de TODAS las porciones tiene que ser exactamente el total de gastos: es
+    // la coherencia interna de la pantalla. Si la transferencia se colara como
+    // gasto, la igualdad se rompería por 500,00.
+    const byCategory = await movementCategoryBreakdown(db, where);
+    expect(byCategory.length).toBe(2);
+    expect(byCategory[0].name).toBe("Gastos");
+    expect(byCategory[0].amount).toBe("3000.00");
+    expect(byCategory[1].name).toBe("Compras");
+    expect(byCategory[1].amount).toBe("1500.00");
+    expect(sumaEnCentavos(byCategory)).toBe(
+      Math.round(Number(totals.expenses) * 100),
+    );
+
+    // ── 3 · Las barras ───────────────────────────────────────────────────────
+    // Un renglón por día CON movimientos de cada tipo (5 de gastos + 3 de
+    // ingresos), y ninguno el 20, que es el día de la transferencia.
+    const byDate = await movementDateBreakdown(db, where);
+    expect(byDate.length).toBe(8);
+    expect(byDate.some((row) => row.date === "2026-10-20")).toBe(false);
+
+    const porFecha = new Map(
+      byDate.map((row) => [`${row.date}|${row.kind}`, row.amount]),
+    );
+    expect(porFecha.get("2026-10-05|EXPENSE")).toBe("1000.00");
+    expect(porFecha.get("2026-10-12|EXPENSE")).toBe("1000.00");
+    expect(porFecha.get("2026-10-19|EXPENSE")).toBe("1000.00");
+    expect(porFecha.get("2026-10-08|EXPENSE")).toBe("750.00");
+    expect(porFecha.get("2026-10-22|EXPENSE")).toBe("750.00");
+    expect(porFecha.get("2026-10-02|INCOME")).toBe("3500.00");
+    expect(porFecha.get("2026-10-15|INCOME")).toBe("3500.00");
+    expect(porFecha.get("2026-10-28|INCOME")).toBe("3500.00");
+
+    // La suma por tipo también da los totales: 4.500,00 de gastos y 10.500,00
+    // de ingresos, en centavos enteros.
+    expect(sumaEnCentavos(byDate.filter((row) => row.kind === "EXPENSE"))).toBe(450_000);
+    expect(sumaEnCentavos(byDate.filter((row) => row.kind === "INCOME"))).toBe(1_050_000);
+
+    // ── 4 · El selector de categorías ────────────────────────────────────────
+    // Todas las categorías con movimientos en octubre —y ninguna otra—,
+    // ordenadas por nombre normalizado. "Vieja" sólo vive en septiembre.
+    const enOctubre = await categoriesInPeriod(db, "2026-10-01", "2026-10-31");
+    expect(enOctubre.map((category) => category.name)).toEqual([
+      "Compras",
+      "Gastos",
+      "Sueldo",
+    ]);
+
+    // El mismo selector visto desde septiembre: ahí la única es "Vieja". Es el
+    // cruce de mes del bug B3, aplicado al selector.
+    const enSeptiembre = await categoriesInPeriod(db, "2026-09-01", "2026-09-30");
+    expect(enSeptiembre.map((category) => category.name)).toEqual(["Vieja"]);
+
+    // Sin extremos de rango: todas las categorías usadas alguna vez.
+    const todas = await categoriesInPeriod(db, null, null);
+    expect(todas.length).toBe(4);
   });
 });

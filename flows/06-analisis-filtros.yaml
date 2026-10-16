@@ -1,0 +1,330 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 06 · Análisis — los filtros server-side (Fase 6)
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica los filtros NUEVOS de /analisis: que elegir una categoría o escribir
+# texto achique los TRES bloques (tarjetas, torta y barras) con números exactos,
+# que el selector de categorías NO se auto-filtre, y que "Limpiar ✕" vuelva al
+# estado completo.
+#
+# Desde la Fase 6 los filtros viajan como parámetros de `/api/reports`: el
+# recorte lo hace la base (groupBy sobre el período) y no el navegador. Por eso
+# un filtro que "se ve bien" en las tarjetas pero no llega al servidor mostraría
+# una torta con los datos del período entero — éste flujo es el que conecta la
+# pantalla con el agregado.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 02 a 05 antes que éste: el 03 agrega el Kiosco ($ 10.000)
+# y el 04 la transferencia al efectivo ($ 50.000), que son los movimientos que
+# completan los números de abajo.
+#
+#     powershell -File scripts/flows.ps1
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre 2026 completo)
+# ─────────────────────────────────────────────────────────────────────────────
+#   Ingresos          800.000,00   (sueldo, 1 movimiento)
+#   Gastos            500.000,00   (6 movimientos)
+#   Te quedó         +300.000,00   800.000 − 500.000 = 300.000 → 37,50 %
+#   Transferencias     81.412,71   (31.412,71 + 50.000 — informadas APARTE)
+#
+#   Torta (contra los GASTOS, no contra los ingresos):
+#     Alquiler       250.000,00   50,00 %   250.000 / 500.000
+#     Supermercado   120.000,00   24,00 %
+#     Ropa            50.000,00   10,00 %
+#     Transporte      45.000,00    9,00 %
+#     Intereses       25.000,00    5,00 %
+#     Kiosco          10.000,00    2,00 %
+#     ────────────────────────────
+#                    500.000,00  100,00 %
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# FILTRO POR CATEGORÍA: Ropa
+# ─────────────────────────────────────────────────────────────────────────────
+#   Ingresos             0,00   (Ropa no tiene ingresos → "Sin ingresos")
+#   Gastos          50.000,00   (la compra con tarjeta)
+#   Te quedó       − 50.000,00
+#   Transferencias       0,00   (una transferencia no tiene categoría)
+#   Torta: Ropa 100,00 % de 50.000
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# FILTRO DE TEXTO: "octubre"
+# ─────────────────────────────────────────────────────────────────────────────
+# Busca en nombre de categoría, descripción y nombres de las cuentas, sin
+# distinguir mayúsculas. Sólo "Sueldo de octubre" y "Alquiler de octubre" lo
+# contienen:
+#
+#   Ingresos        800.000,00   · Gastos 250.000,00 · Te quedó 550.000,00
+#   550.000 / 800.000 = 68,75 %
+#   Transferencias        0,00   (ninguna descripción de transferencia lo dice)
+#   Torta: Alquiler 100,00 %
+#
+# "ropa" (minúsculas) es la contracara: matchea el NOMBRE de la categoría y da
+# el mismo subconjunto que elegir Ropa en el selector.
+url: http://127.0.0.1:3000
+name: "06 · Análisis — los filtros achican los tres bloques"
+tags:
+  - smoke
+  - analisis
+  - filtros
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar e ir al análisis ──────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida. El desarrollo completo del
+# porqué está en flows/02-panel.yaml (trampa 8 del README).
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- openLink: "${BASE}/analisis"
+
+- extendedWaitUntil:
+    visible: ".*Todas las categorías.*"
+    timeout: 90000
+
+# ── El estado completo ───────────────────────────────────────────────────────
+- assertVisible: ".*2026-10-01 → 2026-10-31.*"
+- assertVisible: '.*800\.000,00.*'
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: '.*300\.000,00.*'
+- assertVisible: '.*81\.412,71.*'
+- assertVisible: ".*2 movimientos entre tus cuentas.*"
+
+# El cartel de truncado de la versión vieja ya no existe en ningún estado: los
+# agregados los calcula la base sobre el período completo, así que el tope de
+# 500 filas de la lista no puede subestimar ningún número.
+- assertNotVisible: ".*más de 500.*"
+
+# ── La torta completa ────────────────────────────────────────────────────────
+# Anclada en su ÚLTIMA fila (Kiosco, la más chica): la lista entera entra en la
+# pantalla y queda visible de una sola pasada (trampa 10 del README).
+- scrollUntilVisible:
+    element:
+      text: ".*Kiosco.*"
+    direction: DOWN
+    timeout: 30000
+
+# OJO: cada fila son TRES elementos separados (nombre | porcentaje | monto) y
+# no un texto concatenado. Se afirma pieza por pieza; la asociación fila↔monto
+# la dan el orden (mayor a menor) y el cálculo de arriba.
+- assertVisible: '.*Alquiler.*'
+- assertVisible: '.*50,00%.*'
+- assertVisible: '.*250\.000,00.*'
+- assertVisible: '.*Supermercado.*'
+- assertVisible: '.*24,00%.*'
+- assertVisible: '.*120\.000,00.*'
+- assertVisible: '.*Ropa.*'
+- assertVisible: '.*10,00%.*'
+- assertVisible: '.*Transporte.*'
+- assertVisible: '.*9,00%.*'
+- assertVisible: '.*45\.000,00.*'
+- assertVisible: '.*Intereses.*'
+- assertVisible: '.*5,00%.*'
+- assertVisible: '.*25\.000,00.*'
+- assertVisible: '.*Kiosco.*'
+- assertVisible: '.*2,00%.*'
+- assertVisible: '.*10\.000,00.*'
+
+# ── Filtro por categoría: Ropa ───────────────────────────────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EL SCROLL HACIA ARRIBA FRENA DEBAJO DEL HEADER PEGAJOSO (trampa 12 del README)
+# ─────────────────────────────────────────────────────────────────────────────
+# El header de la app es `sticky top-0 z-40` y semi-transparente. Un
+# `scrollUntilVisible` hacia arriba frena apenas el elemento entra al viewport;
+# si entra pegado al borde superior queda DEBAJO del header, que lo tapa.
+# Maestro lo considera visible, el `tapOn` se lo come el header, y el error que
+# aparece es "Element not found" sobre el paso siguiente (el popup que nunca se
+# abrió) — un mensaje que apunta al lugar equivocado.
+#
+# La solución: anclar el scroll en la línea del rango (que está ARRIBA de los
+# filtros) con `centerElement: true`. La fila de filtros queda centrada y lejos
+# del header.
+- scrollUntilVisible:
+    element:
+      text: ".*2026-10-01.*2026-10-31.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
+- tapOn: ".*Todas las categorías.*"
+- tapOn: "Ropa"
+
+# Señal de que llegó el subconjunto: con una sola categoría de gasto no hay
+# ingresos que mostrar.
+- extendedWaitUntil:
+    visible: ".*Sin ingresos.*"
+    timeout: 30000
+
+# Las tres tarjetas, en el subconjunto.
+- assertVisible: '.*50\.000,00.*'
+- assertVisible: ".*0 movimientos entre tus cuentas.*"
+- assertVisible: ".*Ropa.*"
+
+# Y la torta tiene UNA sola porción: Ropa, el 100 % de los 50.000.
+# El ancla del scroll es "100,00%" y no "Ropa" a propósito: el select de arriba
+# también dice "Ropa", y un scroll hacia ese texto no bajaría nunca hasta la
+# torta.
+- scrollUntilVisible:
+    element:
+      text: ".*100,00%.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: '.*100,00%.*'
+- assertVisible: '.*Ropa.*'
+- assertVisible: '.*50\.000,00.*'
+
+# ── "Limpiar ✕" vuelve a todo ────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: ".*2026-10-01.*2026-10-31.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
+- tapOn: ".*Limpiar.*"
+
+- extendedWaitUntil:
+    visible: '.*81\.412,71.*'
+    timeout: 30000
+
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: ".*2 movimientos entre tus cuentas.*"
+
+# ── Filtro de texto: "octubre" ───────────────────────────────────────────────
+- tapOn:
+    id: "analisis-search"
+- inputText: "octubre"
+
+# El "Te quedó" del subconjunto es 550.000, que no existe en ningún otro estado:
+# es la señal inequívoca de que llegó la respuesta del texto filtrado (con el
+# debounce de 300 ms ya vencido).
+- extendedWaitUntil:
+    visible: '.*550\.000,00.*'
+    timeout: 30000
+
+- assertVisible: '.*800\.000,00.*'
+- assertVisible: '.*250\.000,00.*'
+- assertVisible: '.*68,75.*'
+- assertVisible: ".*0 movimientos entre tus cuentas.*"
+
+# La torta del subconjunto: sólo Alquiler, 100 %.
+- scrollUntilVisible:
+    element:
+      text: ".*100,00%.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: '.*100,00%.*'
+- assertVisible: '.*Alquiler.*'
+- assertVisible: '.*250\.000,00.*'
+
+# ── El selector NO se auto-filtra con texto activo ───────────────────────────
+- scrollUntilVisible:
+    element:
+      text: ".*2026-10-01.*2026-10-31.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
+- tapOn: "Todas las categorías"
+
+# Ropa y Supermercado no matchean "octubre" y tienen que seguir ofrecidas: si
+# el selector se filtrara a sí mismo, elegir una categoría dejaría al usuario
+# encerrado sin forma de volver a agrandar el período.
+- assertVisible: ".*Ropa.*"
+- assertVisible: ".*Supermercado.*"
+
+# Elegir Ropa AHORA deja los dos filtros activos: categoría Ropa + texto
+# "octubre". No hay ningún movimiento que cumpla las dos cosas (la compra con
+# tarjeta no dice "octubre"), así que el subconjunto queda vacío.
+- tapOn: "Ropa"
+
+- extendedWaitUntil:
+    visible: ".*Sin ingresos.*"
+    timeout: 30000
+
+- assertVisible: ".*0 movimientos entre tus cuentas.*"
+
+# El estado vacío CON filtros no puede culpar al período: hay gastos en
+# octubre, simplemente no matchean "Ropa" + "octubre". El texto tiene que
+# hablar de los filtros, y ofrecer la salida.
+- scrollUntilVisible:
+    element:
+      text: ".*No hay gastos con esos filtros.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*No hay gastos con esos filtros.*"
+# Y no el mensaje de período vacío, que sería mentira. La negativa va acá, con
+# el bloque a la vista (trampa 7 del README).
+- assertNotVisible: ".*No hay gastos en este período.*"
+
+# ── "Limpiar ✕" vuelve a todo, otra vez con los dos filtros puestos ──────────
+- scrollUntilVisible:
+    element:
+      text: ".*2026-10-01.*2026-10-31.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
+- tapOn: ".*Limpiar.*"
+
+- extendedWaitUntil:
+    visible: '.*500\.000,00.*'
+    timeout: 30000
+
+- assertVisible: '.*800\.000,00.*'
+- assertVisible: '.*300\.000,00.*'
+- assertVisible: '.*81\.412,71.*'
+- assertVisible: ".*2 movimientos entre tus cuentas.*"
+- assertNotVisible: ".*Limpiar.*"
+
+# ── Filtro de texto: "ropa" ──────────────────────────────────────────────────
+# La contracara de "octubre": acá no hay ninguna descripción que diga "ropa".
+# Lo que matchea es el NOMBRE DE LA CATEGORÍA, así que el subconjunto tiene que
+# ser idéntico al de elegir Ropa en el selector — la búsqueda de texto y el
+# filtro de categoría tienen que contar la misma historia.
+- tapOn:
+    id: "analisis-search"
+- inputText: "ropa"
+
+- extendedWaitUntil:
+    visible: ".*Sin ingresos.*"
+    timeout: 30000
+
+- assertVisible: '.*50\.000,00.*'
+- assertVisible: ".*0 movimientos entre tus cuentas.*"
+
+- scrollUntilVisible:
+    element:
+      text: ".*100,00%.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: '.*100,00%.*'
+- assertVisible: '.*Ropa.*'
+- assertVisible: '.*50\.000,00.*'

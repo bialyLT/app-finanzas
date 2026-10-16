@@ -30,10 +30,12 @@
 
 import type { Prisma } from "@prisma/client";
 import type { Db } from "./balance";
-import { dbToCalendar } from "./dates";
+import { calendarToDb, dbToCalendar, type CalendarDate } from "./dates";
 import type {
   AccountDTO,
+  CategoryBreakdownDTO,
   CategoryDTO,
+  DateBreakdownDTO,
   MovementDTO,
   PeriodTotalsDTO,
 } from "./finance";
@@ -115,6 +117,173 @@ export async function movementTotals(
   }
 
   return totals;
+}
+
+/**
+ * La torta de `/analisis`: cuánto se gastó en cada categoría, agregado en la
+ * base sobre el período COMPLETO.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ `kind: "EXPENSE"` SE APLICA ACÁ Y NO SE PIDE AFUERA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * La torta responde "en qué se fue la plata", y la plata sólo se va en un
+ * EXPENSE: un INCOME no es una porción de gasto y una TRANSFER no es ni una
+ * cosa ni la otra (no tiene categoría, por regla de la base). Si el `where`
+ * viniera con otro `kind` —o sin `kind`—, la definición del gráfico quedaría a
+ * cargo de quien llama, y el día que alguien sume todos los tipos, la torta
+ * mostraría gastos que no existen. La definición vive acá, al lado del
+ * `groupBy` que la implementa.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ EL NOMBRE SE RESUELVE CON UNA SEGUNDA CONSULTA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `groupBy` sólo puede agrupar por columnas del propio modelo: por `categoryId`,
+ * no por el nombre de la relación. Traer la fila completa con `include` para
+ * leer `category.name` obligaría a una consulta por movimiento — miles de filas
+ * para terminar usando un puñado de nombres distintos. En cambio, con los ids
+ * del resultado alcanza UN `findMany` limitado a esos ids: a lo sumo, una fila
+ * por categoría del período, sin importar cuántos movimientos haya.
+ *
+ * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ */
+export async function movementCategoryBreakdown(
+  db: Db,
+  where: Prisma.MovementWhereInput,
+): Promise<CategoryBreakdownDTO[]> {
+  const grouped = await db.movement.groupBy({
+    by: ["categoryId"],
+    // El `kind: "EXPENSE"` va DESPUÉS del spread a propósito: pisa cualquier
+    // `kind` que traiga el `where` externo. Es la definición del gráfico, no un
+    // filtro opcional.
+    where: { ...where, kind: "EXPENSE" },
+    _sum: { amount: true },
+    // Ordenado por monto descendente —el orden en el que se lee la torta—, y de
+    // paso el resultado es determinista entre corridas.
+    orderBy: { _sum: { amount: "desc" } },
+  });
+
+  const categoryIds = grouped
+    .map((row) => row.categoryId)
+    .filter((id): id is string => id !== null);
+
+  // Sin ids no hace falta consultar: el período sólo tiene movimientos sin
+  // categoría (caso defensivo; hoy la base exige categoría en un EXPENSE).
+  const categories =
+    categoryIds.length > 0
+      ? await db.category.findMany({
+          where: { id: { in: categoryIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+
+  const nameById = new Map(categories.map((category) => [category.id, category.name]));
+
+  return grouped.map((row) => {
+    // En SQL la suma de un conjunto vacío es NULL, y acá un grupo siempre tiene
+    // al menos una fila, pero el tipo lo admite: se trata como "0.00" igual que
+    // en `movementTotals` para no reventar con un `.toFixed` sobre `null`.
+    const amount = row._sum.amount === null ? "0.00" : row._sum.amount.toFixed(2);
+
+    return {
+      categoryId: row.categoryId,
+      name:
+        row.categoryId === null
+          ? "Sin categoría"
+          : // El `?? "Sin categoría"` cubre la carrera de borrar una categoría
+            // entre el `groupBy` y el `findMany`: preferimos un nombre honesto
+            // a una fila que reviente por un `undefined`.
+            nameById.get(row.categoryId) ?? "Sin categoría",
+      amount,
+    };
+  });
+}
+
+/**
+ * Las barras de "Evolución": ingresos y gastos por día del período, agregados
+ * en la base.
+ *
+ * Agrupar por `["date", "kind"]` deja en una sola consulta todas las barras de
+ * todos los días —a lo sumo 2 filas por día, sin importar cuántos movimientos
+ * haya—. El cliente después sólo re-bucketiza: decide en qué barra cae cada
+ * día según la vista (semana, mes, año) con `bucketIndex`, que compara fechas
+ * de CALENDARIO. Ese reparto depende de la pantalla, no de los datos, así que
+ * vive allá.
+ *
+ * Las transferencias quedan afuera por definición: `kind: { in: [...] }` las
+ * excluye en el `where` y no hay forma de que se cuelen en una barra.
+ */
+export async function movementDateBreakdown(
+  db: Db,
+  where: Prisma.MovementWhereInput,
+): Promise<DateBreakdownDTO[]> {
+  const grouped = await db.movement.groupBy({
+    by: ["date", "kind"],
+    where: { ...where, kind: { in: ["INCOME", "EXPENSE"] } },
+    _sum: { amount: true },
+    orderBy: [{ date: "asc" }, { kind: "asc" }],
+  });
+
+  return grouped.map((row) => ({
+    // `dbToCalendar` y NUNCA `toISOString`: la columna es `@db.Date` y leerla
+    // con el serializador UTC implícito devolvería el día anterior con offset
+    // negativo (el bug B1/B2 del ROADMAP, otra vez).
+    date: dbToCalendar(row.date),
+    // El `where` ya garantizó que no hay TRANSFER; el ternario es lo que le dice
+    // eso al compilador sin un cast.
+    kind: row.kind === "INCOME" ? "INCOME" : "EXPENSE",
+    amount: row._sum.amount === null ? "0.00" : row._sum.amount.toFixed(2),
+  }));
+}
+
+/**
+ * Las categorías que tienen al menos un movimiento en el rango de fechas.
+ *
+ * Es la lista que puebla el selector de `/analisis`. NO recibe los filtros de
+ * categoría ni de texto a propósito (ver `ReportsResponse`): el selector tiene
+ * que ofrecer todas las opciones del período, incluso las que no matchean el
+ * filtro actual — si no, elegir una categoría dejaría al usuario encerrado en
+ * ella.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ FILTRA POR RELACIÓN Y NO CON UN `groupBy` DE MOVIMIENTOS
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Porque la pregunta es "qué categorías aparecen", no "cuánto sumó cada una"
+ * (eso ya lo responde `movementCategoryBreakdown`). Un `findMany` con
+ * `movements: { some: ... }` expresa exactamente eso: la categoría existe en la
+ * respuesta si tiene AL MENOS un movimiento en el rango. Y como el filtro es
+ * por relación, los movimientos TRANSFER no pueden colarse: no tienen
+ * categoría.
+ *
+ * `from` y `to` pueden venir `null` —el endpoint de reportes es permisivo con
+ * fechas inválidas o ausentes, igual que `GET /api/transactions`—; el extremo
+ * que falta simplemente no acota el rango.
+ *
+ * Ordena por `normalizedName` y no por el nombre crudo: en Postgres las
+ * mayúsculas ordenan antes que las minúsculas, así que "Comida" y "comida"
+ * terminarían separadas — el bug de duplicación, disfrazado de orden. Es el
+ * mismo criterio que `GET /api/categories`.
+ */
+export async function categoriesInPeriod(
+  db: Db,
+  from: CalendarDate | null,
+  to: CalendarDate | null,
+): Promise<CategoryDTO[]> {
+  const date =
+    from || to
+      ? {
+          ...(from ? { gte: calendarToDb(from) } : {}),
+          ...(to ? { lte: calendarToDb(to) } : {}),
+        }
+      : null;
+
+  const categories = await db.category.findMany({
+    // Con `date: null`, `some: {}` significa "tiene al menos un movimiento":
+    // sin extremos de rango, todas las categorías usadas alguna vez.
+    where: { movements: { some: date ? { date } : {} } },
+    orderBy: { normalizedName: "asc" },
+  });
+
+  return categories.map(toCategoryDTO);
 }
 
 type MovementRow = Prisma.MovementGetPayload<{ include: typeof movementInclude }>;
