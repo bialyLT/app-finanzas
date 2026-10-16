@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
+import Header from "@/components/Header";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -25,30 +25,26 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100">
-        <header className="sticky top-0 z-40 border-b border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-black/90 backdrop-blur">
-          <nav className="mx-auto max-w-5xl flex items-center justify-between px-4 py-3">
-            <Link href="/" className="font-extrabold text-lg tracking-tight">
-              💰 <span className="text-emerald-600">Mis</span>Finanzas
-            </Link>
-            <div className="flex gap-2">
-              <Link
-                href="/"
-                className="px-4 py-2 rounded-full text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                Inicio
-              </Link>
-              <Link
-                href="/analisis"
-                className="px-4 py-2 rounded-full text-sm font-medium bg-zinc-900 text-white dark:bg-white dark:text-black hover:opacity-90"
-              >
-                📊 Análisis
-              </Link>
-            </div>
-          </nav>
-        </header>
+        <Header />
         <div className="flex-1 w-full">{children}</div>
+        {/* El footer es el único lugar de la app que le habla al usuario sobre
+            DÓNDE viven sus datos, así que no puede mentir ni por omisión ni por
+            exceso.
+
+            Lo que decía antes: "Tus datos se guardan localmente en este
+            servidor · SQLite + Next.js". Falso: los datos van a Postgres, que
+            puede estar en tu máquina o en Neon. Después decía "en tu Postgres de
+            Neon" — que también es falso ahora que la app corre contra el
+            Postgres local (ver `npm run db:local:start`), y encima filtra el
+            proveedor donde corrés.
+
+            La versión de abajo es la única afirmación que es cierta en TODAS las
+            configuraciones: los movimientos se guardan en una base de datos del
+            lado del servidor, no en el navegador. Y esa distinción sí le importa
+            a quien la lee, porque es la diferencia entre poder abrir la app
+            desde otro dispositivo y no poder. */}
         <footer className="text-center text-xs text-zinc-500 py-6">
-          Tus datos se guardan localmente en este servidor · SQLite + Next.js
+          Los movimientos viven en tu base de datos, no en este navegador.
         </footer>
       </body>
     </html>

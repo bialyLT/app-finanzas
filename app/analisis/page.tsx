@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -14,360 +14,489 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { formatMoney, type MovementDTO } from "@/lib/finance";
+import {
+  bucketIndex,
+  formatPeriodLabel,
+  periodRange,
+  shiftPeriod,
+  todayCalendar,
+  type PeriodMode,
+} from "@/lib/dates";
+import { MOVEMENTS_MAX_ROWS, type MovementDTO, type MovementKindDTO } from "@/lib/finance";
+import {
+  centsToString,
+  formatMoney,
+  formatPercent,
+  sumAmounts,
+  toCents,
+} from "@/lib/format";
 
-type ViewMode = "week" | "month" | "year";
+type ViewMode = PeriodMode;
 
-const PIE_COLORS = ["#10b981", "#f43f5e", "#6366f1", "#f59e0b", "#0ea5e9", "#a855f7", "#84cc16", "#ef4444", "#14b8a6", "#eab308"];
+const PIE_COLORS = [
+  "#10b981", "#f43f5e", "#6366f1", "#f59e0b", "#0ea5e9",
+  "#a855f7", "#84cc16", "#ef4444", "#14b8a6", "#eab308",
+];
 
-function startOfWeek(d: Date) {
-  const x = new Date(d);
-  const day = (x.getDay() + 6) % 7; // lunes = 0
-  x.setDate(x.getDate() - day);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function fmtDay(d: Date) {
-  return d.toLocaleDateString("es-ES", { day: "numeric", month: "short" });
-}
+const MODE_LABEL: Record<ViewMode, string> = {
+  week: "Semana",
+  month: "Mes",
+  year: "Año",
+};
 
 export default function AnalisisPage() {
   const [mode, setMode] = useState<ViewMode>("month");
-  const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10));
+
+  // ── La fecha ancla ─────────────────────────────────────────────────────────
+  // Antes: `new Date().toISOString().slice(0, 10)`. Después de las 21:00 en
+  // Buenos Aires eso da el día SIGUIENTE, así que el análisis arrancaba en la
+  // semana equivocada sin que nadie lo notara.
+  const [anchor, setAnchor] = useState(() => todayCalendar());
+
   const [movements, setMovements] = useState<MovementDTO[]>([]);
+
+  /**
+   * `true` si el período tiene más movimientos que el tope de la consulta.
+   *
+   * Esta pantalla importa mucho más que el panel: acá TODO se calcula sobre la
+   * lista —los totales, el gráfico de torta y las barras—, así que con la lista
+   * truncada los tres están incompletos. El panel, en cambio, recibe los totales
+   * ya sumados en la base y el truncado sólo afecta a la lista.
+   *
+   * Por eso el aviso acá es obligatorio y va ARRIBA de los números, no abajo.
+   */
+  const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [catFilter, setCatFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [search, setSearch] = useState("");
 
-  const range = useMemo(() => {
-    const a = new Date(anchor + "T12:00:00");
-    if (mode === "week") {
-      const s = startOfWeek(a);
-      const e = new Date(s);
-      e.setDate(e.getDate() + 6);
-      return { from: s, to: e };
-    }
-    if (mode === "month") {
-      return { from: new Date(a.getFullYear(), a.getMonth(), 1), to: new Date(a.getFullYear(), a.getMonth() + 1, 0) };
-    }
-    return { from: new Date(a.getFullYear(), 0, 1), to: new Date(a.getFullYear(), 11, 31) };
-  }, [mode, anchor]);
+  // ── El rango del período ───────────────────────────────────────────────────
+  // Se calcula con `periodRange`, que sabe que febrero tiene 28 o 29 días y que
+  // la semana argentina empieza el lunes. La versión anterior construía los
+  // límites con `toISOString()`, que convierte a UTC y corría todo un día con
+  // offset negativo.
+  const range = useMemo(() => periodRange(mode, anchor), [mode, anchor]);
+  const label = useMemo(() => formatPeriodLabel(mode, range), [mode, range]);
 
-  const fromStr = range.from.toISOString().slice(0, 10);
-  const toStr = range.to.toISOString().slice(0, 10);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Sin `kind`: la página necesita TODOS los movimientos para poder mostrar
+      // las transferencias y para que los totales de ingresos y gastos convivan
+      // con la realidad del mes.
+      const response = await fetch(
+        `/api/transactions?from=${range.from}&to=${range.to}`,
+      );
+      const data = (await response.json()) as {
+        movements?: MovementDTO[];
+        truncated?: boolean;
+      };
+      setMovements(data.movements ?? []);
+      setTruncated(data.truncated ?? false);
+    } catch {
+      setMovements([]);
+      setTruncated(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [range.from, range.to]);
 
   useEffect(() => {
-    setLoading(true);
-    fetch(`/api/transactions?from=${fromStr}&to=${toStr}`)
-      .then((r) => r.json())
-      .then((d) => setMovements(Array.isArray(d) ? d : []))
-      .finally(() => setLoading(false));
-  }, [fromStr, toStr]);
+    load();
+  }, [load]);
 
-  const label = useMemo(() => {
-    if (mode === "week") return `Semana ${fmtDay(range.from)} → ${fmtDay(range.to)}`;
-    if (mode === "month")
-      return range.from.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
-    return `Año ${range.from.getFullYear()}`;
-  }, [mode, range]);
-
-  function shift(dir: number) {
-    const a = new Date(anchor + "T12:00:00");
-    if (mode === "week") a.setDate(a.getDate() + dir * 7);
-    else if (mode === "month") a.setMonth(a.getMonth() + dir);
-    else a.setFullYear(a.getFullYear() + dir);
-    setAnchor(a.toISOString().slice(0, 10));
+  function shift(direction: number) {
+    setAnchor(shiftPeriod(mode, anchor, direction));
   }
 
-  const allCats = useMemo(() => {
-    const set = new Map<string, MovementDTO["kind"]>();
-    for (const m of movements) {
-      if (!set.has(m.category.name)) set.set(m.category.name, m.kind);
+  // ── Las categorías que aparecen en el período ─────────────────────────────
+  const allCategories = useMemo(() => {
+    const map = new Map<string, MovementKindDTO>();
+    for (const movement of movements) {
+      if (movement.category && !map.has(movement.category.name)) {
+        map.set(movement.category.name, movement.kind);
+      }
     }
-    return [...set.entries()]
+    return [...map.entries()]
       .map(([name, kind]) => ({ name, kind }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.name.localeCompare(b.name, "es"));
   }, [movements]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return movements.filter((m) => {
-      if (catFilter && m.category.name !== catFilter) return false;
-      if (q && !`${m.category.name} ${m.description ?? ""}`.toLowerCase().includes(q)) return false;
+    const query = search.trim().toLowerCase();
+    return movements.filter((movement) => {
+      if (categoryFilter && movement.category?.name !== categoryFilter) return false;
+      if (query) {
+        const haystack = [
+          movement.category?.name ?? "",
+          movement.description,
+          movement.account.name,
+          movement.toAccount?.name ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
       return true;
     });
-  }, [movements, catFilter, search]);
+  }, [movements, categoryFilter, search]);
 
+  // ── Estadísticas ───────────────────────────────────────────────────────────
   const stats = useMemo(() => {
-    let income = 0;
-    let expense = 0;
-    let fixedIncome = 0;
-    let fixedExpense = 0;
-    const byCatIncome = new Map<string, number>();
-    const byCatExpense = new Map<string, number>();
+    // Las transferencias se separan del cálculo desde el principio. No son
+    // ingreso ni gasto, y mezclarlas en cualquiera de los dos totales desarma
+    // todo el análisis: pagar la tarjeta inflaría los "gastos" del mes con plata
+    // que ya se había contado cuando se compró.
+    const income = filtered.filter((m) => m.kind === "INCOME");
+    const expenses = filtered.filter((m) => m.kind === "EXPENSE");
+    const transfers = filtered.filter((m) => m.kind === "TRANSFER");
 
-    // buckets para barras
-    type Bucket = { label: string; ingresos: number; gastos: number };
-    let buckets: Bucket[] = [];
+    const incomeTotal = sumAmounts(income.map((m) => m.amount));
+    const expenseTotal = sumAmounts(expenses.map((m) => m.amount));
 
-    if (mode === "week") {
-      const days = [...Array(7)].map((_, i) => {
-        const d = new Date(range.from);
-        d.setDate(d.getDate() + i);
-        return d;
-      });
-      buckets = days.map((d) => ({
-        label: d.toLocaleDateString("es-ES", { weekday: "short" }),
-        ingresos: 0,
-        gastos: 0,
-      }));
-    } else if (mode === "month") {
-      const n = range.to.getDate();
-      buckets = [...Array(n)].map((_, i) => ({ label: String(i + 1), ingresos: 0, gastos: 0 }));
-    } else {
-      const months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
-      buckets = months.map((label) => ({ label, ingresos: 0, gastos: 0 }));
+    const incomeCents = toCents(incomeTotal);
+    const expenseCents = toCents(expenseTotal);
+    const resultCents = incomeCents - expenseCents;
+
+    const byCategory = new Map<string, number>();
+    for (const movement of expenses) {
+      byCategory.set(
+        movement.category?.name ?? "Sin categoría",
+        (byCategory.get(movement.category?.name ?? "Sin categoría") ?? 0) +
+          toCents(movement.amount),
+      );
     }
 
-    for (const m of filtered) {
-      const d = new Date(m.date);
-      if (m.kind === "INCOME") {
-        income += m.amount;
-        if (m.isFixed) fixedIncome += m.amount;
-        byCatIncome.set(m.category.name, (byCatIncome.get(m.category.name) ?? 0) + m.amount);
-      } else {
-        expense += m.amount;
-        if (m.isFixed) fixedExpense += m.amount;
-        byCatExpense.set(m.category.name, (byCatExpense.get(m.category.name) ?? 0) + m.amount);
+    const pie = [...byCategory.entries()]
+      .map(([name, cents]) => ({
+        name,
+        value: Number(centsToString(cents)),
+        sharePercent:
+          expenseCents === 0 ? "0.00" : ((cents / expenseCents) * 100).toFixed(2),
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    // ── Las barras del gráfico ───────────────────────────────────────────────
+    // El índice de cada movimiento se resuelve con `bucketIndex`, que compara
+    // FECHAS DE CALENDARIO.
+    //
+    // La versión anterior hacía `new Date(m.date).getDate()` sobre un instante
+    // UTC. Con offset −3, un gasto del 1 de noviembre daba `getDate() === 31` y
+    // caía en la barra del 31 de octubre — una barra que debería estar vacía, en
+    // un gráfico donde no debería aparecer.
+    const bucketCount =
+      mode === "week" ? 7 : mode === "month" ? Number(range.to.slice(8, 10)) : 12;
+
+    const incomeBuckets = new Array<number>(bucketCount).fill(0);
+    const expenseBuckets = new Array<number>(bucketCount).fill(0);
+
+    for (const movement of filtered) {
+      const index = bucketIndex(mode, range, movement.date);
+      // Fuera del rango: no se inventa una barra para meterlo.
+      if (index === null || index < 0 || index >= bucketCount) continue;
+
+      if (movement.kind === "INCOME") {
+        incomeBuckets[index] += toCents(movement.amount);
+      } else if (movement.kind === "EXPENSE") {
+        expenseBuckets[index] += toCents(movement.amount);
       }
-      let idx = -1;
+      // Las transferencias no entran en ninguna barra: no son ni una cosa ni la
+      // otra. Si se sumaran a los gastos, el gráfico mostraría un pico que no
+      // corresponde a ninguna pérdida de plata.
+    }
+
+    const bars = Array.from({ length: bucketCount }, (_, index) => {
+      let bucketLabel: string;
+
       if (mode === "week") {
-        idx = Math.round((new Date(d.toDateString()).getTime() - new Date(range.from.toDateString()).getTime()) / 86400000);
+        // Los 7 días de la semana, con su nombre.
+        const dayNumber = Number(range.from.slice(8, 10)) + index;
+        const [year, month] = range.from.split("-").map(Number);
+        // `new Date(y, m - 1, d)` con componentes sueltos: la fecha se construye
+        // en hora local y no se corre un día. `new Date("...-01")` la
+        // interpretaría como UTC y podría mostrar el día anterior.
+        const dayDate = new Date(year, month - 1, dayNumber);
+        bucketLabel = new Intl.DateTimeFormat("es-AR", { weekday: "short" }).format(
+          dayDate,
+        );
       } else if (mode === "month") {
-        idx = d.getDate() - 1;
+        // En modo mes cada barra es un día: se rotula con el número del día.
+        bucketLabel = String(index + 1);
       } else {
-        idx = d.getMonth();
+        // En modo año cada barra es un mes.
+        bucketLabel = new Intl.DateTimeFormat("es-AR", { month: "short" }).format(
+          new Date(Number(range.from.slice(0, 4)), index, 1),
+        );
       }
-      if (idx >= 0 && idx < buckets.length) {
-        if (m.kind === "INCOME") buckets[idx].ingresos += m.amount;
-        else buckets[idx].gastos += m.amount;
-      }
-    }
 
-    const pieIncome = [...byCatIncome.entries()]
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-    const pieExpense = [...byCatExpense.entries()]
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
+      return {
+        label: bucketLabel,
+        Ingresos: Number(centsToString(incomeBuckets[index])),
+        Gastos: Number(centsToString(expenseBuckets[index])),
+      };
+    });
 
-    return { income, expense, balance: income - expense, fixedIncome, fixedExpense, buckets, pieIncome, pieExpense };
+    return {
+      incomeTotal,
+      expenseTotal,
+      result: centsToString(resultCents),
+      savingRate:
+        incomeCents === 0 ? null : ((resultCents / incomeCents) * 100).toFixed(2),
+      positive: resultCents >= 0,
+      pie,
+      bars,
+      incomeCount: income.length,
+      expenseCount: expenses.length,
+      transferCount: transfers.length,
+      transferTotal: sumAmounts(transfers.map((m) => m.amount)),
+    };
   }, [filtered, mode, range]);
+
+  const hasFilters = categoryFilter !== "" || search !== "";
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
-      {/* Controles */}
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-        <div className="flex gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-full p-1 w-fit">
-          {(["week", "month", "year"] as ViewMode[]).map((m) => (
+      {/* ── Selector de período ──────────────────────────────────────────── */}
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+        <div className="flex gap-1 text-sm">
+          {(["week", "month", "year"] as const).map((option) => (
             <button
-              key={m}
-              onClick={() => setMode(m)}
-              className={`px-4 py-2 rounded-full text-sm font-medium ${mode === m ? "bg-white dark:bg-black shadow" : "text-zinc-500"}`}
+              key={option}
+              onClick={() => setMode(option)}
+              className={`px-3 py-1.5 rounded-full ${
+                mode === option
+                  ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
+                  : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              }`}
             >
-              {m === "week" ? "Semana" : m === "month" ? "Mes" : "Año"}
+              {MODE_LABEL[option]}
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => shift(-1)} className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg">←</button>
-          <p className="font-bold capitalize min-w-40 text-center">{label}</p>
-          <button onClick={() => shift(1)} className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg">→</button>
+
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => shift(-1)}
+            className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg"
+            aria-label="Período anterior"
+          >
+            ←
+          </button>
+          <div className="text-center">
+            {/* `first-letter:uppercase` y NO `capitalize`: `capitalize` pondría
+                "Octubre De 2026", que en español está mal escrito. */}
+            <p className="font-bold first-letter:uppercase">{label}</p>
+            <p className="text-xs text-zinc-500">
+              {range.from} → {range.to}
+            </p>
+          </div>
+          <button
+            onClick={() => shift(1)}
+            className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg"
+            aria-label="Período siguiente"
+          >
+            →
+          </button>
         </div>
       </div>
 
-      {/* Filtros por tipo y notas */}
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row gap-2">
+      {/* ── Filtros ──────────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row gap-2">
         <select
-          value={catFilter}
-          onChange={(e) => setCatFilter(e.target.value)}
-          className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 [&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          aria-label="Filtrar por categoría"
+          className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm outline-none [&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
         >
-          <option value="">Todos los tipos</option>
-          {allCats.map((c) => (
-            <option key={c.name} value={c.name}>
-              {c.kind === "INCOME" ? "💵 " : "🧾 "}{c.name}
+          <option value="">Todas las categorías</option>
+          {allCategories.map((category) => (
+            <option key={category.name} value={category.name}>
+              {category.name}
             </option>
           ))}
         </select>
+
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="🔍 Buscar en notas o tipos… (ej: qué compraste en el kiosco)"
+          placeholder="Buscar…"
           className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
         />
-        {(catFilter !== "" || search !== "") && (
+
+        {hasFilters && (
           <button
             onClick={() => {
-              setCatFilter("");
+              setCategoryFilter("");
               setSearch("");
             }}
-            className="text-sm px-3 py-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 whitespace-nowrap"
+            className="text-sm px-3 py-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
           >
             Limpiar ✕
           </button>
         )}
       </div>
-      {(catFilter !== "" || search.trim() !== "") && (
-        <p className="text-sm text-zinc-500 -mt-2 px-1">
-          Mostrando {filtered.length} de {movements.length} movimientos
-          {catFilter && <> · tipo <b>“{catFilter}”</b></>}
-          {search.trim() && <> · búsqueda <b>“{search.trim()}”</b></>}
+
+      {/* ── Aviso de truncado ────────────────────────────────────────────── */}
+      {truncated && (
+        <p
+          role="alert"
+          className="rounded-xl border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950 px-4 py-3 text-sm text-amber-900 dark:text-amber-100"
+        >
+          Este período tiene más de {MOVEMENTS_MAX_ROWS} movimientos y la pantalla
+          carga sólo los primeros {MOVEMENTS_MAX_ROWS}. Los totales, el gráfico de
+          torta y las barras están calculados sobre <strong>esa parte</strong>, así
+          que están subestimados. Filtrá por categoría o por texto para achicar el
+          período y que los números sean completos.
         </p>
       )}
 
-      {loading ? (
-        <p className="text-center text-zinc-500 py-16">Analizando datos…</p>
-      ) : (
+      {loading && <p className="text-center text-zinc-500 py-8">Cargando…</p>}
+
+      {!loading && (
         <>
-          {/* Resumen */}
+          {/* ── Resumen ─────────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-emerald-600 text-white rounded-2xl p-4">
               <p className="text-xs uppercase opacity-80">Ingresos</p>
-              <p className="text-xl font-extrabold">{formatMoney(stats.income)}</p>
+              <p className="text-xl font-extrabold">
+                {formatMoney(stats.incomeTotal)}
+              </p>
+              <p className="text-[11px] opacity-80">
+                {stats.incomeCount}{" "}
+                {stats.incomeCount === 1 ? "movimiento" : "movimientos"}
+              </p>
             </div>
+
             <div className="bg-rose-600 text-white rounded-2xl p-4">
               <p className="text-xs uppercase opacity-80">Gastos</p>
-              <p className="text-xl font-extrabold">{formatMoney(stats.expense)}</p>
+              <p className="text-xl font-extrabold">
+                {formatMoney(stats.expenseTotal)}
+              </p>
+              <p className="text-[11px] opacity-80">
+                {stats.expenseCount}{" "}
+                {stats.expenseCount === 1 ? "movimiento" : "movimientos"}
+              </p>
             </div>
-            <div className="bg-zinc-900 text-white dark:bg-white dark:text-black rounded-2xl p-4">
-              <p className="text-xs uppercase opacity-80">Balance</p>
-              <p className="text-xl font-extrabold">{formatMoney(stats.balance)}</p>
+
+            <div
+              className={`rounded-2xl p-4 ${
+                stats.positive
+                  ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
+                  : "bg-amber-500 text-black"
+              }`}
+            >
+              <p className="text-xs uppercase opacity-80">Te quedó</p>
+              <p className="text-xl font-extrabold">
+                {formatMoney(stats.result, { withSign: true })}
+              </p>
+              <p className="text-[11px] opacity-80">
+                {stats.savingRate !== null
+                  ? `${formatPercent(stats.savingRate)} de lo que ganaste`
+                  : "Sin ingresos"}
+              </p>
             </div>
-            <div className="bg-amber-400 text-black rounded-2xl p-4">
-              <p className="text-xs uppercase opacity-80">Fijos netos</p>
-              <p className="text-xl font-extrabold">{formatMoney(stats.fixedIncome - stats.fixedExpense)}</p>
-              <p className="text-[11px] opacity-70">+{formatMoney(stats.fixedIncome)} / −{formatMoney(stats.fixedExpense)}</p>
+
+            {/* Las transferencias se muestran aparte, y eso es informativo: deja
+                claro que ese dinero se movió sin ser ganancia ni pérdida. */}
+            <div className="bg-sky-600 text-white rounded-2xl p-4">
+              <p className="text-xs uppercase opacity-80">Transferencias</p>
+              <p className="text-xl font-extrabold">
+                {formatMoney(stats.transferTotal)}
+              </p>
+              <p className="text-[11px] opacity-80">
+                {stats.transferCount}{" "}
+                {stats.transferCount === 1 ? "movimiento" : "movimientos"} entre
+                tus cuentas
+              </p>
             </div>
           </div>
 
-          {/* Barras */}
+          {/* ── Evolución ───────────────────────────────────────────────── */}
           <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm">
-            <h2 className="font-bold mb-1">Ingresos vs Gastos</h2>
-            <p className="text-xs text-zinc-500 mb-3">
-              {mode === "week" ? "Por día de la semana" : mode === "month" ? "Por día del mes" : "Por mes del año"}
-            </p>
+            <h2 className="font-bold mb-3">Evolución</h2>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.buckets}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="label" fontSize={11} interval={mode === "month" ? 2 : 0} />
-                  <YAxis fontSize={11} />
-                  <Tooltip formatter={(value) => formatMoney(Number(value ?? 0))} />
+                <BarChart data={stats.bars}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" fontSize={12} />
+                  <YAxis fontSize={12} width={70} />
+                  <Tooltip
+                    formatter={(value) => formatMoney(String(value ?? 0))}
+                  />
                   <Legend />
-                  <Bar dataKey="ingresos" fill="#059669" radius={[4, 4, 0, 0]} name="Ingresos" />
-                  <Bar dataKey="gastos" fill="#e11d48" radius={[4, 4, 0, 0]} name="Gastos" />
+                  <Bar dataKey="Ingresos" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Gastos" fill="#f43f5e" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Tortas por tipo */}
-          <div className="grid sm:grid-cols-2 gap-3">
+          {/* ── Gastos por categoría ─────────────────────────────────────── */}
+          {stats.pie.length > 0 ? (
             <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm">
-              <h2 className="font-bold">Gastos por tipo</h2>
-              <p className="text-xs text-zinc-500 mb-2">Toca una porción para filtrar por ese tipo</p>
-              {stats.pieExpense.length === 0 ? (
-                <p className="text-sm text-zinc-500 py-8 text-center">Sin gastos en este periodo</p>
-              ) : (
-                <div className="h-60">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={stats.pieExpense}
-                        dataKey="value"
-                        nameKey="name"
-                        outerRadius={85}
-                        label={{ fontSize: 11 }}
-                        style={{ cursor: "pointer" }}
-                        onClick={(_data, index) => {
-                          const name = stats.pieExpense[index]?.name;
-                          if (name) setCatFilter((cur) => (cur === name ? "" : name));
-                        }}
-                      >
-                        {stats.pieExpense.map((_, i) => (
-                          <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} opacity={catFilter === "" || catFilter === stats.pieExpense[i].name ? 1 : 0.35} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => formatMoney(Number(value ?? 0))} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </div>
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm">
-              <h2 className="font-bold">Ingresos por tipo</h2>
-              <p className="text-xs text-zinc-500 mb-2">Toca una porción para filtrar por ese tipo</p>
-              {stats.pieIncome.length === 0 ? (
-                <p className="text-sm text-zinc-500 py-8 text-center">Sin ingresos en este periodo</p>
-              ) : (
-                <div className="h-60">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={stats.pieIncome}
-                        dataKey="value"
-                        nameKey="name"
-                        outerRadius={85}
-                        label={{ fontSize: 11 }}
-                        style={{ cursor: "pointer" }}
-                        onClick={(_data, index) => {
-                          const name = stats.pieIncome[index]?.name;
-                          if (name) setCatFilter((cur) => (cur === name ? "" : name));
-                        }}
-                      >
-                        {stats.pieIncome.map((_, i) => (
-                          <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} opacity={catFilter === "" || catFilter === stats.pieIncome[i].name ? 1 : 0.35} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => formatMoney(Number(value ?? 0))} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </div>
-          </div>
+              <h2 className="font-bold mb-3">En qué se fue</h2>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={stats.pie}
+                      dataKey="value"
+                      nameKey="name"
+                      outerRadius="80%"
+                      label={(entry: { name?: string }) => entry.name ?? ""}
+                    >
+                      {stats.pie.map((entry, index) => (
+                        <Cell
+                          key={entry.name}
+                          fill={PIE_COLORS[index % PIE_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) => formatMoney(String(value ?? 0))}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
 
-          {/* Detalle */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm">
-            <h2 className="font-bold mb-3">Detalle de movimientos ({filtered.length})</h2>
-            <div className="flex flex-col gap-2 max-h-96 overflow-auto">
-              {filtered.map((m) => (
-                <div key={m.id} className="flex items-start justify-between gap-3 text-sm border-b border-zinc-100 dark:border-zinc-800 pb-2">
-                  <span className="min-w-0">
-                    <b>{m.category.name}</b> {m.isFixed && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">FIJO</span>}
-                    <span className="text-zinc-500"> · {new Date(m.date).toLocaleDateString("es-ES")}</span>
-                    {m.description ? (
-                      <span className="block mt-1 text-sm leading-snug whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2.5 py-1.5">
-                        📝 {m.description}
-                      </span>
-                    ) : (
-                      <span className="block mt-0.5 text-xs italic text-zinc-400">Sin nota</span>
-                    )}
-                  </span>
-                  <span className={`font-bold shrink-0 ${m.kind === "INCOME" ? "text-emerald-600" : "text-rose-600"}`}>
-                    {m.kind === "INCOME" ? "+" : "−"}{formatMoney(m.amount)}
-                  </span>
-                </div>
-              ))}
-              {filtered.length === 0 && <p className="text-sm text-zinc-500">No hay datos con esos filtros en este periodo.</p>}
+              {/* La lista con porcentajes es más útil que el gráfico solo:
+                  el gráfico muestra la forma, la lista dice los números. */}
+              <ul className="mt-3 flex flex-col gap-1.5">
+                {stats.pie.map((entry, index) => (
+                  <li
+                    key={entry.name}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0"
+                      style={{
+                        backgroundColor: PIE_COLORS[index % PIE_COLORS.length],
+                      }}
+                    />
+                    <span className="flex-1 truncate">{entry.name}</span>
+                    <span className="text-zinc-500 text-xs">
+                      {formatPercent(entry.sharePercent)}
+                    </span>
+                    <span className="font-semibold whitespace-nowrap">
+                      {formatMoney(String(entry.value))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </div>
+          ) : (
+            !loading && (
+              <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-zinc-500">
+                <p className="text-3xl mb-2">📊</p>
+                <p className="font-medium">
+                  No hay gastos en este período
+                </p>
+                <p className="text-sm mt-1">
+                  Cargá un gasto para ver el desglose por categoría.
+                </p>
+              </div>
+            )
+          )}
         </>
       )}
     </main>
