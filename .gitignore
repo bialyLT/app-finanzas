@@ -13,6 +13,12 @@
 # testing
 /coverage
 
+# Salidas de las corridas de Maestro. Los screenshots y las jerarquías de
+# pantalla de un fallo sirven para depurar y no tienen nada que hacer en el
+# repo: pesan, cambian en cada corrida y ensucian cualquier diff.
+.maestro-*
+/.maestro/
+
 # next.js
 /.next/
 /out/
@@ -35,6 +41,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# …pero .env.example SÍ se versiona, y el `!` no es opcional: sin esta línea el
+# patrón de arriba se lo come, y el archivo que documenta qué variables existen
+# es justamente el que nadie que clona el repo puede reconstruir solo.
+!.env.example
 
 # vercel
 .vercel
@@ -46,3 +56,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .neon
+
+# local planning docs (not versioned)
+ROADMAP.md
