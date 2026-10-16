@@ -8,7 +8,7 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 
 ## Estado verificado (2026-10-16)
 
-- `main` tiene el rediseño completo del modelo de dinero en 7 commits (infra, auth, dominio, UI, tests, docs), ya pusheados a `origin` (`bialyLT/app-finanzas`).
+- `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
 - Batería verde: 90 tests de vitest (64 unitarios + 26 de integración), 52 aserciones de smoke, 6 flows de Maestro en ~4 minutos, build de producción limpio.
 - Fases 0, 1 y 2 cerradas; fases 4, 5, 6, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
