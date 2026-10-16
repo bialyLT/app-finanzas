@@ -84,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File scripts/flows.ps1 -Flow flows/04-transf
 
 ---
 
-## Cómo se corre Maestro (y las once trampas)
+## Cómo se corre Maestro (y las doce trampas)
 
 Leé **`flows/README.md` antes de escribir un solo flujo.** Documenta las trampas
 que ya nos costaron sesiones enteras de depuración, incluida la más engañosa de
@@ -132,6 +132,11 @@ Resumen de lo que no podés olvidarte:
     primer `openLink`, sospechá de servidores MCP de Maestro vivos peleando por
     `~/.maestro/sessions`, no de Chrome. `scripts/maestro.ps1` los mata solo, así
     que **no invoques el CLI de Maestro directo**: perdés esa protección.
+12. **Un `scrollUntilVisible` hacia ARRIBA frena debajo del header pegajoso.** El
+    header es `sticky top-0 z-40`: el elemento «entra al viewport» pegado al borde
+    y queda TAPADO; Maestro lo da por visible, el `tapOn` se lo come el header y
+    el error aparece en el PASO SIGUIENTE. Anclá el scroll en una línea ARRIBA del
+    objetivo con `centerElement: true` (trampa 12 de `flows/README.md`).
 
 ### Los datos de partida
 

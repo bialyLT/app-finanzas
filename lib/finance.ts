@@ -151,6 +151,30 @@ export interface PeriodTotalsDTO {
   expenses: string;
   /** Suma de los TRANSFER. Se informa, pero NO entra en ingresos ni gastos. */
   transfers: string;
+  /**
+   * Flujo de caja (liquidez): Σ entradas a cuentas de dinero − Σ salidas.
+   *
+   * ────────────────────────────────────────────────────────────────────────────
+   * POR QUÉ NO ES "INGRESOS − GASTOS"
+   * ────────────────────────────────────────────────────────────────────────────
+   * Porque ese número es el AHORRO, y los dos se separan apenas hay deuda de por
+   * medio — que es el caso normal:
+   *
+   *   · El desembolso de un préstamo SUMA acá: entra plata a tu cuenta. Como es
+   *     una TRANSFER, no toca `income` — te endeudaste, no ganaste.
+   *   · El capital de cada cuota RESTA acá: sale plata de tu cuenta. Tampoco es
+   *     un gasto: estás devolviendo lo que pediste.
+   *   · Una compra con tarjeta NO toca este número: la deuda sube, pero ningún
+   *     peso salió de tus cuentas de dinero. El pago del resumen (TRANSFER del
+   *     banco a la tarjeta) es el que sí sale.
+   *   · Una transferencia entre dos cuentas de dinero suma como entrada Y como
+   *     salida: su neto es cero, que es lo que pasa de verdad.
+   *
+   * Puede ser NEGATIVO (salió más de lo que entró) y el signo viaja en el
+   * string. Etiquetarlo siempre "flujo de caja", nunca "ahorro": confundirlos es
+   * el error que todo el rediseño existe para evitar (ROADMAP §5.2).
+   */
+  cashFlow: string;
   incomeCount: number;
   expenseCount: number;
   transferCount: number;

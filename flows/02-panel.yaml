@@ -21,6 +21,15 @@
 # Los valores de las aserciones están calculados a mano en los comentarios. Si
 # un cambio en la lógica los rompe, el flujo dice CUÁL cambió.
 #
+# El flujo de caja (la tarjeta nueva) tiene SUS propios números, distintos de
+# "Te quedó" en cuanto hay deuda de por medio:
+#
+#   · Octubre:    +328.587,29  (310.000 + 50.000 de la tarjeta − 31.412,71 del
+#                              capital de la cuota: la ropa NO salió de una
+#                              cuenta y el capital SÍ, aunque no sea gasto)
+#   · Septiembre: +500.000,00  (el desembolso entra a la caja; el ahorro es CERO)
+#   · Agosto:        $ 0,00    (sin movimientos: "Sin transferencias este mes")
+#
 # ─────────────────────────────────────────────────────────────────────────────
 # LAS DOS REGLAS DE ESCRITURA DE LOS PATRONES
 # ─────────────────────────────────────────────────────────────────────────────
@@ -106,7 +115,7 @@ env:
     visible: "Patrimonio neto.*"
     timeout: 90000
 
-# ── Las tres tarjetas del mes ────────────────────────────────────────────────
+# ── Las cuatro tarjetas del mes ──────────────────────────────────────────────
 # Ingresos: sólo el sueldo. El desembolso del préstamo NO está acá — es una
 # transferencia, y esa distinción es TODO el rediseño.
 - assertVisible: '.*800\.000,00.*'
@@ -115,11 +124,39 @@ env:
 # El 25.000 es el INTERÉS de la cuota, que es el único costo real del préstamo.
 - assertVisible: '.*490\.000,00.*'
 
-# 800.000 − 490.000 = 310.000
-- assertVisible: '.*310\.000,00.*'
+# 800.000 − 490.000 = 310.000. Va con el signo: es la tarjeta "Te quedó", y el
+# signo es parte de lo que la pantalla tiene que decir.
+- assertVisible: '.*\+\$.*310\.000,00.*'
 
 # 310.000 / 800.000 = 38,75%
 - assertVisible: ".*Ahorraste 38,75%.*"
+
+# ── La tarjeta "Flujo de caja" (liquidez) ────────────────────────────────────
+#
+# Éste es el número que responde "¿cuánta plata entró y salió de mis cuentas?",
+# y NO es el mismo que "Te quedó": con deuda de por medio, los dos se separan
+# — y ésos son los dos números del rediseño.
+#
+#   Entradas: 800.000,00                    (sueldo → banco)
+#   Salidas:  250.000 + 120.000 + 45.000    (gastos que salieron del banco)
+#           + 25.000,00                     (interés de la cuota)
+#           + 31.412,71                     (capital de la cuota, banco → préstamo)
+#   Flujo:    800.000,00 − 471.412,71 = +328.587,29
+#
+# La compra con tarjeta (50.000) está en los gastos del mes pero NO sale de
+# ninguna cuenta hasta que se pague el resumen; el capital de la cuota sale de
+# la caja pero no es un gasto. Por eso:
+#
+#     310.000,00 (ahorro) + 50.000,00 − 31.412,71 = 328.587,29 (liquidez)
+#
+# Las dos tarjetas tienen que convivir en la MISMA pantalla sin pisarse.
+- assertVisible: "Flujo de caja"
+- assertVisible: '.*\+\$.*328\.587,29.*'
+
+# Y el detalle dice cuántas transferencias explican la diferencia con "Te
+# quedó". Este contador vivía antes en la línea del mes ("7 movimientos · 1
+# transferencia") y ahora vive acá; el encabezado quedó sólo con "7 movimientos".
+- assertVisible: ".*1 transferencia entre tus cuentas.*"
 
 # ── Patrimonio neto ──────────────────────────────────────────────────────────
 # 100.000 (ahorros previos, ya en el banco) + 800.000 − 490.000 = 410.000
@@ -168,15 +205,15 @@ env:
 # ─────────────────────────────────────────────────────────────────────────────
 # Las aserciones de "NO visible" van ANTES de scrollear, y esto es una trampa:
 # `assertNotVisible` también da por buena una pantalla donde el elemento existe
-# pero quedó fuera de la vista. Si se scrollea primero, las dos aserciones de
-# abajo pasarían SIEMPRE —incluso si el desembolso volviera a contarse como
-# ingreso— porque las tarjetas del mes ya no estarían en pantalla.
+# pero quedó fuera de la vista. Si se scrollea primero, las aserciones de abajo
+# pasarían SIEMPRE —incluso si el desembolso volviera a contarse como ingreso—
+# porque las tarjetas del mes ya no estarían en pantalla.
 #
 # Una aserción negativa que pasa por el motivo equivocado es peor que no tenerla:
 # da confianza sin verificar nada.
 #
-# Los tres primeros chequeos van con la página arriba de todo, donde las tarjetas
-# se ven de verdad.
+# Los chequeos de este bloque van con la página arriba de todo, donde las
+# tarjetas se ven de verdad.
 - extendedWaitUntil:
     visible: ".*septiembre de 2026.*"
     timeout: 30000
@@ -184,27 +221,50 @@ env:
 # El mes tiene un solo movimiento, y es una transferencia.
 - assertVisible: ".*1 movimiento.*"
 
-# Y NO se ve como ingreso ni como gasto. Si alguna de estas dos aserciones
-# falla, el modelo volvió a tratar el desembolso como plata ganada.
+# ── La tarjeta de flujo en septiembre: +500.000 sin ser ingreso ─────────────
 #
-# El contador dice "1 movimiento · 1 transferencia": un solo movimiento, y es una
-# transferencia. Las tres cosas al mismo tiempo.
-- assertVisible: ".*1 transferencia.*"
+# El desembolso ENTRA a la caja (préstamo → banco): la liquidez del mes es
+# +500.000,00 mientras el ahorro es CERO. Ésta es la combinación que ninguna
+# otra pantalla muestra: plata disponible que no es plata ganada.
+#
+# El `\+\$` de la aserción es lo que la hace precisa: la fila de la lista
+# muestra "$ 500.000,00" sin signo, así que exigir el "+$" adelante sólo lo
+# puede cumplir la tarjeta de flujo.
+- assertVisible: '.*\+\$.*500\.000,00.*'
+
+# El detalle cuenta la transferencia que explica ese número.
+- assertVisible: ".*1 transferencia entre tus cuentas.*"
+
+# Y "Te quedó" muestra cero: el desembolso NO es un ingreso. Ésta es la
+# aserción que distingue el modelo correcto del viejo — con el desembolso
+# contado como ingreso, acá diría "Ahorraste 100,00%" y el cartel de "Sin
+# ingresos este mes" no existiría.
+- assertVisible: ".*Sin ingresos este mes.*"
+
+# Y NO se ve como ingreso ni como gasto. Si alguna de estas aserciones falla,
+# el modelo volvió a tratar el desembolso como plata ganada.
 - assertNotVisible: '.*800\.000,00.*'
 - assertNotVisible: '.*490\.000,00.*'
 
-# Recién ahora, con las aserciones de arriba ya hechas, se scrollea para
-# encontrar la transferencia en la lista.
+# ── La fila de la transferencia, en la lista ─────────────────────────────────
 #
-# Hay que scrollear porque las tarjetas del mes viven arriba de todo y la LISTA
-# de movimientos arranca debajo del pliegue (la pantalla de los tests mide
-# 1018×597). Sin el scroll la aserción falla por un motivo que no tiene nada que
-# ver con el dato: el número está en la página, sólo que fuera de la vista.
+# ─────────────────────────────────────────────────────────────────────────────
+# EL ANCLA DEL SCROLL ES LA FILA, NO EL MONTO
+# ─────────────────────────────────────────────────────────────────────────────
+# Antes acá se scrolleaba hasta ".*500\.000,00.*" y alcanzaba porque ese monto
+# sólo podía estar en la fila. Desde que la tarjeta de flujo muestra
+# "+$ 500.000,00" arriba de todo, ese ancla quedó ambigua: el scroll puede
+# satisfacerse con la tarjeta (que ya estaba a la vista) y dar por buena una
+# lista que nunca se miró. El ancla ahora es la DESCRIPCIÓN de la fila —el
+# único texto que prueba que el movimiento se renderizó— y ninguna tarjeta
+# puede satisfacerla.
 - scrollUntilVisible:
     element:
-      text: '.*500\.000,00.*'
+      text: ".*Desembolso del préstamo.*"
     direction: DOWN
     timeout: 30000
+
+- assertVisible: ".*Desembolso del préstamo.*"
 
 # ── Volver a octubre y mirar la lista de movimientos ─────────────────────────
 #
@@ -309,3 +369,62 @@ env:
       text: ".*Sueldo de octubre.*"
     direction: DOWN
     timeout: 30000
+
+# ── Agosto: un mes sin movimientos y sin transferencias ──────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# VOLVER ARRIBA SIN CHOCARSE CON EL HEADER PEGAJOSO (trampa 12)
+# ─────────────────────────────────────────────────────────────────────────────
+# Venimos scrolleados al fondo de la lista y los botones de mes están arriba de
+# todo. `scrollUntilVisible` hacia arriba frena apenas el elemento entra al
+# viewport, y si entra pegado al borde superior queda DETRÁS del header sticky:
+# Maestro lo da por visible, el tap se lo come el header y el error aparece en
+# el paso siguiente. Anclando en la etiqueta del mes con `centerElement: true`,
+# el selector queda centrado, lejos del header, y el tap llega.
+- scrollUntilVisible:
+    element:
+      text: ".*octubre de 2026.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "btn-prev-month"
+
+- extendedWaitUntil:
+    visible: ".*septiembre de 2026.*"
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+
+- extendedWaitUntil:
+    visible: ".*agosto de 2026.*"
+    timeout: 30000
+
+# Agosto no tuvo NINGÚN movimiento: el encabezado dice cero y la tarjeta de
+# flujo muestra 0,00 con su detalle sin transferencias. El detalle es la
+# aserción fuerte: "Sin transferencias este mes" sólo aparece cuando el
+# contador del servidor es cero.
+- assertVisible: ".*0 movimientos.*"
+- assertVisible: ".*Sin transferencias este mes.*"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QUÉ **NO** PUEDE APARECER EN AGOSTO (antes de scrollear: trampa 7)
+# ─────────────────────────────────────────────────────────────────────────────
+# El saldo del banco NO se verifica acá a propósito: el patrimonio y los saldos
+# por cuenta son de HOY, no del mes que estás mirando (el panel los pide sin
+# `asOf`), así que en agosto siguen mostrando los números actuales. Lo que sí
+# es del mes son las tarjetas de arriba, y ésas no pueden mostrar ni el
+# desembolso de septiembre ni el flujo de octubre.
+- assertNotVisible: '.*500\.000,00.*'
+- assertNotVisible: '.*328\.587,29.*'
+
+# La lista de agosto muestra su estado vacío, con el empujón a cargar algo.
+- scrollUntilVisible:
+    element:
+      text: "Sin movimientos este mes"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: "Sin movimientos este mes"

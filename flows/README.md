@@ -47,16 +47,20 @@ powershell -File scripts/maestro.ps1 test flows --env APP_PASSWORD=tu-password
 
 ### Por qué los datos se siembran aparte
 
-Los flows 02 a 07 **verifican**, no construyen. El escenario (banco, tarjeta,
-préstamo al 60%, sueldo, gastos, cuota) lo arma `scripts/smoke.mjs`, que además
-comprueba que cada número sea el esperado calculado a mano.
+Los flows 01, 02, 05, 06 y 07 **verifican**, no construyen. El escenario
+(banco, tarjeta, préstamo al 60%, sueldo, gastos, cuota) lo arma
+`scripts/smoke.mjs`, que además comprueba que cada número sea el esperado
+calculado a mano.
 
 Separarlo tiene una ventaja concreta: si un flow falla, la pregunta "¿el dato
 estaba mal o la pantalla lo muestra mal?" se responde sola. El smoke test ya
 certificó el dato.
 
-Los flows 03 y 04 **sí** agregan movimientos, así que correrlos dos veces sin
-resetear hace que los totales no coincidan. De ahí el `--reset`.
+Los flows 03, 04, 08, 09 y 10 **sí** agregan movimientos, así que correrlos
+dos veces sin resetear hace que los totales no coincidan. De ahí el `--reset`.
+Y por eso los flows **08, 09 y 10 van al final, en ese orden**: parten de la
+suma que dejan los anteriores (el “en rojo”, los montos extremos y el saldo a
+favor no tienen lugar en el mes limpio del seed).
 
 El wrapper `scripts/maestro.ps1` se encarga de `JAVA_HOME`, de desactivar los
 analytics anónimos de Maestro y de ponerle un techo de memoria a la JVM (ver
@@ -526,17 +530,20 @@ elemento.
 
 | Flow | Qué verifica | Estado |
 |---|---|---|
-| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (34s) |
-| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (31s) |
-| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), los saldos por cuenta, y que el **desembolso del préstamo no aparezca como ingreso** | ✅ Pasa (1m) |
-| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (45s) |
+| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (39s) |
+| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (30s) |
+| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (1m 42s) |
+| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (46s) |
 | `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (52s) |
 | `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (41s) |
-| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 31s) |
-| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 15s) |
+| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 33s) |
+| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 18s) |
+| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (48s) |
+| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 8s) |
+| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (56s) |
 
-**Suite completa: 8/8 en 8m10s.** Los tiempos no son decorativos: cuando había
+**Suite completa: 11/11 en 12m 29s.** Los tiempos no son decorativos: cuando había
 servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
-tardaba **5m51s en fallar** y los otros cinco corrían entre 10 y 18 segundos más
+tardaba **5m51s en fallar** y los demás corrían entre 10 y 18 segundos más
 lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una
 casualidad.

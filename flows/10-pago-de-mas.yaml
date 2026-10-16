@@ -1,0 +1,196 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 10 · Panel — pagar la tarjeta de MÁS (el saldo a favor)
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica qué pasa cuando una cuenta de deuda queda con saldo A FAVOR: se
+# transfiere más plata que la deuda de la tarjeta, así que la tarjeta pasa de
+# deber $ 50.000 a que le deban $ 50.000 a quien la usa.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EL BUG QUE ESTE FLUJO REPRODUCE
+# ─────────────────────────────────────────────────────────────────────────────
+# La fila de la cuenta se armaba SIEMPRE como `debe ${formatMoney(debt)}`, con
+# el `debt` tal como venía. Con la deuda en negativo —un saldo a favor— la
+# pantalla mostraba:
+#
+#     Visa Santander  debe -$ 50.000,00
+#
+# "Debe −$ 50.000,00" es una contradicción: la palabra dice que debe y el
+# signo dice que le deben. Ninguna cuenta debe un número negativo.
+#
+# La regla correcta es la que ya usa el resto del panel: mostrar la deuda del
+# lado que corresponde:
+#
+#     debt positivo → "debe $ 50.000,00"      (lo que se le debe a la tarjeta)
+#     debt negativo → "a favor $ 50.000,00"   (lo que la tarjeta tiene a favor)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO: VA ÚLTIMO (después del 09)
+# ─────────────────────────────────────────────────────────────────────────────
+#     powershell -File scripts/flows.ps1
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 09):
+#
+#   gastos        10.900.000,00
+#   quedó        −10.100.000,00
+#   flujo        −10.081.412,71
+#   banco         −9.531.412,71   (el gasto de diez millones del flujo 09)
+#   Visa              50.000,00   de deuda
+#   transferencias 2              (capital de la cuota + paso al efectivo)
+#
+# Se transfieren 100.000 del banco a la Visa, que sólo debe 50.000:
+#
+#   Visa        −50.000 + 100.000 = +50.000  →  "a favor $ 50.000,00"
+#   banco        −9.531.412,71 − 100.000 = −9.631.412,71
+#   flujo        −10.081.412,71 − 100.000 = −10.181.412,71
+#                (banco → tarjeta SALE de la caja, igual que el capital de la
+#                 cuota: son las dos caras de la misma regla)
+#   transferencias 3
+#   gastos y "Te quedó": INTACTOS — una transferencia no es gasto.
+#
+# La verificación del destino usa el texto del MISMO componente que la
+# aplicación (`accountLabel`): el selector queda mostrando "Visa Santander ·
+# debe $ 50.000,00". El patrón exige el "·" a propósito: la lista de cuentas
+# del panel de atrás dice "Visa Santander debe $ 50.000,00" (sin el punto
+# medio), así que el "·" distingue el valor del selector de la fila del panel
+# — el mismo cuidado con el que el flujo 08 ancla en el monto de la fila y no
+# en el nombre de la categoría.
+
+url: http://127.0.0.1:3000
+name: "10 · Panel — pagar la tarjeta de más"
+tags:
+  - smoke
+  - panel
+  - saldos
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida. El desarrollo completo del
+# porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Punto de partida (lo que dejó el flujo 09) ───────────────────────────────
+- assertVisible: '.*10\.900\.000,00.*'          # gastos
+- assertVisible: '.*-\$.*10\.100\.000,00.*'      # te quedó
+- assertVisible: '.*-\$.*10\.081\.412,71.*'      # flujo de caja
+- assertVisible: '.*-\$.*9\.531\.412,71.*'       # banco (sobregirado)
+- assertVisible: '.*debe.*50\.000,00.*'          # la Visa, del lado normal
+- assertVisible: ".*2 transferencias entre tus cuentas.*"
+
+# ── Cargar el pago de más ────────────────────────────────────────────────────
+- tapOn:
+    id: "btn-transfer"
+
+- extendedWaitUntil:
+    visible: ".*Nueva transferencia.*"
+    timeout: 30000
+
+# Origen por defecto: el banco. Se verifica antes de elegir el destino — si el
+# orden de las cuentas cambiara, conviene enterarse acá y no por un pago hecho
+# desde la cuenta equivocada.
+- assertVisible: ".*Banco Galicia.*"
+
+- tapOn:
+    id: "tx-amount"
+- inputText: "100000"
+- assertVisible: '.*100\.000,00.*'
+
+# Destino: la Visa.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ NO SE TOCA LA OPCIÓN DEL SELECT (el detalle importa)
+# ─────────────────────────────────────────────────────────────────────────────
+# Tocar una <option> —de un <select> nativo, en web— NO puede funcionar:
+# Maestro ubica cada opción en un espacio de coordenadas sintético
+# (`y = 100000 + índice * 20`) y al hacer tap recorre TODAS las <option> del
+# documento y elige la PRIMERA con ese índice. El destino es el ÚLTIMO select
+# de la página (el filtro de categorías del panel y el select de origen van
+# antes y ocupan esos mismos índices), así que el tap activaba otro select y
+# la transferencia salía con el destino por defecto. El paso decía COMPLETED
+# igual: un falso positivo.
+#
+# La técnica que sí funciona —verificada con sondas contra este formulario—
+# enfoca el select y deja que el type-ahead del navegador elija:
+#
+#   1. Clic en el <label> "A qué cuenta va *": enfoca el <select> SIN abrir
+#      el popup nativo.
+#   2. `inputText` con el prefijo del destino: Maestro manda teclas REALES al
+#      elemento activo y la opción que empieza con ese texto queda elegida,
+#      con su change disparado.
+- tapOn: ".*A qué cuenta va.*"
+- inputText: "visa"
+
+# La verificación va con el select YA desenfocado (la nota toma el foco): si
+# el select estuviera enfocado, sus <option> también estarían en el árbol y
+# el "·" no distinguiría el VALOR elegido de la opción listada.
+- tapOn:
+    id: "tx-description"
+- inputText: "Pago extra a la Visa"
+
+- assertVisible: '.*Visa Santander · debe.*'
+
+- tapOn:
+    id: "tx-submit"
+
+# ── La tarjeta ahora tiene saldo A FAVOR ─────────────────────────────────────
+# Éste es el texto que el bug hacía imposible: con el código viejo la fila
+# decía "debe -$ 50.000,00" y este paso nunca encontraba su blanco.
+- extendedWaitUntil:
+    visible: '.*a favor.*50\.000,00.*'
+    timeout: 30000
+
+# ── El pago movió lo que tenía que mover, y sólo eso ─────────────────────────
+# El banco pagó 100.000 (quedó más sobregirado):
+- assertVisible: '.*-\$.*9\.631\.412,71.*'
+
+# La caja lo registra como salida — banco → tarjeta es plata que sale, aunque
+# no sea un gasto:
+- assertVisible: '.*-\$.*10\.181\.412,71.*'
+
+# Y el mes ganó una transferencia más:
+- assertVisible: ".*3 transferencias entre tus cuentas.*"
+
+# Gastos y "Te quedó" NO se movieron: el pago de una deuda es una
+# transferencia, no un gasto. Si alguno de los dos hubiera cambiado, el pago
+# volvió a contarse como lo que no es.
+- assertVisible: '.*10\.900\.000,00.*'
+- assertVisible: '.*-\$.*10\.100\.000,00.*'
+
+# ── Los valores viejos, ANTES de scrollear (trampa 7) ────────────────────────
+# La fila con "debe" y deuda en positivo ya no existe: la tarjeta le debe plata
+# a quien la usa, no al revés.
+- assertNotVisible: '.*debe.*50\.000,00.*'
+- assertNotVisible: '.*-\$.*10\.081\.412,71.*'
+
+# ── Y el pago quedó en la lista ──────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: ".*Pago extra a la Visa.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*Pago extra a la Visa.*"

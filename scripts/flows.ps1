@@ -15,10 +15,10 @@
 #   2. Correr Maestro con la contraseña en `--env`
 #   3. Acordarse del ORDEN
 #
-# El paso 1 olvidado es el peor, porque los flows 03 y 04 AGREGAN movimientos.
-# Sin reset, la segunda corrida arranca con los movimientos de la primera y los
-# totales no dan. El fallo aparece en una aserción de un número, lejos de la
-# causa, y se pierden veinte minutos buscando un bug que no existe.
+# El paso 1 olvidado es el peor, porque los flows 03, 04, 08, 09 y 10 AGREGAN
+# movimientos. Sin reset, la segunda corrida arranca con los movimientos de la
+# primera y los totales no dan. El fallo aparece en una aserción de un número,
+# lejos de la causa, y se pierden veinte minutos buscando un bug que no existe.
 #
 # Este script hace los tres pasos en orden, siempre.
 #

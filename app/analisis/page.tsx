@@ -96,6 +96,7 @@ const EMPTY_TOTALS: PeriodTotalsDTO = {
   income: "0.00",
   expenses: "0.00",
   transfers: "0.00",
+  cashFlow: "0.00",
   incomeCount: 0,
   expenseCount: 0,
   transferCount: 0,

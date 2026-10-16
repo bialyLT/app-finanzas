@@ -1,0 +1,161 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 08 · Panel — un mes en rojo
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica las tarjetas del panel cuando el mes NO cierra en positivo: que el
+# signo negativo se muestre, que la tasa de ahorro acompañe con su signo, y —
+# lo más importante— que "Flujo de caja" y "Te quedó" sigan siendo NÚMEROS
+# DISTINTOS, cada uno con su verdad, también en rojo.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO: VA ÚLTIMO
+# ─────────────────────────────────────────────────────────────────────────────
+# Sobre el sembrado de `node scripts/smoke.mjs --reset`, los números de partida
+# son los que dejan los flujos 03 (Kiosco de 10.000) y 04 (transferencia de
+# 50.000 al efectivo), así que corre AL FINAL, después del 07:
+#
+#     powershell -File scripts/flows.ps1
+#
+# Este flujo AGREGA un gasto de 400.000: correrlo antes del 03 rompería las
+# aserciones de todos los siguientes.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 04 en octubre):
+#
+#   ingresos       800.000,00   (sueldo)
+#   gastos         500.000,00   (490.000 del seed + 10.000 del kiosco)
+#   quedó         +300.000,00   → "Ahorraste 37,50%"
+#   flujo         +318.587,29   (800.000 − 481.412,71 de salidas de cuentas)
+#   transferencias 2            (capital de la cuota + paso al efectivo)
+#
+# Se carga un gasto de 400.000 desde el banco (con fecha de HOY, octubre):
+#
+#   gastos         500.000 + 400.000 = 900.000,00
+#   quedó          800.000 − 900.000 = −100.000,00 → "Ahorraste -12,50%"
+#   flujo          318.587,29 − 400.000 = −81.412,71
+#   banco          868.587,29 − 400.000 = 468.587,29
+#
+# Los dos negativos NO son el mismo número ni el mismo concepto: uno mide la
+# caja (−81.412,71) y el otro el resultado del mes (−100.000,00). La diferencia
+# sigue siendo la deuda de por medio: la compra con tarjeta (gasto sin caja) y
+# el capital de la cuota (caja sin gasto).
+#
+# El monto se escribe "400.000" —con punto de miles, la convención argentina—
+# para verificar de paso que el formulario y el servidor lo interpretan como
+# cuatrocientos mil y no como cuatrocientos.
+
+url: http://127.0.0.1:3000
+name: "08 · Panel — un mes en rojo"
+tags:
+  - smoke
+  - panel
+  - flujo-de-caja
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida. El desarrollo completo del
+# porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Punto de partida (lo que dejó el flujo 04) ───────────────────────────────
+# Se verifica ANTES de cargar nada: si el estado de arranque no es el esperado,
+# el resto del flujo mediría otra cosa. El "\+\$" es parte del texto que
+# renderiza `formatMoney(..., { withSign: true })`, y distingue la tarjeta de
+# flujo de cualquier fila de la lista (que muestra el monto sin signo).
+- assertVisible: '.*\+\$.*318\.587,29.*'
+- assertVisible: '.*\+\$.*300\.000,00.*'
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: ".*2 transferencias entre tus cuentas.*"
+
+# ── Cargar el gasto que da vuelta el mes ─────────────────────────────────────
+- tapOn:
+    id: "btn-expense"
+
+- extendedWaitUntil:
+    visible: ".*Nuevo gasto.*"
+    timeout: 30000
+
+- tapOn:
+    id: "tx-amount"
+- inputText: "400.000"
+
+# La vista previa prueba que "400.000" (con punto) se leyó como 400.000,00 y no
+# como 400,00 ni como 40.000,00 — el malentendido más caro de un formulario de
+# plata.
+- assertVisible: '.*400\.000,00.*'
+
+- tapOn:
+    id: "tx-category"
+- inputText: "Arreglos"
+- assertVisible: ".*Se crea la categoría.*"
+
+- tapOn:
+    id: "tx-submit"
+
+# ── Los totales, con el mes en rojo ──────────────────────────────────────────
+# Se espera al número nuevo y no al cierre del modal: el modal se cierra antes
+# de que la recarga termine, así que esperar por él no garantiza que el dato ya
+# esté en pantalla.
+- extendedWaitUntil:
+    visible: '.*900\.000,00.*'
+    timeout: 30000
+
+# La tarjeta de liquidez: el gasto salió del banco, así que el flujo cae a
+# −81.412,71 y se muestra con el signo. La fila de la lista también muestra
+# este gasto, pero con el menos de FILA (U+2212): acá el patrón exige el
+# formato de la tarjeta ("-$ 81.412,71").
+- assertVisible: '.*-\$.*81\.412,71.*'
+
+# "Te quedó" también en rojo: −100.000,00. Los dos negativos NO son el mismo
+# número.
+- assertVisible: '.*-\$.*100\.000,00.*'
+
+# La tasa de ahorro negativa se muestra con su signo, no como un valor absoluto
+# disfrazado: −100.000 / 800.000 = −12,50%.
+- assertVisible: ".*Ahorraste -12,50%.*"
+
+# Las transferencias del mes NO cambiaron con un gasto.
+- assertVisible: ".*2 transferencias entre tus cuentas.*"
+
+# ── Los valores viejos, ANTES de scrollear (trampa 7) ────────────────────────
+# `assertNotVisible` aprueba lo que quedó fuera de la pantalla, así que estas
+# dos van con las tarjetas a la vista: si el flujo siguiera diciendo +318.587,29
+# o el resultado +300.000,00, acá se ve.
+- assertNotVisible: '.*\+\$.*318\.587,29.*'
+- assertNotVisible: '.*\+\$.*300\.000,00.*'
+
+# ── Y el gasto quedó en la lista ─────────────────────────────────────────────
+# El ancla es el MONTO de la fila y no el nombre de la categoría: "Arreglos"
+# acaba de sumarse también al selector de categorías de la barra de filtros, y
+# el scroll podría satisfacerse con la opción del selector sin que la fila se
+# haya renderizado. "400.000,00" existe una sola vez: en la fila nueva.
+- scrollUntilVisible:
+    element:
+      text: '.*400\.000,00.*'
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*Arreglos.*"

@@ -120,6 +120,32 @@ export function formatPercent(
 }
 
 /**
+ * Etiqueta de una cuenta de deuda, con la palabra del lado que corresponde.
+ *
+ *     formatLiability("50000.00")   → "debe $ 50.000,00"
+ *     formatLiability("-50000.00")  → "a favor $ 50.000,00"
+ *     formatLiability("0.00")       → "debe $ 0,00"
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ NO ALCANZA CON `debe ${formatMoney(debt)}`
+ * ─────────────────────────────────────────────────────────────────────────────
+ * La deuda llega en POSITIVO cuando se debe —el caso normal— y en NEGATIVO
+ * cuando la cuenta quedó con saldo a favor (se pagó más de lo que se debía).
+ * Interpolar el signo crudo produce "debe −$ 50.000,00", que es una
+ * contradicción: la palabra dice que debe y el signo dice que le deben.
+ * Ninguna cuenta debe un número negativo; lo que tiene es plata a favor.
+ *
+ * El cero se queda del lado de "debe": es la deuda nula, no un saldo a favor.
+ */
+export function formatLiability(debt: MoneyLike): string {
+  const cents = toCents(toDecimalString(debt));
+
+  return cents < 0
+    ? `a favor ${formatMoney(centsToString(-cents))}`
+    : `debe ${formatMoney(centsToString(cents))}`;
+}
+
+/**
  * Etiqueta corta del día, para agrupar movimientos en una lista.
  *
  *     formatDayLabel("2026-10-15") → "15 de octubre"

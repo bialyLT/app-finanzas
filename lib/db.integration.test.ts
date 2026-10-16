@@ -33,6 +33,7 @@ import { amortizationSchedule } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
 import {
   categoriesInPeriod,
+  movementCashFlow,
   movementCategoryBreakdown,
   movementDateBreakdown,
   movementTotals,
@@ -1098,5 +1099,294 @@ describeDb("Los agregados de reportes · completos aunque la lista se topee", ()
     // Sin extremos de rango: todas las categorías usadas alguna vez.
     const todas = await categoriesInPeriod(db, null, null);
     expect(todas.length).toBe(4);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL FLUJO DE CAJA · LA LIQUIDEZ, NO LA GANANCIA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `movementTotals` responde "cuánto gané y cuánto gasté". `movementCashFlow`
+ * responde OTRA pregunta: "cuánta plata entró y salió de mis cuentas de
+ * dinero". El punto del rediseño es que los dos números se puedan separar —
+ * apenas hay deuda de por medio, se separan:
+ *
+ *   · El desembolso del préstamo entra a la caja y NO es un ingreso.
+ *   · Una compra con tarjeta es un gasto y NO mueve la caja (todavía).
+ *   · El pago del resumen mueve la caja y NO es un gasto.
+ *   · Una transferencia entre dos cuentas de dinero se anula sola.
+ *
+ * Si alguno de estos tests se cae, la app volvió a tratar liquidez y ahorro
+ * como si fueran lo mismo — y los dos números se ven igual de confiables.
+ */
+describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  /** Un rango de fechas de calendario, listo para pasar como `where`. */
+  const rango = (from: string, to: string) => ({
+    date: { gte: calendarToDb(from), lte: calendarToDb(to) },
+  });
+
+  it("el desembolso del préstamo CUENTA como entrada (y sigue sin ser ingreso)", async () => {
+    const [loan, bank] = await Promise.all([
+      db.account.create({
+        data: {
+          name: "Préstamo",
+          kind: "LOAN",
+          principal: "500000",
+          tnaPercent: "60",
+          installmentCount: 12,
+        },
+      }),
+      db.account.create({ data: { name: "Banco", kind: "BANK" } }),
+    ]);
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "500000",
+        date: calendarToDb("2026-09-30"),
+        accountId: loan.id,
+        toAccountId: bank.id,
+        description: "Desembolso del préstamo",
+      },
+    });
+
+    const septiembre = rango("2026-09-01", "2026-09-30");
+
+    // La caja: entró medio millón al banco. El préstamo es deuda, así que su
+    // lado del movimiento no cuenta.
+    expect(await movementCashFlow(db, septiembre)).toBe("500000.00");
+
+    // Y la misma lectura desde el DTO que usa el panel: $ 0 de ingreso,
+    // +500.000 de flujo. Las dos cosas son ciertas al mismo tiempo, y por eso
+    // los dos números existen por separado.
+    const totals = await movementTotals(db, septiembre);
+    expect(totals.income).toBe("0.00");
+    expect(totals.expenses).toBe("0.00");
+    expect(totals.cashFlow).toBe("500000.00");
+  });
+
+  it("una compra con tarjeta NO mueve el flujo de caja (aunque sí sea gasto)", async () => {
+    const card = await db.account.create({
+      data: { name: "Visa", kind: "CREDIT_CARD" },
+    });
+    const { gastos } = await seedCategories();
+
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "50000",
+        date: calendarToDb("2026-10-12"),
+        accountId: card.id,
+        categoryId: gastos.id,
+        description: "Compra con tarjeta",
+      },
+    });
+
+    const octubre = rango("2026-10-01", "2026-10-31");
+
+    // Ninguna cuenta de dinero participó: no salió un peso de la caja.
+    expect(await movementCashFlow(db, octubre)).toBe("0.00");
+
+    // Pero el gasto consumido es real: la deuda subió. Si la compra contara en
+    // el flujo, acá daría −50.000,00.
+    const totals = await movementTotals(db, octubre);
+    expect(totals.expenses).toBe("50000.00");
+    expect(totals.cashFlow).toBe("0.00");
+  });
+
+  it("el pago del resumen SÍ cuenta: sale del banco, sin ser gasto", async () => {
+    const [bank, card] = await Promise.all([
+      db.account.create({ data: { name: "Banco", kind: "BANK" } }),
+      db.account.create({ data: { name: "Visa", kind: "CREDIT_CARD" } }),
+    ]);
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "50000",
+        date: calendarToDb("2026-11-05"),
+        accountId: bank.id,
+        toAccountId: card.id,
+        description: "Pago del resumen",
+      },
+    });
+
+    const noviembre = rango("2026-11-01", "2026-11-30");
+
+    // Origen de dinero (banco), destino pasivo (tarjeta): la caja baja 50.000.
+    expect(await movementCashFlow(db, noviembre)).toBe("-50000.00");
+
+    const totals = await movementTotals(db, noviembre);
+    expect(totals.transfers).toBe("50000.00");
+    expect(totals.expenses).toBe("0.00");
+    expect(totals.cashFlow).toBe("-50000.00");
+  });
+
+  it("una transferencia entre dos cuentas de dinero se anula (entra Y sale)", async () => {
+    const [bank, cash] = await Promise.all([
+      db.account.create({ data: { name: "Banco", kind: "BANK" } }),
+      db.account.create({ data: { name: "Efectivo", kind: "CASH" } }),
+    ]);
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "300000",
+        date: calendarToDb("2026-10-10"),
+        accountId: bank.id,
+        toAccountId: cash.id,
+      },
+    });
+
+    const octubre = rango("2026-10-01", "2026-10-31");
+
+    // Salió del banco Y entró al efectivo: neto 0,00. Si el flujo contara sólo
+    // una punta, mover plata entre bolsillos parecería que ganaste o perdiste.
+    expect(await movementCashFlow(db, octubre)).toBe("0.00");
+
+    // El movimiento sigue informado en `transfers`: la lista cuenta hechos, el
+    // flujo mide liquidez.
+    const totals = await movementTotals(db, octubre);
+    expect(totals.transfers).toBe("300000.00");
+    expect(totals.cashFlow).toBe("0.00");
+  });
+
+  it("en un mes con préstamo, flujo de caja ≠ ahorro: los DOS números correctos", async () => {
+    // El escenario del §3.2: sueldo 800.000, gastos 600.000 y un préstamo de
+    // 500.000 al 60% TNA en 12 cuotas, desembolsado el 30/09. Octubre tiene la
+    // cuota 1 (capital 31.412,71 + interés 25.000) y una compra con tarjeta.
+    const [gastos, sueldo, intereses, compras] = await Promise.all([
+      db.category.create({ data: { name: "Gastos", normalizedName: "gastos", kind: "EXPENSE" } }),
+      db.category.create({ data: { name: "Sueldo", normalizedName: "sueldo", kind: "INCOME" } }),
+      db.category.create({ data: { name: "Intereses", normalizedName: "intereses", kind: "EXPENSE" } }),
+      db.category.create({ data: { name: "Compras", normalizedName: "compras", kind: "EXPENSE" } }),
+    ]);
+
+    const [bank, card] = await Promise.all([
+      db.account.create({ data: { name: "Banco", kind: "BANK" } }),
+      db.account.create({ data: { name: "Visa", kind: "CREDIT_CARD" } }),
+    ]);
+
+    const loan = await db.account.create({
+      data: {
+        name: "Préstamo",
+        kind: "LOAN",
+        principal: "500000",
+        tnaPercent: "60",
+        installmentCount: 12,
+      },
+    });
+
+    // Septiembre: el desembolso, como transferencia desde el préstamo al banco.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "500000",
+        date: calendarToDb("2026-09-30"),
+        accountId: loan.id,
+        toAccountId: bank.id,
+        description: "Desembolso del préstamo",
+      },
+    });
+
+    // Octubre: sueldo, gastos, compra con tarjeta.
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "INCOME",
+          amount: "800000",
+          date: calendarToDb("2026-10-01"),
+          accountId: bank.id,
+          categoryId: sueldo.id,
+          description: "Sueldo de octubre",
+        },
+        {
+          kind: "EXPENSE",
+          amount: "600000",
+          date: calendarToDb("2026-10-10"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+          description: "Gastos del mes",
+        },
+        {
+          kind: "EXPENSE",
+          amount: "50000",
+          date: calendarToDb("2026-10-12"),
+          accountId: card.id,
+          categoryId: compras.id,
+          description: "Compra con tarjeta",
+        },
+      ],
+    });
+
+    // La cuota 1, descompuesta como la descompone el banco: el capital es
+    // TRANSFER del banco al préstamo y el interés es EXPENSE del banco.
+    const first = amortizationSchedule("500000", "60", 12)[0];
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: first.principal.toFixed(2),
+        date: calendarToDb("2026-10-15"),
+        accountId: bank.id,
+        toAccountId: loan.id,
+        description: "Cuota 1 · capital",
+      },
+    });
+
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: first.interest.toFixed(2),
+        date: calendarToDb("2026-10-15"),
+        accountId: bank.id,
+        categoryId: intereses.id,
+        description: "Cuota 1 · interés",
+      },
+    });
+
+    // ── Septiembre: ahorro 0, flujo +500.000 ────────────────────────────────
+    // El mes donde los dos números NO pueden parecerse ni de casualidad.
+    const septiembre = await movementTotals(db, rango("2026-09-01", "2026-09-30"));
+    expect(septiembre.income).toBe("0.00");
+    expect(septiembre.cashFlow).toBe("500000.00");
+
+    // ── Octubre: los dos números, calculados a mano ─────────────────────────
+    //
+    //   Ahorro (income − expenses) = 800.000 − (600.000 + 50.000 + 25.000)
+    //                              = 125.000,00
+    //   Flujo de caja              = 800.000 − (600.000 + 25.000 + 31.412,71)
+    //                              = 143.587,29
+    //
+    // La diferencia son las dos caras de la deuda:
+    //   · La compra con tarjeta es gasto consumido que TODAVÍA no salió de la
+    //     caja: resta en el ahorro (−50.000) y no toca el flujo.
+    //   · El capital de la cuota es plata que SALIÓ de la caja sin ser gasto:
+    //     resta en el flujo (−31.412,71) y no toca el ahorro.
+    //   125.000,00 + 50.000,00 − 31.412,71 = 143.587,29 ✓
+    const octubre = await movementTotals(db, rango("2026-10-01", "2026-10-31"));
+    expect(octubre.income).toBe("800000.00");
+    expect(octubre.expenses).toBe("675000.00");
+    expect(octubre.cashFlow).toBe("143587.29");
+
+    const ahorro = (Number(octubre.income) - Number(octubre.expenses)).toFixed(2);
+    expect(ahorro).toBe("125000.00");
+    expect(octubre.cashFlow).not.toBe(ahorro);
+
+    // ── Y los dos meses suman el flujo del año ──────────────────────────────
+    // 500.000,00 + 143.587,29 = 643.587,29. La liquidez no desaparece al
+    // cambiar de período: sólo se reparte distinto.
+    expect(await movementCashFlow(db, rango("2026-01-01", "2026-12-31"))).toBe(
+      "643587.29",
+    );
   });
 });

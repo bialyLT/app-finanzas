@@ -24,6 +24,7 @@ import {
 import {
   centsToString,
   formatDayLabel,
+  formatLiability,
   formatMoney,
   formatPercent,
   toCents,
@@ -43,6 +44,7 @@ const EMPTY_TOTALS: PeriodTotalsDTO = {
   income: "0.00",
   expenses: "0.00",
   transfers: "0.00",
+  cashFlow: "0.00",
   incomeCount: 0,
   expenseCount: 0,
   transferCount: 0,
@@ -199,6 +201,12 @@ export default function Home() {
       expenseCount: serverTotals.expenseCount,
       transferTotal: serverTotals.transfers,
       transferCount: serverTotals.transferCount,
+      // El flujo de caja viaja TAL CUAL viene del servidor. Derivarlo acá con
+      // "ingresos − gastos" mostraría el ahorro con la etiqueta equivocada: el
+      // desembolso del préstamo y las cuotas lo mueven sin ser ingreso ni gasto,
+      // y la compra con tarjeta es gasto sin moverlo. La fórmula vive en
+      // `movementCashFlow` (lib/queries.ts).
+      cashFlow: serverTotals.cashFlow,
       positive: resultCents >= 0,
     };
   }, [serverTotals]);
@@ -286,15 +294,11 @@ export default function Home() {
           */}
           <p className="font-bold first-letter:uppercase">{monthLabel}</p>
           <p className="text-xs text-zinc-500">
+            {/* Sólo la cantidad total de movimientos. El detalle de
+                transferencias vive ahora en la tarjeta de "Flujo de caja":
+                repetirlo en los dos lugares sería el mismo número dos veces. */}
             {movements.length}{" "}
             {movements.length === 1 ? "movimiento" : "movimientos"}
-            {totals.transferCount > 0 && (
-              <>
-                {" · "}
-                {totals.transferCount}{" "}
-                {totals.transferCount === 1 ? "transferencia" : "transferencias"}
-              </>
-            )}
           </p>
         </div>
         <button
@@ -308,7 +312,7 @@ export default function Home() {
       </div>
 
       {/* ── Balance del mes ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="bg-emerald-600 text-white rounded-2xl p-4 shadow">
           <p className="text-xs uppercase opacity-80">Ingresos</p>
           <p className="text-lg sm:text-2xl font-extrabold">
@@ -352,6 +356,34 @@ export default function Home() {
             )}
           </p>
         </div>
+
+        {/*
+          ── Flujo de caja ────────────────────────────────────────────────
+          La etiqueta es "Flujo de caja" y NUNCA "ahorro": son números
+          distintos. Éste es la plata que entró y salió de las cuentas de
+          dinero —incluye el desembolso del préstamo y el capital de las
+          cuotas, y NO incluye las compras con tarjeta—, y vive acá al lado
+          de "Te quedó" para que la diferencia entre liquidez y ahorro se
+          vea de un vistazo.
+
+          El detalle muestra la cantidad de transferencias del mes: es la
+          información que antes vivía en la línea del encabezado y la que
+          explica por qué este número se separa de "Te quedó" (pagar la
+          tarjeta, cobrar un préstamo, mover plata entre bolsillos).
+        */}
+        <div className="bg-sky-600 text-white rounded-2xl p-4 shadow">
+          <p className="text-xs uppercase opacity-80">Flujo de caja</p>
+          <p className="text-lg sm:text-2xl font-extrabold">
+            {formatMoney(totals.cashFlow, { withSign: true })}
+          </p>
+          <p className="text-[11px] opacity-80 mt-1">
+            {totals.transferCount === 0
+              ? "Sin transferencias este mes"
+              : `${totals.transferCount} ${
+                  totals.transferCount === 1 ? "transferencia" : "transferencias"
+                } entre tus cuentas`}
+          </p>
+        </div>
       </div>
 
       {/* ── Patrimonio neto ──────────────────────────────────────────────── */}
@@ -390,11 +422,14 @@ export default function Home() {
                       account.isLiability ? "text-rose-600" : "text-zinc-700 dark:text-zinc-300"
                     }
                   >
-                    {/* En una cuenta de deuda se muestra `debt` (positivo).
-                        Mostrar `balance` daría "−$ 500.000", que todo el mundo
-                        lee como un error de la app. */}
+                    {/* En una cuenta de deuda se muestra `debt`, con la
+                        palabra que le corresponde: "debe $ 50.000" cuando se
+                        debe y "a favor $ 50.000" cuando se pagó de más y la
+                        cuenta quedó con saldo a favor. `formatLiability`
+                        centraliza la regla; mostrar `balance` daría
+                        "−$ 500.000", que todo el mundo lee como un error. */}
                     {account.isLiability
-                      ? `debe ${formatMoney(account.debt ?? "0.00")}`
+                      ? formatLiability(account.debt ?? "0.00")
                       : formatMoney(account.balance)}
                   </b>
                 </span>

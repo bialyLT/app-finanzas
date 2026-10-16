@@ -39,6 +39,7 @@ import type {
   MovementDTO,
   PeriodTotalsDTO,
 } from "./finance";
+import { sum, zero } from "./money";
 
 /**
  * Relaciones que hay que traer siempre para armar un MovementDTO.
@@ -71,6 +72,10 @@ export const movementInclude = {
  * sola consulta en vez de seis, y como agrupa por tipo, los grupos son mutuamente
  * excluyentes: un movimiento no puede contarse dos veces.
  *
+ * El `cashFlow` del DTO NO se deriva acá: sale de `movementCashFlow`, que es la
+ * única implementación de la fórmula del §5.2 del ROADMAP. Así el panel y
+ * `/api/reports` no pueden divergir en el mismo número.
+ *
  * @param db Cliente de Prisma inyectado, igual que en `lib/balance.ts`. Existe
  *           para que los tests de integración puedan apuntarlo a
  *           `finanzas_test` en vez de a la base de desarrollo.
@@ -79,12 +84,16 @@ export async function movementTotals(
   db: Db,
   where: Prisma.MovementWhereInput,
 ): Promise<PeriodTotalsDTO> {
-  const grouped = await db.movement.groupBy({
-    by: ["kind"],
-    where,
-    _sum: { amount: true },
-    _count: { _all: true },
-  });
+  // El `groupBy` y el flujo de caja no dependen entre sí: van en paralelo.
+  const [grouped, cashFlow] = await Promise.all([
+    db.movement.groupBy({
+      by: ["kind"],
+      where,
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
+    movementCashFlow(db, where),
+  ]);
 
   // Se arranca en cero y no en vacío para que un período sin movimientos tenga la
   // misma forma que uno con movimientos: quien consume no tiene que distinguir
@@ -93,6 +102,7 @@ export async function movementTotals(
     income: "0.00",
     expenses: "0.00",
     transfers: "0.00",
+    cashFlow,
     incomeCount: 0,
     expenseCount: 0,
     transferCount: 0,
@@ -117,6 +127,96 @@ export async function movementTotals(
   }
 
   return totals;
+}
+
+/**
+ * Cuentas de dinero ("activo"): donde el saldo es plata disponible.
+ *
+ * Es la definición de "cuenta activo" del §5.2 del ROADMAP escrita una sola
+ * vez. Tarjeta y préstamo quedan afuera porque su saldo es deuda, no liquidez.
+ * Se declara como `AccountWhereInput` para que los literales "CASH"/"BANK"
+ * queden tipados contra el enum sin casts.
+ */
+const moneyAccount: Prisma.AccountWhereInput = { kind: { in: ["CASH", "BANK"] } };
+
+/**
+ * Flujo de caja (liquidez) del período, como string decimal exacto.
+ *
+ *     entradas = Σ INCOME con cuenta en efectivo/banco
+ *              + Σ TRANSFER cuyo DESTINO es efectivo/banco
+ *     salidas  = Σ EXPENSE con cuenta en efectivo/banco
+ *              + Σ TRANSFER cuyo ORIGEN es efectivo/banco
+ *     flujo    = entradas − salidas
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LAS TRANSFERENCIAS SE MIRAN POR LAS DOS PUNTAS
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Mirar sólo el origen haría desaparecer la plata que llega al banco desde un
+ * préstamo; mirar sólo el destino haría desaparecer la que sale a pagar la
+ * deuda. Mirando las dos, cada transferencia se resuelve sola:
+ *
+ *   · Banco → efectivo: suma como entrada por el destino Y como salida por el
+ *     origen. Neto CERO, que es exactamente lo que pasó — la plata cambió de
+ *     lugar, no entró ni salió del sistema.
+ *   · Préstamo → banco (desembolso): ENTRA. Es plata disponible para gastar,
+ *     aunque no sea un ingreso.
+ *   · Banco → préstamo (capital de la cuota): SALE. Ya no está disponible,
+ *     aunque no sea un gasto.
+ *   · Banco → tarjeta (pago del resumen): SALE. Recién acá la compra con
+ *     tarjeta toca la caja: hasta ese momento la deuda subió sin que saliera un
+ *     peso de ninguna cuenta de dinero.
+ *
+ * Una compra con tarjeta (EXPENSE sobre una cuenta CREDIT_CARD) no participa:
+ * no hay ningún lado de dinero en el movimiento.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ CUATRO AGREGADOS Y NO UNO
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Porque la dirección de una transferencia vive en DOS columnas (`accountId` y
+ * `toAccountId`) y `groupBy` sólo agrupa por columnas del propio movimiento:
+ * "entra" vs "sale" no es expresable con una sola agrupación. Cada agregado es
+ * un término de la fórmula, escrito al lado de la consulta que lo implementa, y
+ * los cuatro van en paralelo: cada uno devuelve una fila y la aritmética la
+ * hace la base, no la memoria de la aplicación.
+ *
+ * El `kind` de cada `where` pisa cualquier `kind` externo, igual que en
+ * `movementCategoryBreakdown`: es la definición de la métrica, no un filtro
+ * opcional. El resto del `where` (fechas, categoría, texto) sí acota el
+ * período — el flujo de un subconjunto es el flujo de ese subconjunto.
+ *
+ * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ */
+export async function movementCashFlow(
+  db: Db,
+  where: Prisma.MovementWhereInput,
+): Promise<string> {
+  const [income, expense, transferOut, transferIn] = await Promise.all([
+    db.movement.aggregate({
+      where: { ...where, kind: "INCOME", account: moneyAccount },
+      _sum: { amount: true },
+    }),
+    db.movement.aggregate({
+      where: { ...where, kind: "EXPENSE", account: moneyAccount },
+      _sum: { amount: true },
+    }),
+    db.movement.aggregate({
+      where: { ...where, kind: "TRANSFER", account: moneyAccount },
+      _sum: { amount: true },
+    }),
+    db.movement.aggregate({
+      where: { ...where, kind: "TRANSFER", toAccount: moneyAccount },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  // `_sum.amount` es `null` cuando no hay filas de ese término: la suma de un
+  // conjunto vacío en SQL es NULL, no 0 — el mismo caso defensivo que en
+  // `movementTotals`. Acá no se puede devolver "0.00" por término porque el
+  // flujo es UNA resta: se resuelve al final, con la aritmética de `lib/money`.
+  const inflow = sum([income._sum.amount ?? zero(), transferIn._sum.amount ?? zero()]);
+  const outflow = sum([expense._sum.amount ?? zero(), transferOut._sum.amount ?? zero()]);
+
+  return inflow.minus(outflow).toFixed(2);
 }
 
 /**

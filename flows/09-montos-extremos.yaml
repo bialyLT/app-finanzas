@@ -1,0 +1,172 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 09 · Montos extremos — un centavo y diez millones
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica que la aritmética de la interfaz sea EXACTA en los dos bordes del
+# rango de montos:
+#
+#   · El más chico: $ 0,01, escrito con punto decimal ("0.01") — la forma que
+#     un teclado numérico produce naturalmente.
+#   · Uno enorme: $ 9.999.999,99, escrito con el formato argentino COMPLETO
+#     ("9.999.999,99": punto de miles y coma decimal).
+#
+# En los dos casos lo que se verifica no es que "el gasto se guardó", sino que
+# los totales del panel se muevan EXACTO al centavo: un redondeo mal hecho, una
+# suma en `Number` o un parser que confunda separadores dejaría los números en
+# otra parte, y esto lo delata.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO: VA ÚLTIMO (después del 08)
+# ─────────────────────────────────────────────────────────────────────────────
+#     powershell -File scripts/flows.ps1
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 08):
+#
+#   gastos         900.000,00
+#   quedó         −100.000,00
+#   flujo          −81.412,71
+#   banco          468.587,29
+#
+# Gasto de $ 0,01 desde el banco (se escribe "0.01", punto decimal):
+#
+#   gastos         900.000,00 + 0,01       = 900.000,01
+#   quedó          −100.000,00 − 0,01      = −100.000,01
+#   flujo          −81.412,71 − 0,01       = −81.412,72
+#
+# Gasto de $ 9.999.999,99 desde el banco (se escribe "9.999.999,99"):
+#
+#   gastos         900.000,01 + 9.999.999,99 = 10.900.000,00
+#   quedó          −100.000,01 − 9.999.999,99 = −10.100.000,00
+#   flujo          −81.412,72 − 9.999.999,99 = −10.081.412,71
+#   ahorro         −10.100.000 / 800.000 = −1.262,50%
+#
+# Los dos gastos van con la categoría "Arreglos" (la creó el flujo 08): la
+# segunda carga NO tiene que crear otra — la normalización de nombres sigue
+# vigente aunque el monto sea absurdo.
+
+url: http://127.0.0.1:3000
+name: "09 · Montos extremos — un centavo y diez millones"
+tags:
+  - smoke
+  - panel
+  - montos
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida. El desarrollo completo del
+# porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Punto de partida (lo que dejó el flujo 08) ───────────────────────────────
+- assertVisible: '.*900\.000,00.*'
+- assertVisible: '.*-\$.*100\.000,00.*'
+- assertVisible: '.*-\$.*81\.412,71.*'
+
+# ── Gasto de un centavo, con punto decimal ───────────────────────────────────
+- tapOn:
+    id: "btn-expense"
+
+- extendedWaitUntil:
+    visible: ".*Nuevo gasto.*"
+    timeout: 30000
+
+- tapOn:
+    id: "tx-amount"
+- inputText: "0.01"
+
+# El preview lo interpreta como 0,01: el punto NO respeta el patrón de miles
+# completo ("0.01" tiene dos dígitos detrás), así que es decimal. El servidor
+# usa la misma regla (lib/money.ts, `parseMoneyInput`).
+- assertVisible: '.*0,01.*'
+
+- tapOn:
+    id: "tx-category"
+- inputText: "Arreglos"
+
+# La categoría ya existe (flujo 08): se reutiliza en vez de duplicarse.
+- assertVisible: ".*Se usa la categoría existente.*"
+
+- tapOn:
+    id: "tx-submit"
+
+# ── Un centavo MUEVE los tres números del panel ──────────────────────────────
+- extendedWaitUntil:
+    visible: '.*900\.000,01.*'
+    timeout: 30000
+
+- assertVisible: '.*-\$.*100\.000,01.*'
+- assertVisible: '.*-\$.*81\.412,72.*'
+
+# ── Gasto enorme, con formato argentino completo ─────────────────────────────
+- tapOn:
+    id: "btn-expense"
+
+- extendedWaitUntil:
+    visible: ".*Nuevo gasto.*"
+    timeout: 30000
+
+- tapOn:
+    id: "tx-amount"
+- inputText: "9.999.999,99"
+
+# El preview: si el parser confundiera los separadores, acá se vería "$ 9,99"
+# o "$ 999.999.999,99" — mucho antes de que el gasto llegue a la base.
+- assertVisible: '.*9\.999\.999,99.*'
+
+- tapOn:
+    id: "tx-category"
+- inputText: "Arreglos"
+- assertVisible: ".*Se usa la categoría existente.*"
+
+- tapOn:
+    id: "tx-submit"
+
+# ── Los totales, exactos al centavo ──────────────────────────────────────────
+# 900.000,01 + 9.999.999,99 = 10.900.000,00 exactos. Un error de redondeo de
+# un centavo daría 10.899.999,99 o 10.900.000,01 y esto lo delata.
+- extendedWaitUntil:
+    visible: '.*10\.900\.000,00.*'
+    timeout: 30000
+
+- assertVisible: '.*-\$.*10\.100\.000,00.*'
+- assertVisible: '.*-\$.*10\.081\.412,71.*'
+
+# La tasa de ahorro: −10.100.000 / 800.000 = −1.262,50%. Con miles y todo.
+- assertVisible: ".*Ahorraste -1.262,50%.*"
+
+# ── Los valores viejos, ANTES de scrollear (trampa 7) ────────────────────────
+- assertNotVisible: '.*900\.000,01.*'
+- assertNotVisible: '.*-\$.*81\.412,72.*'
+
+# ── Y el gasto enorme quedó en la lista ──────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*9\.999\.999,99.*'
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: '.*9\.999\.999,99.*'

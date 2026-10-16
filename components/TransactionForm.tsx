@@ -7,7 +7,7 @@ import {
   type CategoryDTO,
   type MovementKindDTO,
 } from "@/lib/finance";
-import { formatAmountInput, formatMoney } from "@/lib/format";
+import { formatAmountInput, formatLiability, formatMoney } from "@/lib/format";
 
 interface Props {
   kind: MovementKindDTO;
@@ -53,10 +53,11 @@ const KIND_STYLE: Record<
 
 /** Etiqueta de una cuenta en el selector: nombre y cuánta plata tiene. */
 function accountLabel(account: AccountBalanceDTO): string {
-  // En una cuenta de deuda se muestra la deuda en positivo. "Visa · debe
-  // $ 50.000" se lee bien; "Visa · −$ 50.000" se lee como un error.
+  // En una cuenta de deuda se muestra la deuda con su palabra: "debe
+  // $ 50.000" cuando se debe y "a favor $ 50.000" cuando se pagó de más
+  // (ver `formatLiability`). "Visa · −$ 50.000" se lee como un error.
   const amount = account.isLiability
-    ? `debe ${formatMoney(account.debt ?? "0.00")}`
+    ? formatLiability(account.debt ?? "0.00")
     : formatMoney(account.balance);
   return `${account.name} · ${amount}`;
 }

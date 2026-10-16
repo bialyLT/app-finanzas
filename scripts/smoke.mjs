@@ -480,6 +480,57 @@ async function main() {
   check("totals.transferCount = 1", movs?.totals?.transferCount, 1);
   checkTrue("el período entra en una consulta, así que no está truncado", movs?.truncated === false);
 
+  // ── Flujo de caja (liquidez): la plata que entró y salió de las cuentas ────
+  //
+  // El número se calcula a mano acá, para no repetir la fórmula que se está
+  // probando:
+  //
+  //   Entradas: 800.000,00                  (sueldo → banco)
+  //   Salidas:  250.000 + 120.000 + 45.000  (gastos que salieron del banco)
+  //           + 25.000,00                   (interés de la cuota → banco)
+  //           + 31.412,71                   (capital de la cuota: banco → préstamo)
+  //           = 471.412,71
+  //   Flujo:    800.000,00 − 471.412,71 = 328.587,29
+  //
+  // La compra con tarjeta (50.000) queda AFUERA a propósito: es un gasto
+  // consumido, pero la plata sale recién al pagar el resumen — y este mes no se
+  // pagó. Si contara, el flujo daría 278.587,29.
+  //
+  // Y el ahorro del mes es 310.000,00, así que los dos números son distintos:
+  // ésa es toda la distinción del rediseño.
+  check(
+    "totals.cashFlow = 328.587,29 (liquidez, no ahorro)",
+    movs?.totals?.cashFlow,
+    "328587.29",
+  );
+
+  // ── Coherencia temporal: el desembolso suma en el AÑO, no en el mes ────────
+  //
+  // El desembolso es del 30/09: tiene que entrar al flujo del año completo y
+  // NO al de octubre. Es la misma lección del bug B3 —el rango del mes no se
+  // come el mes anterior— aplicada a la liquidez.
+  {
+    const { body: flujoSeptiembre } = await api(
+      "/api/transactions?from=2026-09-01&to=2026-09-30",
+    );
+    // En septiembre lo único que pasó fue el desembolso: entró al banco.
+    check(
+      "el flujo de septiembre es +500.000,00 (el desembolso ENTRA a la caja)",
+      flujoSeptiembre?.totals?.cashFlow,
+      "500000.00",
+    );
+
+    const { body: flujoAnio } = await api(
+      "/api/transactions?from=2026-01-01&to=2026-12-31",
+    );
+    // 500.000,00 (septiembre) + 328.587,29 (octubre) = 828.587,29
+    check(
+      "el flujo del AÑO sí incluye el desembolso: 828.587,29",
+      flujoAnio?.totals?.cashFlow,
+      "828587.29",
+    );
+  }
+
   // EL PATRIMONIO NETO ES EL NÚMERO HONESTO
   //   100.000 (ahorros previos) + 800.000 (sueldo) − 490.000 (gastos reales)
   //   = 410.000
@@ -529,6 +580,15 @@ async function main() {
       "totals.transfers = 31.412,71, informada aparte",
       reporte?.totals?.transfers,
       "31412.71",
+    );
+
+    // El flujo de caja viaja en el mismo DTO: el panel lo lee de
+    // /api/transactions y /analisis de acá, y los dos tienen que ver el mismo
+    // número (sale de `movementCashFlow`, una sola fórmula).
+    check(
+      "totals.cashFlow = 328.587,29, el mismo número que ve el panel",
+      reporte?.totals?.cashFlow,
+      "328587.29",
     );
 
     const enCentavos = (rows) =>
