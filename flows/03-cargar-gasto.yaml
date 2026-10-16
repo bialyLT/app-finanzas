@@ -1,0 +1,149 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 03 · Cargar un gasto
+# ═════════════════════════════════════════════════════════════════════════════
+# Carga un gasto desde la interfaz y verifica que los totales se muevan EXACTO.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y después correr los flujos EN ORDEN (00, 01, 02, 03, 04, 05). Este flujo
+# AGREGA un gasto, así que los números que verifica el 04 dependen de que éste
+# haya corrido.
+#
+# Lo más simple es la suite completa, que siembra y ordena sola:
+#
+#     powershell -File scripts/flows.ps1
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EL GASTO VA AL BANCO, NO AL EFECTIVO
+# ─────────────────────────────────────────────────────────────────────────────
+# El formulario preselecciona la PRIMERA cuenta, y la primera cuenta es Banco
+# Galicia (ver scripts/smoke.mjs: se crea primero a propósito).
+#
+# Es a propósito que este flujo NO cambie la cuenta: interactuar con un
+# `<select>` nativo desde Maestro es frágil, y el objetivo acá es verificar la
+# ARITMÉTICA, no la interacción con un desplegable del sistema operativo. La
+# aserción sobre "Banco Galicia" confirma que el valor por defecto es el que
+# tiene que ser.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+# Antes:  ingresos 800.000 · gastos 490.000 · quedó 310.000 · patrimonio 410.000
+# Se carga un gasto de 10.000 desde el banco.
+#
+#   gastos      490.000 + 10.000   = 500.000
+#   quedó       800.000 − 500.000  = 300.000
+#   ahorro      300.000 / 800.000  = 37,50%
+#   patrimonio  410.000 − 10.000   = 400.000
+#   banco       928.587,29 − 10.000 = 918.587,29
+
+url: http://127.0.0.1:3000
+name: "03 · Cargar un gasto"
+tags:
+  - smoke
+  - movimientos
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida, así que el flow anterior la dejó
+# abierta. El desarrollo completo del porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# El estado inicial es el que dejó el flujo 02.
+- assertVisible: '.*490\.000,00.*'
+- assertVisible: '.*410\.000,00.*'
+
+# ── Abrir el formulario de gasto ─────────────────────────────────────────────
+# Se entra por `id` y no por el texto del botón: dice "－ Gasto" con un signo
+# menos de ancho completo (U+FF0D), y además "Gasto" también es el nombre de una
+# categoría y de un filtro. El id no es ambiguo.
+- tapOn:
+    id: "btn-expense"
+
+- extendedWaitUntil:
+    visible: ".*Nuevo gasto.*"
+    timeout: 30000
+
+# La cuenta por defecto tiene que ser el banco: es de donde sale la mayoría de
+# los gastos. Si el formulario preseleccionara el efectivo, cargar un gasto real
+# requeriría un toque extra todos los días.
+- assertVisible: ".*Banco Galicia.*"
+
+# ── Cargar el gasto ──────────────────────────────────────────────────────────
+- tapOn:
+    id: "tx-amount"
+- inputText: "10000"
+
+# El monto se interpreta en formato argentino y se muestra la vista previa.
+# Sirve para confirmar al instante que no se guardó 1,00 en vez de 10.000.
+- assertVisible: '.*10\.000,00.*'
+
+- tapOn:
+    id: "tx-category"
+- inputText: "Kiosco"
+
+# Aviso de que se va a crear una categoría NUEVA, y no de que ya existe.
+# Verifica de paso que la normalización de nombres (que en la base es
+# `normalizedName`) se refleja en la interfaz.
+- assertVisible: ".*Se crea la categoría.*"
+
+- tapOn:
+    id: "tx-submit"
+
+# ── Verificar que los totales se movieron ────────────────────────────────────
+# Se espera al número nuevo y no al cierre del modal: el modal se cierra antes
+# de que la recarga termine, así que esperar por él no garantiza que el dato ya
+# esté en pantalla.
+- extendedWaitUntil:
+    visible: '.*500\.000,00.*'
+    timeout: 30000
+
+- assertVisible: '.*300\.000,00.*'
+- assertVisible: ".*Ahorraste 37,50%.*"
+- assertVisible: '.*400\.000,00.*'
+
+# El saldo del banco también bajó.
+- assertVisible: '.*918\.587,29.*'
+
+# ── El total viejo ya no está ────────────────────────────────────────────────
+# Esta aserción tiene que ir ANTES de scrollear, y no es un detalle de estilo:
+# `assertNotVisible` también da por buena una pantalla donde el elemento existe
+# pero quedó fuera de la vista. Si se scrollea primero, esta aserción pasaría
+# siempre —incluso si el número viejo siguiera en pantalla— y daría confianza
+# sin verificar nada.
+- assertNotVisible: '.*310\.000,00.*'
+
+# ── Y el movimiento quedó en la lista ────────────────────────────────────────
+# Con su categoría nueva. Nada de lo anterior alcanza si el gasto no se guardó:
+# los totales podrían haber cambiado por otro motivo.
+#
+# La lista arranca debajo del pliegue, así que recién acá hay que scrollear.
+- scrollUntilVisible:
+    element:
+      text: ".*Kiosco.*"
+    direction: DOWN
+    timeout: 30000

@@ -1,0 +1,311 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 02 · Panel principal — los números del mes
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica que la pantalla principal muestre LA VERDAD sobre el mes.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO: LOS DATOS SEMBRADOS
+# ─────────────────────────────────────────────────────────────────────────────
+# Este flujo NO crea datos: comprueba que la interfaz muestre bien los que ya
+# existen. Antes de correrlo hay que sembrarlos:
+#
+#     node scripts/smoke.mjs --reset
+#
+# El escenario sembrado (ver scripts/smoke.mjs) es el caso que motivó todo el
+# rediseño:
+#
+#   · Banco Galicia arranca con $ 100.000
+#   · Préstamo de $ 500.000 al 60% TNA en 12 cuotas, desembolsado el 30/09
+#   · Octubre: sueldo $ 800.000, gastos $ 490.000, y la cuota 1 del préstamo
+#
+# Los valores de las aserciones están calculados a mano en los comentarios. Si
+# un cambio en la lógica los rompe, el flujo dice CUÁL cambió.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LAS DOS REGLAS DE ESCRITURA DE LOS PATRONES
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. MAESTRO COMPARA CONTRA EL TEXTO COMPLETO DEL ELEMENTO.
+#    No busca el patrón adentro del texto. El elemento dice `$ 800.000,00`, así
+#    que la aserción
+#
+#        assertVisible: '800\.000,00'
+#
+#    FALLA — y falla por el motivo equivocado, porque el número está bien y el
+#    elemento existe. Hay que envolver el patrón:
+#
+#        assertVisible: '.*800\.000,00.*'
+#
+#    El flujo 00 es la sonda que verifica esto; si algún día esa sonda empieza a
+#    fallar, los comodines dejaron de ser necesarios.
+#
+# 2. EL PUNTO VA ESCAPADO.
+#    Maestro interpreta el texto como expresión regular y un punto suelto
+#    significa "cualquier carácter". Sin escapar, `.*50.000,00.*` también da por
+#    buena una pantalla que muestra `450.000,00`: la aserción pasaría por el
+#    motivo equivocado, que es la peor forma de pasar.
+#
+# Se usan comillas simples de YAML porque en las dobles la barra invertida activa
+# secuencias de escape y `"\."` no es una secuencia válida: YAML daría error
+# antes de que Maestro llegue a ver el texto.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ NO SE AFIRMA SOBRE "$ 800.000,00" COMPLETO
+# ─────────────────────────────────────────────────────────────────────────────
+# `Intl.NumberFormat` separa el símbolo del número con un espacio que NO es el
+# espacio normal: es U+00A0 (espacio duro). Verificado ejecutando el formateador
+# de verdad:
+#
+#     "$ 800.000,00"  →  $ U+00A0 8 0 0 ...
+#
+# Una aserción con un espacio común no coincidiría, y el fallo parecería un
+# problema de la app cuando es de la aserción. Los `.*` cubren ese carácter
+# invisible sin nombrarlo.
+
+url: http://127.0.0.1:3000
+name: "02 · Panel principal — los números del mes"
+tags:
+  - smoke
+  - panel
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# ENTRAR: NORMALIZANDO LA SESIÓN PRIMERO
+# ─────────────────────────────────────────────────────────────────────────────
+# Maestro COMPARTE el perfil de Chrome dentro de una misma corrida, así que las
+# cookies persisten de un flow al siguiente. El flow anterior muy probablemente
+# dejó la sesión abierta.
+#
+# Si se llegara al panel en lugar del login, `tapOn id: password` falla con
+# "Element not found" — un mensaje que apunta al formulario cuando el problema es
+# que nunca se llegó a él. Y peor: el flow siguiente hereda la misma sesión y
+# falla igual, así que un solo descuido tumba la suite entera en cascada.
+#
+# Por eso cada flow que necesita sesión la construye desde cero en vez de
+# heredarla: cerrar (si hace falta) y volver a entrar. Cuesta dos navegaciones y
+# compra que el resultado de un flow no dependa de cuál corrió antes.
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Las tres tarjetas del mes ────────────────────────────────────────────────
+# Ingresos: sólo el sueldo. El desembolso del préstamo NO está acá — es una
+# transferencia, y esa distinción es TODO el rediseño.
+- assertVisible: '.*800\.000,00.*'
+
+# Gastos: 250.000 + 120.000 + 45.000 + 50.000 + 25.000 = 490.000
+# El 25.000 es el INTERÉS de la cuota, que es el único costo real del préstamo.
+- assertVisible: '.*490\.000,00.*'
+
+# 800.000 − 490.000 = 310.000
+- assertVisible: '.*310\.000,00.*'
+
+# 310.000 / 800.000 = 38,75%
+- assertVisible: ".*Ahorraste 38,75%.*"
+
+# ── Patrimonio neto ──────────────────────────────────────────────────────────
+# 100.000 (ahorros previos, ya en el banco) + 800.000 − 490.000 = 410.000
+#
+# Éste es el número que el modelo viejo NO podía calcular bien. Antes, el
+# desembolso del préstamo entraba como ingreso y la cuota entera como gasto, y
+# el patrimonio terminaba inflado.
+- assertVisible: '.*410\.000,00.*'
+
+# Activos: los $ 928.587,29 del banco (el efectivo quedó en 0).
+- assertVisible: '.*928\.587,29.*'
+
+# Deudas: 468.587,29 del préstamo + 50.000 de la tarjeta = 518.587,29
+- assertVisible: '.*518\.587,29.*'
+
+# ── Los saldos por cuenta, en la lista y en POSITIVO ─────────────────────────
+# La tarjeta debe 50.000 y el préstamo 468.587,29. Se muestran SIN el signo
+# menos: "debe $ 50.000,00" se lee bien, "−$ 50.000,00" se lee como un error de
+# la app. La palabra "debe" es parte de lo que se verifica.
+- assertVisible: '.*debe.*50\.000,00.*'
+- assertVisible: '.*debe.*468\.587,29.*'
+
+# ── El desembolso NO es un ingreso: la prueba de fuego ───────────────────────
+#
+# Se navega al mes anterior, donde ocurrió el desembolso del préstamo. Si el
+# modelo estuviera mal, septiembre mostraría $ 500.000 de ingresos — "ganaste
+# medio millón" — cuando en realidad te endeudaste por medio millón.
+#
+# Es la demostración más limpia de todo el rediseño y se hace desde la
+# interfaz, sin mirar la base.
+#
+# Se navega ANTES de scrollear a propósito: el botón está arriba de todo y
+# Maestro no hace scroll automático para encontrar un elemento.
+- tapOn:
+    id: "btn-prev-month"
+
+- extendedWaitUntil:
+    visible: ".*septiembre de 2026.*"
+    timeout: 30000
+
+# Lo único que pasó en septiembre es la transferencia de $ 500.000 del préstamo
+# al banco. Se ve, porque es un movimiento real.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EL ORDEN ACÁ NO ES CASUAL
+# ─────────────────────────────────────────────────────────────────────────────
+# Las aserciones de "NO visible" van ANTES de scrollear, y esto es una trampa:
+# `assertNotVisible` también da por buena una pantalla donde el elemento existe
+# pero quedó fuera de la vista. Si se scrollea primero, las dos aserciones de
+# abajo pasarían SIEMPRE —incluso si el desembolso volviera a contarse como
+# ingreso— porque las tarjetas del mes ya no estarían en pantalla.
+#
+# Una aserción negativa que pasa por el motivo equivocado es peor que no tenerla:
+# da confianza sin verificar nada.
+#
+# Los tres primeros chequeos van con la página arriba de todo, donde las tarjetas
+# se ven de verdad.
+- extendedWaitUntil:
+    visible: ".*septiembre de 2026.*"
+    timeout: 30000
+
+# El mes tiene un solo movimiento, y es una transferencia.
+- assertVisible: ".*1 movimiento.*"
+
+# Y NO se ve como ingreso ni como gasto. Si alguna de estas dos aserciones
+# falla, el modelo volvió a tratar el desembolso como plata ganada.
+#
+# El contador dice "1 movimiento · 1 transferencia": un solo movimiento, y es una
+# transferencia. Las tres cosas al mismo tiempo.
+- assertVisible: ".*1 transferencia.*"
+- assertNotVisible: '.*800\.000,00.*'
+- assertNotVisible: '.*490\.000,00.*'
+
+# Recién ahora, con las aserciones de arriba ya hechas, se scrollea para
+# encontrar la transferencia en la lista.
+#
+# Hay que scrollear porque las tarjetas del mes viven arriba de todo y la LISTA
+# de movimientos arranca debajo del pliegue (la pantalla de los tests mide
+# 1018×597). Sin el scroll la aserción falla por un motivo que no tiene nada que
+# ver con el dato: el número está en la página, sólo que fuera de la vista.
+- scrollUntilVisible:
+    element:
+      text: '.*500\.000,00.*'
+    direction: DOWN
+    timeout: 30000
+
+# ── Volver a octubre y mirar la lista de movimientos ─────────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# VOLVER ARRIBA: `tapOn` NO ENCUENTRA LO QUE ESTÁ FUERA DE LA VISTA
+# ─────────────────────────────────────────────────────────────────────────────
+# Después del scroll, los botones de mes quedaron arriba, fuera de la pantalla.
+# `tapOn` no scrollea para buscar su blanco: falla con
+#
+#     Element not found: Id matching regex: btn-next-month
+#
+# que suena a que el botón no existe. Existe — está unos cientos de píxeles más
+# arriba. Ésta es la contracara exacta de la trampa 7:
+#
+#   · `assertNotVisible` aprueba DE MÁS cuando hay scroll (el elemento está, pero
+#     fuera de la vista, así que la negación se cumple sola).
+#   · `tapOn` falla DE MÁS por el mismo motivo.
+#
+# Las dos se arreglan cuidando el orden: scrollear sólo para mirar, y volver
+# arriba antes de tocar.
+- scrollUntilVisible:
+    element:
+      id: "btn-next-month"
+    direction: UP
+    timeout: 30000
+
+- tapOn:
+    id: "btn-next-month"
+
+- extendedWaitUntil:
+    visible: ".*octubre de 2026.*"
+    timeout: 30000
+
+- assertVisible: ".*7 movimientos.*"
+
+# ── La lista de movimientos, en el orden en que se ve ────────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SCROLL HACIA ABAJO ES UNA CALLE DE UN SOLO SENTIDO
+# ─────────────────────────────────────────────────────────────────────────────
+# `scrollUntilVisible` con `direction: DOWN` sólo va hacia abajo: si el elemento
+# que busca quedó MÁS ARRIBA de donde está parado, no lo va a encontrar nunca.
+# Falla con
+#
+#     No visible element found: ".*Cuota 1 · interés.*"
+#
+# que suena a que el dato no está en la pantalla. Está — unos cientos de píxeles
+# más arriba.
+#
+# Por eso las aserciones van en el orden REAL de la lista, de arriba abajo. Y ese
+# orden no es un detalle del test: es el orden que ve el usuario, y verifica que
+# la lista esté ordenada por fecha descendente.
+#
+# La lista de octubre, tal como la devuelve la API (`date desc, createdAt desc`):
+#
+#     0  15 oct  EXPENSE    25.000,00   Cuota 1 · interés
+#     1  15 oct  TRANSFER   31.412,71   Cuota 1 · capital
+#     2  12 oct  EXPENSE    50.000,00   Compra con tarjeta
+#     3  08 oct  EXPENSE    45.000,00   (Transporte)
+#     4  05 oct  EXPENSE   120.000,00   (Supermercado)
+#     5  03 oct  EXPENSE   250.000,00   Alquiler de octubre
+#     6  01 oct  INCOME    800.000,00   Sueldo de octubre
+#
+# Las descripciones viven al final de cada fila y la lista arranca debajo del
+# pliegue (la pantalla de los tests mide 1018×597), así que cada una necesita su
+# propio scroll.
+
+# La cuota del préstamo aparece como DOS movimientos, y así es correcto: el
+# interés es gasto y el capital es una transferencia que baja la deuda. Un modelo
+# que no distingue los dos no puede decir cuánto costó el préstamo de verdad.
+- scrollUntilVisible:
+    element:
+      text: ".*Cuota 1 · interés.*"
+    direction: DOWN
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: ".*Cuota 1 · capital.*"
+    direction: DOWN
+    timeout: 30000
+
+# La compra con tarjeta es un gasto que tiene a la tarjeta como cuenta de origen:
+# sube la deuda, no sale de ningún banco. Si el modelo la tratara como una
+# transferencia, el gasto del mes bajaría y el patrimonio no se movería.
+- scrollUntilVisible:
+    element:
+      text: ".*Compra con tarjeta.*"
+    direction: DOWN
+    timeout: 30000
+
+# Y al final de todo los dos más viejos: la lista va de la fecha más nueva a la
+# más vieja, así que el sueldo del día 1 es la última fila.
+- scrollUntilVisible:
+    element:
+      text: ".*Alquiler de octubre.*"
+    direction: DOWN
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: ".*Sueldo de octubre.*"
+    direction: DOWN
+    timeout: 30000

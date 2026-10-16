@@ -1,0 +1,150 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 04 · Transferir entre cuentas propias (LA PRUEBA DE FUEGO)
+# ═════════════════════════════════════════════════════════════════════════════
+# Éste es el flujo más importante de todos, y el más corto de explicar:
+#
+#     Se mueven $ 50.000 del banco al efectivo…
+#     y NADA de lo que mide el mes cambia.
+#
+# Ni los ingresos, ni los gastos, ni el resultado, ni la tasa de ahorro, ni el
+# patrimonio neto. Porque mover plata de un bolsillo propio a otro bolsillo
+# propio no te hace ni más rico ni más pobre: te cambia la plata de lugar.
+#
+# La versión anterior de la app no podía representar esto. Pasarse plata al
+# efectivo sólo se podía anotar como gasto (y el efectivo que llegaba, como
+# ingreso), así que cada extracción del cajero aparecía como si hubieras perdido
+# esa plata — y encima inflaba los ingresos del mes.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 02 y 03 antes que éste. Los números de partida son los que
+# deja el flujo 03.
+#
+#     powershell -File scripts/flows.ps1
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+# Antes:  gastos 500.000 · quedó 300.000 · banco 918.587,29 · efectivo 0
+# Se transfieren 50.000 del banco al efectivo.
+#
+#   banco       918.587,29 − 50.000 = 868.587,29
+#   efectivo    0 + 50.000          = 50.000
+#   ACTIVOS     868.587,29 + 50.000 = 918.587,29   ← igual que antes
+#   patrimonio  918.587,29 − 518.587,29 = 400.000  ← igual que antes
+#
+# Lo único que cambió es DÓNDE está la plata. Cuánto tenés, no.
+
+url: http://127.0.0.1:3000
+name: "04 · Transferencia — el patrimonio no se mueve"
+tags:
+  - smoke
+  - movimientos
+  - invariantes
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida, así que el flow anterior la dejó
+# abierta. El desarrollo completo del porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Punto de partida (lo que dejó el flujo 03) ───────────────────────────────
+- assertVisible: '.*500\.000,00.*'
+- assertVisible: '.*400\.000,00.*'
+- assertVisible: '.*918\.587,29.*'
+
+# ── Abrir el formulario de transferencia ─────────────────────────────────────
+- tapOn:
+    id: "btn-transfer"
+
+- extendedWaitUntil:
+    visible: ".*Nueva transferencia.*"
+    timeout: 30000
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LA ASERCIÓN ESTRUCTURAL: una transferencia NO pide categoría
+# ─────────────────────────────────────────────────────────────────────────────
+# Esto verifica la regla del modelo, no un detalle de diseño: una transferencia
+# no es un ingreso ni un gasto, así que no tiene categoría. Si el formulario
+# mostrara el campo, sería porque el modelo volvió a permitir categorizar algo
+# que no es ni una cosa ni la otra — y esas categorías después aparecerían en el
+# gráfico de gastos inflando el total.
+#
+# El campo se llama "En qué se fue" en el formulario de gasto. Se verifica
+# directamente que no esté.
+- assertNotVisible: ".*En qué se fue.*"
+
+# Y en su lugar está la explicación de qué significa una transferencia.
+- assertVisible: ".*no es un gasto ni un ingreso.*"
+
+# Las dos cuentas: origen el banco (por defecto) y destino el efectivo.
+- assertVisible: ".*Banco Galicia.*"
+
+# ── Cargar la transferencia ──────────────────────────────────────────────────
+- tapOn:
+    id: "tx-amount"
+- inputText: "50000"
+- assertVisible: '.*50\.000,00.*'
+
+- tapOn:
+    id: "tx-description"
+- inputText: "Paso al efectivo"
+
+- tapOn:
+    id: "tx-submit"
+
+# ── La plata se movió… ───────────────────────────────────────────────────────
+# El banco bajó 50.000 y el efectivo subió 50.000. Las dos cosas son ciertas.
+- extendedWaitUntil:
+    visible: '.*868\.587,29.*'
+    timeout: 30000
+
+- assertVisible: '.*50\.000,00.*'
+
+# ── …y NADA MÁS se movió ─────────────────────────────────────────────────────
+#
+# ÉSTAS son las aserciones que importan. Si la transferencia se hubiera contado
+# como gasto —el error que este rediseño existe para impedir— los gastos
+# pasarían a 550.000 y el resultado a 250.000.
+- assertVisible: '.*500\.000,00.*'      # gastos: intactos
+- assertVisible: '.*300\.000,00.*'      # te quedó: intacto
+- assertVisible: '.*400\.000,00.*'      # patrimonio neto: intacto
+- assertVisible: ".*Ahorraste 37,50%.*" # tasa de ahorro: intacta
+
+- assertNotVisible: '.*550\.000,00.*'   # el gasto fantasma
+- assertNotVisible: '.*250\.000,00.*'   # el resultado que dejaría
+- assertNotVisible: '.*350\.000,00.*'   # el patrimonio que dejaría
+
+# ── Y el movimiento quedó registrado ─────────────────────────────────────────
+# Nada de lo anterior alcanza si la transferencia no se guardó: todo seguiría
+# igual simplemente porque no pasó nada. La descripción viaja al final de la
+# fila, así que hay que scrollear.
+- scrollUntilVisible:
+    element:
+      text: ".*Paso al efectivo.*"
+    direction: DOWN
+    timeout: 30000

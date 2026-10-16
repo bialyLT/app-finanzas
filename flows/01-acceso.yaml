@@ -1,0 +1,115 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 01 · Acceso y autenticación
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica que la app esté REALMENTE cerrada y que el login funcione.
+#
+# Cómo correrlo:
+#   powershell -File scripts/maestro.ps1 test flows/01-acceso.yaml --env APP_PASSWORD=finanzas-dev
+#
+# La contraseña se pasa con --env y NO se escribe en este archivo: los flows se
+# versionan en git y una credencial commiteada sobrevive para siempre en el
+# historial, aunque después la borres.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# OJO CON `localhost`
+# ─────────────────────────────────────────────────────────────────────────────
+# Los flows usan 127.0.0.1 y NO localhost. No es capricho: Chrome tiene el modo
+# "HTTPS-First" activado por defecto y reescribe `http://localhost` a
+# `https://localhost`. Como el dev server de Next habla HTTP plano, la
+# navegación se queda esperando el handshake TLS y el flow muere por timeout
+# con un mensaje que no explica nada:
+#
+#     java.util.concurrent.TimeoutException
+#     Command: [..., get {url=http://localhost:3000}]
+#
+# `127.0.0.1` está exento de esa reescritura, así que siempre usa la IP.
+# ═════════════════════════════════════════════════════════════════════════════
+
+url: http://127.0.0.1:3000
+name: "01 · Acceso y autenticación"
+tags:
+  - smoke
+  - auth
+
+env:
+  BASE: "http://127.0.0.1:3000"
+  # APP_PASSWORD NO se declara acá a propósito.
+  #
+  # Declararla como `APP_PASSWORD: "${APP_PASSWORD}"` dentro del propio bloque
+  # `env` es una AUTORREFERENCIA: Maestro no la resuelve contra el entorno del
+  # sistema y la deja como el string literal "${APP_PASSWORD}". El login falla
+  # con 401 y el error que ves en pantalla es "Contraseña incorrecta." — que te
+  # manda a buscar el problema en la contraseña cuando en realidad el problema
+  # es la interpolación.
+  #
+  # Se pasa desde afuera:
+  #   scripts/maestro.ps1 test flows/01-acceso.yaml --env APP_PASSWORD=...
+
+---
+# ── 1. Sin sesión, la app no debe mostrar NADA de datos ──────────────────────
+# El proxy redirige / a /login. Si esto falla, hay una fuga de datos.
+- openLink: "${BASE}"
+
+- assertVisible: "Esta aplicación es privada.*"
+- assertVisible: "Contraseña"
+- assertVisible: "Entrar"
+
+# El pie de página no debe mentir sobre dónde se guardan los datos, y ya mintió
+# dos veces: decía "SQLite · datos locales" cuando era Postgres en la nube, y
+# después "tu Postgres de Neon" cuando la app también corre contra el Postgres
+# local. Lo que dice ahora es lo único verdadero en las dos configuraciones.
+#
+# Esta aserción quedó vieja una vez y no la cazó nadie: el pie se cambió en
+# app/layout.tsx y no se corrió la suite. Ahora cubre el texto actual.
+- assertVisible: ".*Los movimientos viven en tu base de datos.*"
+
+# ── 2. Contraseña incorrecta: debe rechazar y avisar ─────────────────────────
+- tapOn:
+    id: "password"
+- inputText: "contrasena-incorrecta"
+
+- tapOn: "Entrar"
+
+# El mensaje tiene que ser visible: un login que falla en silencio hace que el
+# usuario reintente sin entender qué pasó.
+- assertVisible: "Contraseña incorrecta.*"
+
+# Y NO debe haber dejado entrar.
+- assertNotVisible: "Salir"
+
+# ── 3. Contraseña correcta: debe entrar ──────────────────────────────────────
+# Se recarga la página para partir de un formulario limpio.
+- openLink: "${BASE}"
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+
+- tapOn: "Entrar"
+
+# Señal de que entramos: el header sólo muestra la navegación con sesión válida.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ `extendedWaitUntil` Y NO `assertVisible`
+# ─────────────────────────────────────────────────────────────────────────────
+# `assertVisible` tiene un timeout corto (unos segundos). En el dev server de
+# Next, la PRIMERA visita a una ruta la compila Turbopack en el momento, y eso
+# puede tardar 18 segundos o más:
+#
+#     GET / 200 in 18.4s (next.js: 18.1s)
+#
+# Con `assertVisible` el flow falla por una razón que no tiene nada que ver con
+# la app: la aserción se rinde antes de que la página exista. El síntoma es
+# particularmente engañoso porque el screenshot del fallo muestra la pantalla
+# CORRECTA — la foto se toma después, cuando ya terminó de compilar.
+#
+# `extendedWaitUntil` espera explícitamente hasta que la condición se cumple.
+# Los textos van SIN emoji: el emoji se renderiza distinto según la plataforma
+# y la aserción terminaría fallando por el ícono y no por el login.
+- extendedWaitUntil:
+    visible: "Inicio"
+    timeout: 90000
+- assertVisible: "Salir"
+
+# Y el login ya no debe estar accesible.
+- assertNotVisible: "Esta aplicación es privada.*"

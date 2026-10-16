@@ -1,0 +1,172 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 05 · Análisis del mes
+# ═════════════════════════════════════════════════════════════════════════════
+# Verifica el desglose por categoría y que las transferencias estén SEPARADAS de
+# los ingresos y los gastos.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 02, 03 y 04 antes que éste: el desglose incluye el gasto
+# "Kiosco" que agrega el 03 y las dos transferencias que dejan el 03 y el 04.
+#
+#     powershell -File scripts/flows.ps1
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EL DESGLOSE, CALCULADO A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+# Gastos de octubre (500.000 en total):
+#
+#   Alquiler       250.000   50,00 %     ← 250.000 / 500.000
+#   Supermercado   120.000   24,00 %
+#   Ropa            50.000   10,00 %
+#   Transporte      45.000    9,00 %
+#   Intereses       25.000    5,00 %
+#   Kiosco          10.000    2,00 %
+#   ────────────────────────────────
+#                  500.000  100,00 %
+#
+# Los porcentajes se calculan contra el total de GASTOS, no contra los ingresos.
+# Es lo que hace que el gráfico se lea como "en qué se fue la plata que gasté".
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ "Intereses" TIENE QUE APARECER Y "Cuota 1 · capital" NO
+# ─────────────────────────────────────────────────────────────────────────────
+# La cuota del préstamo son $ 56.412,71. De eso, $ 25.000 son interés (el costo
+# real de haber pedido la plata) y $ 31.412,71 son amortización de capital (plata
+# que devolvés, no plata que perdés).
+#
+# En el desglose de gastos aparece SÓLO el interés. Si apareciera la cuota
+# completa, el gráfico diría que gastaste $ 56.412,71 en algo que en realidad te
+# costó $ 25.000 — más del doble. Ése era el error del modelo anterior.
+
+url: http://127.0.0.1:3000
+name: "05 · Análisis — desglose y transferencias"
+tags:
+  - smoke
+  - analisis
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar e ir al análisis ──────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida, así que el flow anterior la dejó
+# abierta. El desarrollo completo del porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- openLink: "${BASE}/analisis"
+
+# Se espera por algo que está ARRIBA de la página. El desglose por categoría
+# vive abajo de todo: esperar por él acá no funcionaría.
+- extendedWaitUntil:
+    visible: ".*Ingresos.*"
+    timeout: 90000
+
+# ── El período ───────────────────────────────────────────────────────────────
+# El rango tiene que ser el mes de calendario completo, del 1 al 31. Si el
+# cálculo del mes estuviera mal, el 31 faltaría o aparecería un día de más.
+- assertVisible: ".*2026-10-01 → 2026-10-31.*"
+
+# ── Las cuatro tarjetas del resumen ──────────────────────────────────────────
+- assertVisible: '.*800\.000,00.*'   # ingresos
+- assertVisible: '.*500\.000,00.*'   # gastos
+- assertVisible: '.*300\.000,00.*'   # te quedó
+
+# ── Las transferencias, aparte ───────────────────────────────────────────────
+# En octubre hubo dos: los $ 31.412,71 de capital de la cuota (flujo 02) y los
+# $ 50.000 que se pasaron al efectivo (flujo 04).
+#
+#   31.412,71 + 50.000 = 81.412,71
+#
+# Que tengan su propia tarjeta no es decoración: si se sumaran a los gastos, el
+# total pasaría de 500.000 a 581.412,71 y el análisis estaría contando como
+# pérdida plata que sólo cambió de lugar.
+- assertVisible: '.*81\.412,71.*'
+- assertVisible: ".*2 movimientos entre tus cuentas.*"
+
+# Y los totales siguen siendo los correctos: la tarjeta de transferencias
+# informa sin contaminar.
+- assertNotVisible: '.*581\.412,71.*'
+
+# ── El desglose por categoría ────────────────────────────────────────────────
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SCROLLEAR HASTA EL TÍTULO NO ALCANZA: HAY QUE SCROLLEAR HASTA EL DATO
+# ─────────────────────────────────────────────────────────────────────────────
+# Entre el título "En qué se fue" y la lista de categorías hay un **gráfico de
+# torta de 256 píxeles**. `scrollUntilVisible` frena apenas el título asoma por
+# el borde inferior de la pantalla, así que la lista quedaba entera debajo del
+# pliegue y la aserción fallaba con
+#
+#     Assertion is false: ".*Alquiler.*" is visible
+#
+# que suena a que la categoría no está. Está: 250 píxeles más abajo.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LA REGLA: ANCLAR EN LA ÚLTIMA FILA DE LA LISTA
+# ─────────────────────────────────────────────────────────────────────────────
+# El desglose tiene 6 filas de unos 25 píxeles: la lista entera mide menos de
+# 160, y la pantalla de los tests 597. Alcanza con **una sola** aserción de
+# scroll —la de la ÚLTIMA fila— porque todo lo que está por encima de ella y
+# dentro de la pantalla queda visible también.
+#
+# Anclar en la PRIMERA fila no sirve: `scrollUntilVisible` puede dejarla justo en
+# el borde inferior, y las cinco filas siguientes quedan fuera.
+#
+# Si algún día la lista crece y deja de entrar en una pantalla, esto se rompe —y
+# se rompe ruidosamente, porque fallan las aserciones de arriba. Ése es el
+# momento de pasar a un scroll por fila, en orden de arriba abajo.
+- scrollUntilVisible:
+    element:
+      text: ".*Kiosco.*"
+    direction: DOWN
+    timeout: 30000
+
+# Las categorías, ordenadas de mayor a menor por monto. Cada fila es UN solo
+# elemento cuyo texto es la concatenación de sus partes —"Alquiler50,00%$ 250.000,00"—
+# así que estas aserciones matchean la fila completa, no un `<span>` suelto.
+- assertVisible: ".*Alquiler.*"
+- assertVisible: ".*Supermercado.*"
+
+# Y los porcentajes. Se verifican los dos extremos del orden: el más grande y el
+# más chico. Si la proporción estuviera mal calculada, uno de los dos falla.
+- assertVisible: ".*50,00%.*"
+- assertVisible: ".*24,00%.*"
+
+# El interés del préstamo SÍ es un gasto: es el costo real de haber pedido la
+# plata. Aparece con su 5,00 %.
+- assertVisible: ".*Intereses.*"
+- assertVisible: ".*5,00%.*"
+
+# El kiosco que cargó el flujo 03, con el 2,00 % de los gastos.
+- assertVisible: ".*Kiosco.*"
+- assertVisible: ".*2,00%.*"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LA ASERCIÓN QUE CIERRA EL CÍRCULO
+# ─────────────────────────────────────────────────────────────────────────────
+# "Cuota 1" es la descripción del movimiento de AMORTIZACIÓN DE CAPITAL, que es
+# una transferencia. En la pantalla de movimientos se ve; acá NO tiene que
+# aparecer, porque el desglose es de GASTOS y amortizar capital no es un gasto.
+- assertNotVisible: ".*Cuota 1.*"

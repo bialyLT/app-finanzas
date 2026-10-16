@@ -1,0 +1,151 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 00 · Diagnóstico del driver web
+# ═════════════════════════════════════════════════════════════════════════════
+# No verifica la aplicación: verifica QUE SE PUEDA TESTEAR, y de paso sondea
+# cómo matchea Maestro.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# SONDA · MAESTRO HACE MATCH COMPLETO, NO BÚSQUEDA DE SUBCADENA
+# ─────────────────────────────────────────────────────────────────────────────
+# El elemento en pantalla dice `$ 800.000,00`. La aserción
+#
+#     assertVisible: '800\.000,00'
+#
+# FALLA, y el motivo no es la app: el elemento existe y el número está bien.
+#
+# La causa es que Maestro compara el patrón contra el texto COMPLETO del
+# elemento, no busca el patrón adentro. `800\.000,00` no es el texto completo de
+# `$ 800.000,00`, así que no hay coincidencia.
+#
+# Por eso el resto de los flows escribe
+#
+#     assertVisible: '.*800\.000,00.*'
+#
+# con comodines a los dos lados: es la forma de decir "el texto completo, que
+# contenga este número".
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# CÓMO LEER EL RESULTADO
+# ─────────────────────────────────────────────────────────────────────────────
+#   · Si PASA    → el driver funciona. Cualquier otro fallo es de la app o del
+#                  flujo, no del entorno. Andá a mirar ahí.
+#   · Si FALLA en `openLink` con TimeoutException y la pantalla queda en
+#     about:blank → Chrome arrancó pero no navega. Es un problema de entorno:
+#     mirá flows/README.md, trampa 5.
+#   · Si FALLA antes, con `DevToolsActivePort` → Chrome no arrancó, casi siempre
+#     por memoria (trampa 5).
+#   · Si falla sólo la SONDA 2 → el match dejó de ser completo y hay que sacar
+#     los comodines de todos los flows.
+#
+# Se llama 00 para que corra primero en orden alfabético y falle temprano.
+#
+# Requiere datos sembrados:
+#   node scripts/smoke.mjs --reset
+#
+#   powershell -File scripts/maestro.ps1 test flows/00-diagnostico.yaml --env APP_PASSWORD=finanzas-dev
+
+url: http://127.0.0.1:3000
+name: "00 · Diagnóstico del driver web"
+tags:
+  - diagnostico
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Cadena completa: Chrome → CDP → navegación http → React hidratado ────────
+- openLink: "${BASE}"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+# Texto exacto de un elemento: el botón dice "Entrar" y nada más.
+# Si esto falla, el match ya no es completo y los `.*` de los otros flows son
+# innecesarios (o peor: están ocultando un problema).
+- assertVisible: "Entrar"
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── SONDA 1: el texto exacto de un elemento simple ──────────────────────────
+# La etiqueta de la tarjeta dice "Ingresos", sin nada más alrededor.
+- assertVisible: "Ingresos"
+
+# ── SONDA 2: el número, con comodines ───────────────────────────────────────
+# Ésta es la forma que usan los flows 02 a 05. El elemento dice
+# `$ 800.000,00` —el símbolo, un espacio duro y el número— así que los comodines
+# son lo que hace que el patrón cubra el texto entero.
+#
+# El `\.` escapado es aparte: Maestro interpreta el texto como expresión regular
+# y un punto suelto significaría "cualquier carácter", con lo cual
+# `.*500.000,00.*` también daría por buena la pantalla que muestra `450.000,00`.
+- assertVisible: '.*800\.000,00.*'
+
+# ── SONDA 3: los otros números del panel ────────────────────────────────────
+- assertVisible: '.*490\.000,00.*'
+- assertVisible: '.*310\.000,00.*'
+- assertVisible: '.*410\.000,00.*'
+- assertVisible: ".*Ahorraste 38,75%.*"
+
+# Y una cuenta de deuda, que se muestra en POSITIVO: "debe $ 50.000,00".
+# Un `-$ 50.000,00` sería el mismo número y la lectura opuesta.
+#
+# El `.*` del medio no es decorativo: el espacio que `Intl` pone entre el símbolo
+# y el número es un espacio DURO (U+00A0), no el común. Un patrón con un espacio
+# común no coincidiría, y el fallo parecería un problema de la app.
+- assertVisible: '.*debe.*50\.000,00.*'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEJAR EL ESTADO COMO ESTABA: CERRAR SESIÓN
+# ─────────────────────────────────────────────────────────────────────────────
+# Este flow empezó sin sesión y tiene que terminar sin sesión. No es una
+# cortesía: es lo que hace que el flow siguiente pueda correr.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ: MAESTRO COMPARTE EL PERFIL DE CHROME DENTRO DE UNA MISMA CORRIDA
+# ─────────────────────────────────────────────────────────────────────────────
+# Al correr la carpeta entera, los flows comparten el perfil del navegador, así
+# que las COOKIES PERSISTEN de uno al siguiente.
+#
+# Eso rompió la suite de una forma muy instructiva. El flow 00 iniciaba sesión
+# para poder verificar los números del panel y la dejaba abierta. A partir de
+# ahí, en cascada:
+#
+#     [Failed] 01  "Esta aplicación es privada" no visible   ← ya estaba adentro
+#     [Failed] 02  Element not found: Id password            ← ya estaba adentro
+#     [Failed] 03  Element not found: Id password            ← ya estaba adentro
+#     [Failed] 04  Element not found: Id password            ← ya estaba adentro
+#     [Failed] 05  Element not found: Id password            ← ya estaba adentro
+#
+# El flow 01 se rompió porque su primera aserción verifica justamente que SIN
+# sesión no se vea ningún dato — y había sesión. Y los flows 02 a 05 se rompieron
+# buscando el campo de contraseña de un formulario que el proxy ya había
+# redirigido al panel (ver la regla "usuario autenticado que entra a /login" en
+# proxy.ts).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ CON UN CONDICIONAL Y NO CON UN `tapOn` A SECAS
+# ─────────────────────────────────────────────────────────────────────────────
+# `tapOn` FALLA si el elemento no existe, y con razón: un toque que no encuentra
+# su blanco casi siempre significa que la pantalla no es la que creés. Acá el
+# elemento puede faltar legítimamente —cuando el flow corre solo, no hay sesión
+# que cerrar— así que la condición es explícita en vez de tolerada.
+#
+# Éste es el mismo patrón que usan los flows 02 a 05 al empezar, del otro lado.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+# Y se espera a que el cierre se complete: el botón POSTea al endpoint y recién
+# después navega. Sin esta espera, el flow termina con la sesión viva.
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 30000

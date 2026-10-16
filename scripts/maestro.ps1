@@ -55,6 +55,38 @@ $env:MAESTRO_CLI_NO_ANALYTICS = "1"
 $env:MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED = "true"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SERVIDORES MCP DE MAESTRO HUÉRFANOS: SE MATAN ANTES DE ARRANCAR
+# ─────────────────────────────────────────────────────────────────────────────
+# El servidor MCP de Maestro (`maestro.cli.AppKt mcp`) y una corrida por CLI
+# comparten el mismo almacén de sesiones: `~/.maestro/sessions`. Cada proceso le
+# escribe un heartbeat cada 5 segundos y, en Windows, ese archivo se BLOQUEA
+# mientras se escribe.
+#
+# Con dos servidores MCP vivos —cosa que pasa sola, porque un agente levanta uno
+# por sesión y no siempre los baja— la corrida del CLI se pasa cinco minutos
+# peleando por el archivo y termina fallando en el PRIMER `openLink`:
+#
+#     [ERROR] Failed to record heartbeat
+#     java.io.IOException: El proceso no tiene acceso al archivo porque otro
+#                          proceso tiene bloqueada una parte del archivo
+#     [ INFO] Open ${BASE} FAILED
+#
+# El error que ve el usuario es "no pudo abrir la URL", así que uno se pone a
+# mirar Chrome, el servidor y el proxy — los tres están perfectos. Y el flujo
+# tarda 6 minutos en fallar en vez de 1 en pasar, así que además parece otra cosa.
+#
+# Se matan acá, y no se avisa para seguir, porque un aviso que dice "esto va a
+# fallar" es peor que sacar el obstáculo de en medio.
+$strayMcp = Get-CimInstance Win32_Process -Filter "Name = 'java.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*maestro.cli.AppKt mcp*" }
+
+if ($strayMcp) {
+    Write-Host "Cerrando $($strayMcp.Count) servidor(es) MCP de Maestro: retienen ~/.maestro/sessions" -ForegroundColor Yellow
+    $strayMcp | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 800
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # TECHO DE MEMORIA PARA LA JVM
 # ─────────────────────────────────────────────────────────────────────────────
 # Por defecto la JVM reserva como máximo 1/4 de la RAM física. En una máquina de
