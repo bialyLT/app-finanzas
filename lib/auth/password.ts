@@ -97,6 +97,26 @@ export function verifyPassword(candidate: string): boolean {
  * memoria y las instancias se reciclan, así que un atacante paciente puede
  * esquivarlo repartiendo intentos. Es defensa en profundidad, no una garantía:
  * la garantía real es que la contraseña sea larga.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ HAY DOS CUBETAS (POR IP Y GLOBAL)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `clientIp` lee `x-forwarded-for`, un header que el CLIENTE puede inventar. En
+ * un servidor Node que no esté detrás de un proxy que lo pise, un atacante manda
+ * un `X-Forwarded-For` distinto en cada intento y el límite por IP NUNCA se
+ * llena: 5 intentos por cada IP nueva, IPs infinitas, fuerza bruta sin freno.
+ *
+ * La defensa no puede depender de un dato que el atacante controla. Por eso,
+ * ADEMÁS de la cubeta por IP, hay una cubeta GLOBAL con el mismo umbral y la
+ * misma ventana: si SUMADOS los fallos de todas las IP se supera el máximo, se
+ * corta el login. Rotar el header ya no sirve de nada.
+ *
+ * TRADE-OFF EXPLÍCITO (seguridad contra disponibilidad): con esto, cualquiera
+ * que gaste 5 intentos fallidos puede bloquear el login durante la ventana. Es
+ * una molestia, pero el modelo de amenaza de esta app prioriza que NO se filtren
+ * los datos financieros: bloquear 15 minutos es preferible a permitir una fuerza
+ * bruta sin límite. Un único usuario que se equivoca una vez no se ve afectado, y
+ * un login correcto libera el contador.
  */
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000;
@@ -110,7 +130,23 @@ interface AttemptRecord {
 
 const attempts = new Map<string, AttemptRecord>();
 
-/** Cantidad de intentos fallidos registrados. Se usa para tests manuales. */
+/**
+ * Cubeta global: agrupa los fallos de TODAS las IP. Es la que no se puede
+ * esquivar rotando `x-forwarded-for`.
+ */
+let globalAttempts: AttemptRecord | null = null;
+
+/** Suma un intento a un registro, reiniciando la ventana si ya venció. */
+function accumulate(record: AttemptRecord | null): AttemptRecord {
+  const now = Date.now();
+  if (!record || now - record.firstAttempt > WINDOW_MS) {
+    return { count: 1, firstAttempt: now };
+  }
+  record.count += 1;
+  return record;
+}
+
+/** Cantidad de intentos fallidos registrados para una IP. Se usa en tests. */
 export function failedAttempts(ip: string): number {
   const record = attempts.get(ip);
   if (!record) return 0;
@@ -121,26 +157,38 @@ export function failedAttempts(ip: string): number {
   return record.count;
 }
 
-/** `true` si la IP superó el máximo de intentos en la ventana. */
-export function isRateLimited(ip: string): boolean {
-  return failedAttempts(ip) >= MAX_ATTEMPTS;
-}
-
-/** Registra un intento fallido. */
-export function registerFailure(ip: string): void {
-  const now = Date.now();
-  const record = attempts.get(ip);
-
-  if (!record || now - record.firstAttempt > WINDOW_MS) {
-    attempts.set(ip, { count: 1, firstAttempt: now });
-    return;
+/** Cantidad de intentos fallidos registrados en total, sumando todas las IP. */
+export function globalFailedAttempts(): number {
+  if (globalAttempts && Date.now() - globalAttempts.firstAttempt > WINDOW_MS) {
+    globalAttempts = null;
+    return 0;
   }
-  record.count += 1;
+  return globalAttempts?.count ?? 0;
 }
 
-/** Limpia los intentos de una IP tras un login exitoso. */
+/**
+ * `true` si hay que frenar el login: la IP superó el máximo, O el total de fallos
+ * de todas las IP lo superó (esto último cubre el `x-forwarded-for` rotado).
+ */
+export function isRateLimited(ip: string): boolean {
+  return failedAttempts(ip) >= MAX_ATTEMPTS || globalFailedAttempts() >= MAX_ATTEMPTS;
+}
+
+/** Registra un intento fallido en la cubeta de la IP y en la global. */
+export function registerFailure(ip: string): void {
+  attempts.set(ip, accumulate(attempts.get(ip) ?? null));
+  globalAttempts = accumulate(globalAttempts);
+}
+
+/**
+ * Limpia los intentos tras un login exitoso. También resetea la cubeta global:
+ * un login correcto significa que los fallos eran de un usuario legítimo que se
+ * equivocó, no de un ataque. Si no se reseteara, un par de errores de tipeo
+ * dejarían el login trabado y el dueño quedaría afuera de su propia app.
+ */
 export function clearFailures(ip: string): void {
   attempts.delete(ip);
+  globalAttempts = null;
 }
 
 /**
@@ -148,7 +196,7 @@ export function clearFailures(ip: string): void {
  * Frena ataques automatizados sin necesidad de infraestructura externa.
  */
 export function backoffDelay(ip: string): Promise<void> {
-  const count = failedAttempts(ip);
+  const count = Math.max(failedAttempts(ip), globalFailedAttempts());
   if (count === 0) return Promise.resolve();
 
   const delay = Math.min(BASE_DELAY_MS * 2 ** (count - 1), MAX_DELAY_MS);

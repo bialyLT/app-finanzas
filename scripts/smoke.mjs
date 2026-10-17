@@ -1191,6 +1191,70 @@ async function main() {
     check("el desembolso del 30/09 aparece en septiembre", desembolsos.length, 1);
   }
 
+  // ── Logout: CSRF y atributos de la cookie ──────────────────────────────────
+  section("Cierre de sesión (logout)");
+  {
+    // El logout es una mutación: tiene que exigir el mismo origen. Un sitio
+    // externo no puede desloguear al usuario por la espalda (logout CSRF).
+    const ajeno = await fetch(`${BASE_URL}/api/auth/logout`, {
+      method: "POST",
+      headers: { Origin: "http://evil.example", Cookie: cookie },
+    });
+    check("logout con Origin ajeno responde 403", ajeno.status, 403);
+
+    // Una cookie sólo se borra si el `Set-Cookie` repite los MISMOS atributos con
+    // los que se creó. Sobre http (APP_URL local) el login NO marca `Secure`; si
+    // el logout lo marcara, el navegador descartaría el borrado y la sesión
+    // seguiría viva tras "cerrar sesión". Los dos tienen que coincidir.
+    const loginSeco = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({ password: PASSWORD }),
+    });
+    const secureLogin = /;\s*Secure/i.test(
+      (loginSeco.headers.getSetCookie?.() ?? []).join(" "),
+    );
+
+    const logoutSeco = await fetch(`${BASE_URL}/api/auth/logout`, {
+      method: "POST",
+      headers: { Origin: BASE_URL, Cookie: cookie },
+    });
+    const secureLogout = /;\s*Secure/i.test(
+      (logoutSeco.headers.getSetCookie?.() ?? []).join(" "),
+    );
+    checkTrue(
+      "logout borra la cookie con los mismos atributos que el login (Secure)",
+      secureLogin === secureLogout,
+      `login Secure=${secureLogin}, logout Secure=${secureLogout}`,
+    );
+  }
+
+  // ── Cabeceras de seguridad ─────────────────────────────────────────────────
+  section("Cabeceras de seguridad");
+  {
+    const pagina = await fetch(`${BASE_URL}/login`);
+    check(
+      "X-Content-Type-Options: nosniff",
+      pagina.headers.get("x-content-type-options"),
+      "nosniff",
+    );
+    check("X-Frame-Options: DENY", pagina.headers.get("x-frame-options"), "DENY");
+    check(
+      "Referrer-Policy: strict-origin-when-cross-origin",
+      pagina.headers.get("referrer-policy"),
+      "strict-origin-when-cross-origin",
+    );
+
+    const respuestaApi = await fetch(`${BASE_URL}/api/accounts`, {
+      headers: { Cookie: cookie, Origin: BASE_URL },
+    });
+    check(
+      "la API también trae X-Content-Type-Options",
+      respuestaApi.headers.get("x-content-type-options"),
+      "nosniff",
+    );
+  }
+
   console.log(
     `\n${failed === 0 ? "TODO OK" : "HAY FALLAS"} — ${passed} verificaciones ok, ${failed} con falla`,
   );

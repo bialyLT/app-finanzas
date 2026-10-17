@@ -29,6 +29,44 @@ const nextConfig: NextConfig = {
    * Esto sólo afecta al servidor de DESARROLLO. En producción no aplica.
    */
   allowedDevOrigins: ["127.0.0.1", "localhost", "100.67.117.77"],
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * Cabeceras de seguridad
+   * ───────────────────────────────────────────────────────────────────────────
+   * Next no las agrega solo. Son defensa en profundidad, barata y sin estado:
+   *
+   *   · X-Content-Type-Options: nosniff
+   *     El navegador deja de "adivinar" el tipo de un recurso y respeta el
+   *     Content-Type. Evita que un cuerpo servido como algo inofensivo se
+   *     interprete como script.
+   *
+   *   · X-Frame-Options: DENY
+   *     Nadie puede embeber la app en un <iframe>. Corta el clickjacking sobre
+   *     el formulario de login. (CSP `frame-ancestors` es el reemplazo moderno,
+   *     pero una CSP completa en Next necesita cuidar los scripts inline; acá
+   *     alcanza con esto, que no rompe nada.)
+   *
+   *   · Referrer-Policy: strict-origin-when-cross-origin
+   *     Al navegar a otro sitio no se filtra la URL completa (que podría incluir
+   *     rutas con datos); sólo el origen, y sólo si el destino es https.
+   *
+   * NO se manda Strict-Transport-Security: sobre http el navegador la ignora, y
+   * en local forzar https rompería el acceso. En producción, servida por https,
+   * conviene agregarla (ver recomendaciones del informe).
+   */
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
