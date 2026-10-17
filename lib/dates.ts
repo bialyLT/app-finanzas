@@ -225,6 +225,23 @@ export function shiftPeriod(mode: PeriodMode, anchor: CalendarDate, direction: n
 }
 
 /**
+ * Los primeros días de los últimos `count` meses calendario, terminando en el
+ * mes de `anchor`, del más viejo al más nuevo.
+ *
+ * Existe para la serie mensual del patrimonio: hay que enumerar los meses a
+ * fotografiar SIN mirar los movimientos. Un mes sin movimientos sigue siendo un
+ * mes, y la serie tiene que mostrarlo con el saldo arrastrado — no saltearlo ni
+ * rellenarlo con ceros.
+ *
+ * Siempre parte del día 1, así que el clamp de fin de mes de `addMonths` (que
+ * existe para anclas del tipo "día 31") acá nunca se activa.
+ */
+export function recentMonthStarts(anchor: CalendarDate, count: number): CalendarDate[] {
+  const current = startOfMonth(anchor);
+  return Array.from({ length: count }, (_, i) => addMonths(current, i - (count - 1)));
+}
+
+/**
  * Índice de bucket para los gráficos: posición del día dentro del período.
  * Se calcula sobre componentes locales, nunca sobre diferencia de instantes UTC.
  * Devuelve `null` si la fecha cae fuera del rango.

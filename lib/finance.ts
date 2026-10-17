@@ -101,9 +101,47 @@ export interface NetWorthDTO {
   net: string;
 }
 
+/**
+ * Un punto de la serie mensual del patrimonio: la foto al cierre de un mes.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ VIAJAN LOS TRES NÚMEROS Y NO SÓLO EL NETO
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Porque el neto solo esconde la historia más importante del modelo. En el
+ * escenario del proyecto, agosto y septiembre terminan los dos en $ 100.000
+ * —el mismo número— pero por motivos opuestos: en septiembre entró un préstamo
+ * de $ 500.000 que subió los activos Y las deudas en la misma medida. Mirando
+ * sólo `net` esa foto parecería "no pasó nada"; con `assets` y `liabilities`
+ * se ve que pasó todo. Es la ley del panel aplicada al tiempo: el desembolso
+ * no es ganancia.
+ *
+ * `partial` marca el mes en curso: su foto es "a hoy", no a fin de mes, porque
+ * el mes todavía no terminó. Viaja en el DTO para que el cliente no tenga que
+ * adivinar CUÁL es el mes en curso con su propio reloj.
+ */
+export interface NetWorthPointDTO {
+  /** Mes calendario `"YYYY-MM"`. Ni día ni instante: acá la unidad es el mes. */
+  month: string;
+  /** Activos (efectivo + banco) a la fecha de la foto, como string decimal. */
+  assets: string;
+  /** Deudas en positivo a esa misma fecha. */
+  liabilities: string;
+  /** `assets − liabilities`. Puede ser negativo. */
+  net: string;
+  /** `true` sólo en el mes en curso: la foto se corta a hoy, no a fin de mes. */
+  partial: boolean;
+}
+
 export interface AccountsResponse {
   accounts: AccountBalanceDTO[];
   netWorth: NetWorthDTO;
+  /**
+   * La evolución del patrimonio: la foto al cierre de cada uno de los últimos
+   * 12 meses calendario, del más viejo al más nuevo (el último es el mes en
+   * curso). La calcula `getNetWorthSeries` en el servidor — el cliente no suma
+   * movimientos en ningún caso.
+   */
+  netWorthSeries: NetWorthPointDTO[];
 }
 
 /**

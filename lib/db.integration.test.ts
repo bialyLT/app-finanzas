@@ -33,6 +33,7 @@ import { amortizationSchedule } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
 import {
   categoriesInPeriod,
+  getNetWorthSeries,
   movementCashFlow,
   movementCategoryBreakdown,
   movementDateBreakdown,
@@ -1388,5 +1389,320 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
     expect(await movementCashFlow(db, rango("2026-01-01", "2026-12-31"))).toBe(
       "643587.29",
     );
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA SERIE MENSUAL DEL PATRIMONIO · DE DÓNDE VIENE EL NÚMERO DE HOY
+ * ─────────────────────────────────────────────────────────────────────────────
+ * El panel mostraba la foto de hoy y ninguna evolución. La serie es la
+ * respuesta a "¿ese número subió porque ahorré o porque me endeudé?" — y su
+ * test tiene el mismo rigor que el de cualquier otro total del proyecto: los
+ * números se calculan A MANO contra el escenario sembrado (el mismo de
+ * `scripts/smoke.mjs`), no sumando la lista como lo hace el código.
+ *
+ * Los tres casos que cubren estos tests:
+ *   1. El escenario completo: agosto, septiembre y octubre con los netos y la
+ *      descomposición exactos — incluida la foto de septiembre, donde el
+ *      desembolso del préstamo sube activos Y deudas y el neto NO se mueve.
+ *   2. El borde de mes: el 31/07 es de julio, el 01/09 es de septiembre, y el
+ *      mes en curso se corta a HOY (lo del 17/10 no entra en una foto del 16).
+ *   3. El mes sin movimientos: no es un hueco ni un cero — arrastra el saldo
+ *      anterior. Y una base sin cuentas devuelve serie VACÍA, no 12 ceros.
+ */
+describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  it("el escenario sembrado, mes a mes (netos calculados a mano)", async () => {
+    const { gastos, sueldo } = await seedCategories();
+
+    const [bank, card] = await Promise.all([
+      db.account.create({
+        data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+      }),
+      db.account.create({ data: { name: "Visa", kind: "CREDIT_CARD" } }),
+    ]);
+
+    const loan = await db.account.create({
+      data: {
+        name: "Préstamo",
+        kind: "LOAN",
+        principal: "500000",
+        tnaPercent: "60",
+        installmentCount: 12,
+      },
+    });
+
+    // El desembolso, el 30/09: transferencia del préstamo al banco.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "500000",
+        date: calendarToDb("2026-09-30"),
+        accountId: loan.id,
+        toAccountId: bank.id,
+        description: "Desembolso del préstamo",
+      },
+    });
+
+    // Octubre: sueldo, tres gastos del banco, la compra con tarjeta.
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "INCOME",
+          amount: "800000",
+          date: calendarToDb("2026-10-01"),
+          accountId: bank.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "250000",
+          date: calendarToDb("2026-10-03"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "120000",
+          date: calendarToDb("2026-10-05"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "45000",
+          date: calendarToDb("2026-10-08"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "50000",
+          date: calendarToDb("2026-10-12"),
+          accountId: card.id,
+          categoryId: gastos.id,
+        },
+      ],
+    });
+
+    // La cuota 1 del préstamo, descompuesta: capital (transferencia) e interés
+    // (gasto), como la descompone el banco.
+    const first = amortizationSchedule("500000", "60", 12)[0];
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "TRANSFER",
+          amount: first.principal.toFixed(2),
+          date: calendarToDb("2026-10-15"),
+          accountId: bank.id,
+          toAccountId: loan.id,
+          description: "Cuota 1 · capital",
+        },
+        {
+          kind: "EXPENSE",
+          amount: first.interest.toFixed(2),
+          date: calendarToDb("2026-10-15"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+          description: "Cuota 1 · interés",
+        },
+      ],
+    });
+
+    // ── EL CÁLCULO A MANO ────────────────────────────────────────────────────
+    //
+    //   agosto 2026    Activos: banco 100.000 + efectivo 0 = 100.000,00
+    //                  Deudas: 0,00 (la tarjeta y el préstamo todavía están en 0)
+    //                  Neto: 100.000,00 — no hay ni un movimiento
+    //
+    //   septiembre     Activos: 100.000 + 500.000 (desembolso del 30/09) = 600.000,00
+    //                  Deudas: 500.000,00 (el préstamo, por el desembolso)
+    //                  Neto: 600.000 − 500.000 = 100.000,00
+    //                  ★ El desembolso NO movió el patrimonio: subió la plata en
+    //                    el banco a la vez que subió la deuda. Cambia la
+    //                    COMPOSICIÓN, no el neto.
+    //
+    //   octubre        Banco: 100.000 + 500.000 + 800.000 (sueldo)
+    //                         − 250.000 − 120.000 − 45.000 (gastos)
+    //                         − 31.412,71 (capital de la cuota)
+    //                         − 25.000,00 (interés de la cuota)
+    //                        = 928.587,29
+    //                  Deudas: 50.000 (tarjeta) + 468.587,29 (préstamo: 500.000
+    //                          − 31.412,71 de capital) = 518.587,29
+    //                  Neto: 928.587,29 − 518.587,29 = 410.000,00
+    //                      = 100.000 iniciales + 310.000 de ahorro real
+    //                        (800.000 de sueldo − 490.000 de gastos reales)
+    const serie = await getNetWorthSeries(db, { anchor: "2026-10-31" });
+
+    // Doce meses, del más viejo (noviembre 2025) al más nuevo (octubre 2026).
+    expect(serie).toHaveLength(12);
+    expect(serie[0].month).toBe("2025-11");
+    expect(serie[11].month).toBe("2026-10");
+
+    const porMes = new Map(serie.map((point) => [point.month, point]));
+
+    // Agosto: la foto completa del mes sin movimientos.
+    expect(porMes.get("2026-08")).toEqual({
+      month: "2026-08",
+      assets: "100000.00",
+      liabilities: "0.00",
+      net: "100000.00",
+      partial: false,
+    });
+
+    // Septiembre: el neto es el MISMO que agosto — y sin embargo pasó todo.
+    expect(porMes.get("2026-09")).toEqual({
+      month: "2026-09",
+      assets: "600000.00",
+      liabilities: "500000.00",
+      net: "100000.00",
+      partial: false,
+    });
+
+    // Octubre: el número de hoy, al cierre.
+    expect(porMes.get("2026-10")).toEqual({
+      month: "2026-10",
+      assets: "928587.29",
+      liabilities: "518587.29",
+      net: "410000.00",
+      partial: false,
+    });
+
+    // El último punto es EXACTAMENTE la foto que devuelve `getNetWorth` para la
+    // misma fecha: la serie no puede inventar un patrimonio distinto del que
+    // muestra el panel para el mismo día.
+    const fotoDeOctubre = await getNetWorth(db, { asOf: "2026-10-31" });
+    expect(porMes.get("2026-10")?.net).toBe(fotoDeOctubre.net.toFixed(2));
+
+    // Los diez meses anteriores a septiembre no tienen movimientos: ninguno es
+    // un hueco ni un cero — cada uno arrastra el saldo inicial del banco.
+    const sinMovimientos = serie.filter((point) => point.month <= "2026-08");
+    expect(sinMovimientos).toHaveLength(10);
+    for (const point of sinMovimientos) {
+      expect(point).toEqual({
+        month: point.month,
+        assets: "100000.00",
+        liabilities: "0.00",
+        net: "100000.00",
+        partial: false,
+      });
+    }
+  });
+
+  it("los bordes de mes caen donde tienen que caer, y el mes en curso es parcial", async () => {
+    const { gastos, sueldo } = await seedCategories();
+
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+    const cash = await db.account.create({
+      data: { name: "Efectivo", kind: "CASH" },
+    });
+
+    await db.movement.createMany({
+      data: [
+        {
+          // El ÚLTIMO día de julio: es de julio, no de agosto.
+          kind: "EXPENSE",
+          amount: "5000",
+          date: calendarToDb("2026-07-31"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          // El último de agosto.
+          kind: "EXPENSE",
+          amount: "20000",
+          date: calendarToDb("2026-08-31"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          // El PRIMERO de septiembre: es de septiembre, no de agosto.
+          kind: "INCOME",
+          amount: "50000",
+          date: calendarToDb("2026-09-01"),
+          accountId: bank.id,
+          categoryId: sueldo.id,
+        },
+        {
+          // Una transferencia entre cuentas de dinero: no cambia el neto.
+          kind: "TRANSFER",
+          amount: "30000",
+          date: calendarToDb("2026-10-05"),
+          accountId: bank.id,
+          toAccountId: cash.id,
+        },
+        {
+          // El día del corte del mes en curso: ENTRA (`asOf` es inclusivo).
+          kind: "EXPENSE",
+          amount: "10000",
+          date: calendarToDb("2026-10-16"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          // Después del corte: NO entra. Un movimiento cargado con fecha
+          // futura no puede aparecer en la foto de "hoy".
+          kind: "EXPENSE",
+          amount: "999.99",
+          date: calendarToDb("2026-10-17"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+      ],
+    });
+
+    // ── EL CÁLCULO A MANO (ancla: 16/10) ─────────────────────────────────────
+    //
+    //   julio       100.000 − 5.000            =  95.000,00
+    //   agosto       95.000 − 20.000           =  75.000,00
+    //   septiembre   75.000 + 50.000           = 125.000,00
+    //   octubre     125.000 + 30.000 − 30.000  = 125.000,00  (la transferencia
+    //                          − 10.000       = 115.000,00   se anula sola)
+    //
+    // Si el gasto del 17/10 se colara, octubre daría 114.000,01. Si el 31/07
+    // cayera en agosto, agosto daría 95.000. Si el 01/09 cayera en agosto,
+    // agosto daría 125.000.
+    const serie = await getNetWorthSeries(db, { anchor: "2026-10-16" });
+    const porMes = new Map(serie.map((point) => [point.month, point]));
+
+    expect(porMes.get("2026-07")?.net).toBe("95000.00");
+    expect(porMes.get("2026-08")?.net).toBe("75000.00");
+    expect(porMes.get("2026-09")?.net).toBe("125000.00");
+
+    // El mes en curso (octubre) es PARCIAL: la foto es "a hoy", no a fin de mes.
+    expect(porMes.get("2026-10")?.net).toBe("115000.00");
+    expect(porMes.get("2026-10")?.partial).toBe(true);
+
+    // Los meses cerrados no: su foto es fin de mes de verdad.
+    expect(porMes.get("2026-09")?.partial).toBe(false);
+    expect(porMes.get("2026-07")?.partial).toBe(false);
+
+    // Y el mes en curso también llega marcado así cuando el ancla es el último
+    // día: ahí el mes SÍ terminó, aunque siga siendo el mes de hoy.
+    const finDeMes = await getNetWorthSeries(db, { anchor: "2026-10-31" });
+    const octubreCerrado = finDeMes.find((point) => point.month === "2026-10");
+    expect(octubreCerrado?.net).toBe("114000.01");
+    expect(octubreCerrado?.partial).toBe(false);
+  });
+
+  it("sin ninguna cuenta la serie es vacía, no 12 ceros", async () => {
+    // Doce fotos en cero afirmarían "tu patrimonio fue exactamente 0", que la
+    // app no puede saber. Sin cuentas no hay ni saldos iniciales que mostrar:
+    // es "no hay datos", y el contrato del DTO lo dice con una lista vacía.
+    // (Un saldo inicial de cero en una cuenta que existe SÍ es un cero real:
+    // eso lo cubren los otros dos tests.)
+    expect(await getNetWorthSeries(db, { anchor: "2026-10-16" })).toEqual([]);
   });
 });

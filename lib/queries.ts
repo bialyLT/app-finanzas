@@ -29,14 +29,22 @@
  */
 
 import type { Prisma } from "@prisma/client";
-import type { Db } from "./balance";
-import { calendarToDb, dbToCalendar, type CalendarDate } from "./dates";
+import { getNetWorth, type Db } from "./balance";
+import {
+  calendarToDb,
+  dbToCalendar,
+  endOfMonth,
+  recentMonthStarts,
+  todayCalendar,
+  type CalendarDate,
+} from "./dates";
 import type {
   AccountDTO,
   CategoryBreakdownDTO,
   CategoryDTO,
   DateBreakdownDTO,
   MovementDTO,
+  NetWorthPointDTO,
   PeriodTotalsDTO,
 } from "./finance";
 import { sum, zero } from "./money";
@@ -333,6 +341,100 @@ export async function movementDateBreakdown(
     kind: row.kind === "INCOME" ? "INCOME" : "EXPENSE",
     amount: row._sum.amount === null ? "0.00" : row._sum.amount.toFixed(2),
   }));
+}
+
+/** Cuántos meses calendario tiene la serie del patrimonio (incluido el actual). */
+export const NET_WORTH_SERIES_MONTHS = 12;
+
+/**
+ * La serie mensual del patrimonio neto: la foto al cierre de cada uno de los
+ * últimos meses calendario, del más viejo al más nuevo.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ EXISTE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * El panel ya muestra el patrimonio de HOY (activos − pasivos). Ese número no
+ * dice de dónde viene: si subió 300.000 porque ahorraste, o si "subió" porque
+ * te endeudaste. La serie es esa respuesta, y se calcula acá, en el servidor,
+ * por la misma regla que todo lo demás: los totales nunca se arman sumando
+ * movimientos en el cliente.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * CÓMO SE CALCULA (y por qué no duplica la fórmula)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Cada punto es `getNetWorth({ asOf })` — la MISMA función que calcula la foto
+ * de hoy, sólo que cortada al fin de cada mes. No hay una segunda fórmula de
+ * saldos: si mañana cambia la definición de "cuenta de dinero" o de "deuda", la
+ * serie cambia con ella sin que nadie se acuerde de este archivo. El costo es
+ * 1 + 4 consultas agregadas por mes (12 meses = 60, todas en paralelo), baratas
+ * sobre el índice de `date`; si algún día duelen contra una base remota, la
+ * optimización correcta es una sola pasada con `date_trunc` en SQL — nunca una
+ * segunda implementación de la fórmula.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * MESES SIN MOVIMIENTOS (y meses previos al primer movimiento)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Cada mes muestra el saldo REAL a esa fecha: lo que había al abrir las cuentas
+ * (`openingBalance`) más todos los movimientos hasta ese día. Un mes sin
+ * movimientos no se saltea ni se rellena con ceros: arrastra el saldo del mes
+ * anterior. Y los meses anteriores al primer movimiento muestran los saldos
+ * iniciales — en este modelo el saldo inicial es "lo que tenías antes de
+ * empezar a cargar movimientos", sin fecha propia, así que es la única foto
+ * posible de un pasado sin datos. Las dos cosas son más honestas que un cero:
+ * un cero no es "no sé", es una afirmación.
+ *
+ * El único caso sin serie es una base sin NINGUNA cuenta: ahí no hay patrimonio
+ * que fotografiar, y devolver 12 fotos en cero afirmaría una historia ("tu
+ * patrimonio fue exactamente 0") que la app no conoce. La pantalla esconde la
+ * serie cuando llega vacía.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL MES EN CURSO ES PARCIAL (y los bordes de mes)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Los meses cerrados se fotografían el ÚLTIMO día: un movimiento del 30/09
+ * entra en septiembre y uno del 01/10 en octubre (la columna es `@db.Date` y el
+ * corte de `asOf` es `<=`). El mes en curso no terminó, así que su foto es "a
+ * hoy": se corta en `anchor` y viaja marcado `partial: true` para que la
+ * interfaz lo etiquete "en curso" en vez de presentarlo como un mes cerrado.
+ *
+ * @param anchor Día desde el cual mirar hacia atrás (`YYYY-MM-DD`). Por
+ *               defecto, hoy. Existe para que los tests fijen un mes de
+ *               referencia y la serie no dependa del día en que se corran.
+ * @param months Cuántos meses calendario devolver. Por defecto, 12.
+ * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ */
+export async function getNetWorthSeries(
+  db: Db,
+  options: { months?: number; anchor?: CalendarDate } = {},
+): Promise<NetWorthPointDTO[]> {
+  const months = options.months ?? NET_WORTH_SERIES_MONTHS;
+  const anchor = options.anchor ?? todayCalendar();
+
+  // La pregunta "¿hay algo que fotografiar?" se contesta ANTES de calcular:
+  // sin cuentas no hay ni siquiera saldos iniciales que mostrar.
+  const accountCount = await db.account.count();
+  if (accountCount === 0) return [];
+
+  const monthStarts = recentMonthStarts(anchor, months);
+  const currentMonth = monthStarts[monthStarts.length - 1];
+
+  return Promise.all(
+    monthStarts.map(async (monthStart) => {
+      // Mes cerrado → foto a fin de mes. Mes en curso → foto a `anchor`.
+      const asOf = monthStart === currentMonth ? anchor : endOfMonth(monthStart);
+      const snapshot = await getNetWorth(db, { asOf });
+
+      return {
+        month: monthStart.slice(0, 7),
+        assets: snapshot.assets.toFixed(2),
+        liabilities: snapshot.liabilities.toFixed(2),
+        net: snapshot.net.toFixed(2),
+        // El mes en curso es parcial salvo que el ancla sea su último día
+        // (fin de mes de verdad). Comparar strings de calendario es exacto.
+        partial: asOf < endOfMonth(monthStart),
+      };
+    }),
+  );
 }
 
 /**

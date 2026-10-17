@@ -559,6 +559,106 @@ async function main() {
     "0.00",
   );
 
+  // ── La serie mensual del patrimonio ────────────────────────────────────────
+  //
+  // `netWorthSeries` es la foto al cierre de cada uno de los últimos 12 meses
+  // calendario, del más viejo al más nuevo. Se verifica contra números armados
+  // A MANO sobre el seed, no contra el código que los generó.
+  //
+  // El escenario, resumido:
+  //   · Saldos iniciales: banco 100.000,00; el resto en cero.
+  //   · Septiembre: el 30/09 el desembolso del préstamo mueve 500.000 del
+  //     préstamo al banco → banco 600.000, deuda 500.000. El neto NO cambia.
+  //   · Octubre (hasta el 31): sueldo 800.000; gastos del banco 250.000 +
+  //     120.000 + 45.000 + 25.000 (interés); cuota de capital 31.412,71
+  //     (banco → préstamo); compra con tarjeta 50.000 (deuda nueva).
+  //
+  //   Banco:     600.000 + 800.000 − 440.000 − 31.412,71 = 928.587,29
+  //   Deudas:    500.000 − 31.412,71 (capital) + 50.000 (visa) = 518.587,29
+  //   Neto:      928.587,29 − 518.587,29 = 410.000,00
+  section("La serie mensual del patrimonio (últimos 12 meses)");
+
+  const serie = accountsData?.netWorthSeries ?? [];
+  // Cada mes arranca en el día 1 y termina con el mes del ancla: con el ancla
+  // de fin de octubre, la ventana es nov 2025 → oct 2026.
+  check("la serie tiene 12 meses", serie.length, 12);
+  check("arranca en noviembre 2025", serie[0]?.month, "2025-11");
+  check("termina en octubre 2026 (el mes del ancla)", serie[11]?.month, "2026-10");
+  checkTrue(
+    "los meses vienen del más viejo al más nuevo, sin repetirse",
+    serie.every((p, i) => i === 0 || p.month > serie[i - 1].month),
+  );
+
+  const mes = (m) => serie.find((p) => p.month === m);
+
+  // Un mes ANTERIOR a cualquier movimiento (2025-11 a 2026-08) muestra los
+  // saldos iniciales: el banco con 100.000 y nada más. No es un cero: el saldo
+  // inicial no tiene fecha propia, así que es la única foto posible.
+  check("un mes sin movimientos (agosto) muestra el saldo inicial", mes("2026-08")?.assets, "100000.00");
+  check("y no tiene deudas todavía", mes("2026-08")?.liabilities, "0.00");
+  check("su neto es 100.000,00", mes("2026-08")?.net, "100000.00");
+
+  // Septiembre: la lección del panel aplicada al tiempo. El neto es el MISMO
+  // que en agosto (100.000), pero la composición dice lo que pasó de verdad:
+  // entró un préstamo de 500.000 que subió activos y deudas por igual. Si la
+  // serie mostrara sólo el neto, "septiembre" parecería un mes vacío.
+  check("septiembre · activos = 600.000,00 (banco 100.000 + desembolso 500.000)", mes("2026-09")?.assets, "600000.00");
+  check("septiembre · deudas = 500.000,00 (el préstamo)", mes("2026-09")?.liabilities, "500000.00");
+  check("septiembre · neto = 100.000,00 — el mismo de agosto, y está bien", mes("2026-09")?.net, "100000.00");
+
+  // El borde de mes: el desembolso es del 30/09. Tiene que estar en septiembre
+  // y NO en agosto (cuya foto cierra el 31/08). Es la lección del bug B3
+  // aplicada a la serie: lo de arriba lo comprueba — agosto no se movió.
+  check("octubre · activos = 928.587,29", mes("2026-10")?.assets, "928587.29");
+  check("octubre · deudas = 518.587,29", mes("2026-10")?.liabilities, "518587.29");
+  check("octubre · neto = 410.000,00", mes("2026-10")?.net, "410000.00");
+
+  // Coherencia interna: con el ancla a fin de mes, el último punto de la serie
+  // y el patrimonio de hoy salen de la misma fórmula y TIENEN que coincidir.
+  // Si divergieran, habría dos definiciones de "patrimonio" en la app.
+  check("el último punto coincide con netWorth.net", serie[11]?.net, accountsData?.netWorth?.net);
+  checkTrue(
+    "con el ancla a fin de mes, ningún punto es parcial",
+    serie.every((p) => p.partial === false),
+    JSON.stringify(serie.filter((p) => p.partial).map((p) => p.month)),
+  );
+
+  // ── La serie y el mes en curso ─────────────────────────────────────────────
+  //
+  // Con el ancla al 02/10, el mes en curso se corta ESE día y no a fin de mes:
+  // la foto incluye el sueldo del 01/10 (800.000) pero todavía no el alquiler
+  // del 03/10. El banco queda en 100.000 + 500.000 + 800.000 = 1.400.000,00,
+  // las deudas en 500.000,00 (la tarjeta todavía no compró) y el neto en
+  // 900.000,00. El mes viaja marcado `partial: true` para que la interfaz no
+  // lo presente como un mes cerrado.
+  {
+    const { body: aMitad } = await api(`/api/accounts?asOf=${MES}-02`);
+    const serieCorta = aMitad?.netWorthSeries ?? [];
+    check("sigue siendo una ventana de 12 meses", serieCorta.length, 12);
+    check("el último mes es octubre", serieCorta[11]?.month, "2026-10");
+    checkTrue("y está marcado como en curso (parcial)", serieCorta[11]?.partial === true);
+    check("activos al 02/10 = 1.400.000,00", serieCorta[11]?.assets, "1400000.00");
+    check("deudas al 02/10 = 500.000,00", serieCorta[11]?.liabilities, "500000.00");
+    check("neto al 02/10 = 900.000,00", serieCorta[11]?.net, "900000.00");
+    checkTrue(
+      "los meses cerrados anteriores no son parciales",
+      (serieCorta.slice(0, 11) ?? []).every((p) => p.partial === false),
+    );
+    check("septiembre no cambia: su foto sigue cerrando el 30/09", serieCorta[10]?.net, "100000.00");
+  }
+
+  // La ruta que usa el panel (sin `asOf`) termina en el mes ACTUAL del reloj
+  // local —el mismo que ve la persona en la interfaz— y su último punto tiene
+  // que coincidir con `netWorth.net` de esa misma respuesta.
+  {
+    const { body: hoy } = await api("/api/accounts?includeArchived=false");
+    const ahora = new Date();
+    const mesActual = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}`;
+    const ultimo = (hoy?.netWorthSeries ?? []).at(-1);
+    check("sin asOf, la serie termina en el mes actual", ultimo?.month, mesActual);
+    check("y su neto coincide con el patrimonio de hoy", ultimo?.net, hoy?.netWorth?.net);
+  }
+
   // ── Los reportes de /analisis, agregados en el SERVIDOR ────────────────────
   //
   // /analisis ya no suma la lista topeada: pide sus tres agregados —totales,

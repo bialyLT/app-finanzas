@@ -87,6 +87,16 @@ env:
 - assertVisible: '.*-\$.*81\.412,71.*'
 
 # ── Gasto de un centavo, con punto decimal ───────────────────────────────────
+# Botón debajo del pliegue desde que está el bloque "Evolución": `tapOn` no
+# scrollea para buscar su blanco. Se scrollea hasta él y se lo centra (remedio
+# de la trampa 12); el desarrollo completo está en el flujo 03.
+- scrollUntilVisible:
+    element:
+      id: "btn-expense"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
 - tapOn:
     id: "btn-expense"
 
@@ -113,6 +123,21 @@ env:
 - tapOn:
     id: "tx-submit"
 
+# Sin navegación al guardar, la página queda scrolleada sobre los botones: se
+# espera el cierre del modal y se vuelve arriba con el ancla del mes antes de
+# leer las tarjetas, igual que el flujo 03.
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: ".*octubre de 2026.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
+
 # ── Un centavo MUEVE los tres números del panel ──────────────────────────────
 - extendedWaitUntil:
     visible: '.*900\.000,01.*'
@@ -122,6 +147,15 @@ env:
 - assertVisible: '.*-\$.*81\.412,72.*'
 
 # ── Gasto enorme, con formato argentino completo ─────────────────────────────
+# Otra vez al botón: tras volver arriba quedó debajo del pliegue. Mismo scroll
+# centrado que antes de la primera carga.
+- scrollUntilVisible:
+    element:
+      id: "btn-expense"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
 - tapOn:
     id: "btn-expense"
 
@@ -144,6 +178,20 @@ env:
 
 - tapOn:
     id: "tx-submit"
+
+# De vuelta arriba tras el cierre del modal (el panel no navega), como después
+# de la primera carga.
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: ".*octubre de 2026.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
 
 # ── Los totales, exactos al centavo ──────────────────────────────────────────
 # 900.000,01 + 9.999.999,99 = 10.900.000,00 exactos. Un error de redondeo de

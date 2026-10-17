@@ -35,6 +35,7 @@ import {
   isCalendarDate,
   lastDayOfMonth,
   periodRange,
+  recentMonthStarts,
   shiftPeriod,
   startOfMonth,
   startOfWeek,
@@ -174,6 +175,34 @@ describe("B3 · los límites del mes son los del calendario", () => {
     expect(endOfMonth("2026-10-15")).toBe("2026-10-31");
     expect(startOfYear("2026-10-15")).toBe("2026-01-01");
     expect(endOfYear("2026-10-15")).toBe("2026-12-31");
+  });
+});
+
+describe("recentMonthStarts · los últimos N meses calendario", () => {
+  it("12 meses terminando en el mes del ancla, del más viejo al más nuevo", () => {
+    // El ancla del seed de la serie: octubre 2026. Para atrás: noviembre 2025.
+    const months = recentMonthStarts("2026-10-16", 12);
+    expect(months).toHaveLength(12);
+    expect(months[0]).toBe("2025-11-01");
+    expect(months[11]).toBe("2026-10-01");
+  });
+
+  it("cruza el año sin saltear ni repetir meses", () => {
+    expect(recentMonthStarts("2026-01-05", 3)).toEqual([
+      "2025-11-01",
+      "2025-12-01",
+      "2026-01-01",
+    ]);
+  });
+
+  it("el día del ancla no se cuela en el resultado: siempre se parte del día 1", () => {
+    // Un ancla de fin de mes es la trampa del clamp de `addMonths` (31/03 + 1
+    // mes → 30/04); acá nunca aplica porque los meses se enumeran desde el 1.
+    expect(recentMonthStarts("2026-03-31", 2)).toEqual(["2026-02-01", "2026-03-01"]);
+  });
+
+  it("count 0 no devuelve meses", () => {
+    expect(recentMonthStarts("2026-10-16", 0)).toEqual([]);
   });
 });
 

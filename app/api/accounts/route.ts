@@ -3,10 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { getAccountBalances, getNetWorth } from "@/lib/balance";
-import { isCalendarDate } from "@/lib/dates";
+import { isCalendarDate, todayCalendar } from "@/lib/dates";
 import { cleanName } from "@/lib/finance";
 import { parseMoneyInput } from "@/lib/money";
-import { describeDatabaseError, toAccountDTO } from "@/lib/queries";
+import {
+  describeDatabaseError,
+  getNetWorthSeries,
+  toAccountDTO,
+} from "@/lib/queries";
 
 const ACCOUNT_KINDS = ["CASH", "BANK", "CREDIT_CARD", "LOAN"] as const;
 type AccountKind = (typeof ACCOUNT_KINDS)[number];
@@ -44,6 +48,16 @@ function isAccountKind(value: unknown): value is AccountKind {
  *
  * `asOf` permite pedir el saldo a una fecha pasada:
  *     GET /api/accounts?asOf=2026-09-30
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `netWorthSeries`: LA EVOLUCIÓN DEL PATRIMONIO
+ * ─────────────────────────────────────────────────────────────────────────────
+ * La respuesta incluye la foto al cierre de los últimos 12 meses calendario
+ * (ver `getNetWorthSeries`). `asOf` gobierna las TRES vistas a la vez —saldos,
+ * patrimonio y serie—: con `asOf`, la serie termina en el mes de esa fecha y la
+ * última foto se corta ese día. Así no hay dos "hoy" distintos dentro de la
+ * misma respuesta, que es la clase de detalle que después confunde a un test o
+ * a una pantalla sin que nadie entienda por qué.
  */
 export async function GET(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
@@ -56,9 +70,10 @@ export async function GET(req: Request) {
     return badRequest("`asOf` tiene que ser una fecha AAAA-MM-DD válida.");
   }
 
-  const [balances, netWorth] = await Promise.all([
+  const [balances, netWorth, netWorthSeries] = await Promise.all([
     getAccountBalances(prisma, { asOf: asOf ?? undefined, includeArchived }),
     getNetWorth(prisma, { asOf: asOf ?? undefined }),
+    getNetWorthSeries(prisma, { anchor: asOf ?? todayCalendar() }),
   ]);
 
   return NextResponse.json({
@@ -83,6 +98,7 @@ export async function GET(req: Request) {
       liabilities: netWorth.liabilities.toFixed(2),
       net: netWorth.net.toFixed(2),
     },
+    netWorthSeries,
   });
 }
 

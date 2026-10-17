@@ -102,6 +102,17 @@ env:
 - assertVisible: ".*2 transferencias entre tus cuentas.*"
 
 # ── Cargar el pago de más ────────────────────────────────────────────────────
+# El bloque "Evolución · últimos 12 meses" movió este botón debajo del pliegue
+# de la ventana de los tests (1018×597), y `tapOn` no scrollea para buscarlo.
+# Se scrollea hasta él y se lo centra (remedio de la trampa 12); el desarrollo
+# completo está en el flujo 03.
+- scrollUntilVisible:
+    element:
+      id: "btn-transfer"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
 - tapOn:
     id: "btn-transfer"
 
@@ -155,6 +166,22 @@ env:
 
 - tapOn:
     id: "tx-submit"
+
+# El panel recarga sin navegar: la página queda scrolleada sobre los botones y
+# las tarjetas fuera de la vista (los assertNotVisible del final aprobarían sin
+# verificar —trampa 7—). Se espera el cierre del modal y se vuelve arriba con el
+# ancla del mes, igual que el flujo 03.
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: ".*octubre de 2026.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
 
 # ── La tarjeta ahora tiene saldo A FAVOR ─────────────────────────────────────
 # Éste es el texto que el bug hacía imposible: con el código viejo la fila

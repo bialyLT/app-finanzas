@@ -374,6 +374,8 @@ un control, la primera pregunta no es cómo hacer que el test lo encuentre, sino
 **por qué un usuario tendría problemas para encontrarlo**. Acá la respuesta era
 "los tiene".
 
+**Caso hermano (Fase 6): el pliegue de la página.** Con la serie mensual de patrimonio, el bloque nuevo estiró el panel y los botones de acción quedaron **debajo de la ventana** de 1018×597. A diferencia del modal recortado, acá el usuario llega scrolleando: el problema no era de la app, era del test. El árbol web de Maestro ve la ventana, y `tapOn` no scrollea nunca — un control debajo del pliegue "no existe" para el driver aunque exista para cualquier persona. El patrón que quedó en 03/04/08/09/10: `scrollUntilVisible` hasta el botón con `centerElement: true` antes de tocarlo, y después del submit, cerrar el modal y volver arriba anclando en una línea superior (trampa 12).
+
 ---
 
 ### 10. `scrollUntilVisible` tiene que apuntar al DATO, no al título de la sección
@@ -530,19 +532,19 @@ elemento.
 
 | Flow | Qué verifica | Estado |
 |---|---|---|
-| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (39s) |
-| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (30s) |
-| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (1m 42s) |
-| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (46s) |
-| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (52s) |
+| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (44s) |
+| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (31s) |
+| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (2m 1s) |
+| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 20s) |
+| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 24s) |
 | `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (41s) |
-| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 33s) |
-| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 18s) |
-| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (48s) |
-| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 8s) |
-| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (56s) |
+| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 31s) |
+| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 16s) |
+| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 10s) |
+| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (2m 2s) |
+| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 25s) |
 
-**Suite completa: 11/11 en 12m 29s.** Los tiempos no son decorativos: cuando había
+**Suite completa: 11/11 en 15m 6s.** Los tiempos no son decorativos: cuando había
 servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
 tardaba **5m51s en fallar** y los demás corrían entre 10 y 18 segundos más
 lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una

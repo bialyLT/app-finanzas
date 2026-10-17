@@ -5,6 +5,7 @@ import Link from "next/link";
 import AccountForm from "@/components/AccountForm";
 import TransactionForm from "@/components/TransactionForm";
 import {
+  formatCalendar,
   formatPeriodLabel,
   periodRange,
   shiftPeriod,
@@ -19,9 +20,11 @@ import {
   type MovementKindDTO,
   type MovementsResponse,
   type NetWorthDTO,
+  type NetWorthPointDTO,
   type PeriodTotalsDTO,
 } from "@/lib/finance";
 import {
+  LOCALE,
   centsToString,
   formatDayLabel,
   formatLiability,
@@ -84,6 +87,12 @@ export default function Home() {
   const [movements, setMovements] = useState<MovementDTO[]>([]);
   const [accounts, setAccounts] = useState<AccountBalanceDTO[]>([]);
   const [netWorth, setNetWorth] = useState<NetWorthDTO | null>(null);
+  /**
+   * La evolución del patrimonio: foto al cierre de cada uno de los últimos 12
+   * meses, del más viejo al más nuevo. Llega calculada del servidor junto con
+   * la foto de hoy — es su serie, no otra cosa.
+   */
+  const [netWorthSeries, setNetWorthSeries] = useState<NetWorthPointDTO[]>([]);
   const [categories, setCategories] = useState<CategoryDTO[]>([]);
   const [truncated, setTruncated] = useState(false);
 
@@ -140,6 +149,7 @@ export default function Home() {
       const accountsData = (await accountsRes.json()) as {
         accounts: AccountBalanceDTO[];
         netWorth: NetWorthDTO;
+        netWorthSeries: NetWorthPointDTO[];
       };
 
       setMovements(movementsData.movements);
@@ -148,6 +158,7 @@ export default function Home() {
       setCategories(categoriesData.categories);
       setAccounts(accountsData.accounts);
       setNetWorth(accountsData.netWorth);
+      setNetWorthSeries(accountsData.netWorthSeries);
     } catch {
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
@@ -434,6 +445,88 @@ export default function Home() {
                   </b>
                 </span>
               ))}
+            </div>
+          )}
+
+          {/*
+            ── Evolución del patrimonio ─────────────────────────────────────
+            La serie del número de arriba: de dónde viene el patrimonio de hoy.
+
+            Una grilla de números y no un gráfico por dos razones concretas:
+            en la pantalla de 1024×600 los 12 meses entran en dos filas sin
+            empujar "Movimientos" media pantalla hacia abajo, y cada mes queda
+            como TEXTO real — un test puede afirmar un monto exacto de un mes
+            puntual contra su `id`, cosa que no se puede hacer leyendo los
+            `text` de un SVG. El gráfico de líneas lo va a pedir /analisis el
+            día que haga falta la forma, no el número.
+
+            El último mes es el actual y llega marcado `partial`: su foto es
+            "a hoy", no a fin de mes, así que se etiqueta "en curso" en vez de
+            mostrarse como un mes cerrado igual a los demás. La variación
+            contra el mes anterior es aritmética de presentación entre dos
+            valores que ya vienen calculados del servidor (en centavos
+            enteros, como todo lo que se resta en el cliente).
+          */}
+          {netWorthSeries.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
+              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+                Evolución · últimos {netWorthSeries.length} meses
+              </p>
+
+              <div
+                id="networth-series"
+                className="mt-2 grid grid-cols-3 md:grid-cols-6 gap-2"
+              >
+                {netWorthSeries.map((point, index) => {
+                  const previous = index > 0 ? netWorthSeries[index - 1] : null;
+                  const deltaCents = previous
+                    ? toCents(point.net) - toCents(previous.net)
+                    : 0;
+
+                  return (
+                    <div
+                      key={point.month}
+                      id={`networth-month-${point.month}`}
+                      className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5"
+                    >
+                      <p className="text-[11px] text-zinc-500">
+                        {formatCalendar(`${point.month}-01`, LOCALE, {
+                          month: "short",
+                          year: "numeric",
+                        })}
+                        {point.partial && (
+                          <span className="text-zinc-400"> · en curso</span>
+                        )}
+                      </p>
+                      <p
+                        className={`text-sm font-bold ${
+                          toCents(point.net) < 0 ? "text-amber-600" : ""
+                        }`}
+                      >
+                        {formatMoney(point.net)}
+                      </p>
+                      {previous && (
+                        <p
+                          className={`text-[11px] ${
+                            deltaCents > 0
+                              ? "text-emerald-600"
+                              : deltaCents < 0
+                                ? "text-rose-600"
+                                : "text-zinc-400"
+                          }`}
+                        >
+                          {formatMoney(centsToString(deltaCents), { withSign: true })}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p className="mt-2 text-[11px] text-zinc-400">
+                Fotos al cierre de cada mes; el mes en curso, a hoy. La
+                variación es contra el mes anterior.
+              </p>
             </div>
           )}
 

@@ -81,6 +81,20 @@ env:
 # Se entra por `id` y no por el texto del botón: dice "－ Gasto" con un signo
 # menos de ancho completo (U+FF0D), y además "Gasto" también es el nombre de una
 # categoría y de un filtro. El id no es ambiguo.
+#
+# El bloque "Evolución · últimos 12 meses" empujó los botones de acción debajo
+# del pliegue de la ventana de los tests (1018×597), y `tapOn` no scrollea para
+# buscar su blanco: falla con "Element not found" aunque el botón exista unos
+# cientos de píxeles más abajo. Se scrollea hasta él y se lo centra (el mismo
+# remedio de la trampa 12) para que el tap caiga lejos del borde y del header
+# pegajoso.
+- scrollUntilVisible:
+    element:
+      id: "btn-expense"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
 - tapOn:
     id: "btn-expense"
 
@@ -113,6 +127,24 @@ env:
 
 - tapOn:
     id: "tx-submit"
+
+# El panel no navega al guardar: recarga los datos y deja la página donde
+# estaba —scrolleada sobre los botones—, con las tarjetas fuera de la vista.
+# Con las tarjetas afuera, `assertVisible` daría falso y `assertNotVisible`
+# aprobaría sin verificar nada (trampa 7), así que primero se espera el cierre
+# del modal y después se vuelve arriba, anclando en la etiqueta del mes (el
+# mismo patrón que el flujo 02).
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: ".*octubre de 2026.*"
+    direction: UP
+    timeout: 30000
+    centerElement: true
 
 # ── Verificar que los totales se movieron ────────────────────────────────────
 # Se espera al número nuevo y no al cierre del modal: el modal se cierra antes
