@@ -31,6 +31,7 @@ import {
   min,
   money,
   monthlyRateFromTna,
+  monthlyShare,
   parseMoneyInput,
   round,
   subtract,
@@ -73,6 +74,21 @@ describe("Aritmética decimal exacta", () => {
     expect(round(money("0.125")).toFixed(2)).toBe("0.12");
     expect(round(money("0.135")).toFixed(2)).toBe("0.14");
     expect(round(money("2.5")).toFixed(2)).toBe("2.50");
+  });
+
+  it("monthlyShare reparte un gasto anual en 12 (half-even, 2 decimales)", () => {
+    // El caso del ROADMAP §5.3 #9: la expensa anual de 240.000 son 20.000 al
+    // mes, exacto.
+    expect(monthlyShare(money("240000")).toFixed(2)).toBe("20000.00");
+    // 250.000 / 12 = 20.833,333… → se corta en 20.833,33 (no es un empate).
+    expect(monthlyShare(money("250000")).toFixed(2)).toBe("20833.33");
+    // Empates EXACTOS, uno por lado del half-even:
+    //   1.000,14 / 12 = 83,345 → queda 83,34 (el 4 es par)
+    //   1.000,26 / 12 = 83,355 → sube a 83,36 (el 5 impar va al par)
+    // Si el redondeo fuera half-up, el primero subiría a 83,35 y el sesgo
+    // volvería por la puerta de atrás.
+    expect(monthlyShare(money("1000.14")).toFixed(2)).toBe("83.34");
+    expect(monthlyShare(money("1000.26")).toFixed(2)).toBe("83.36");
   });
 
   it("detecta negativos y cero correctamente", () => {

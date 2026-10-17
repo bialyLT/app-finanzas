@@ -41,6 +41,8 @@ import {
 } from "./dates";
 import type {
   AccountDTO,
+  BurnCandidateDTO,
+  BurnReportDTO,
   CategoryBreakdownDTO,
   CategoryDTO,
   DateBreakdownDTO,
@@ -53,11 +55,15 @@ import type {
   PeriodTotalsDTO,
   ReconciliationDTO,
 } from "./finance";
+// El tope de filas es un VALOR, no un tipo: no puede viajar en el `import type`
+// de arriba, que TypeScript borra al compilar.
+import { MOVEMENTS_MAX_ROWS } from "./finance";
 import {
   amortizationSchedule,
   isZero,
   loanProgress,
   money,
+  monthlyShare,
   round,
   sum,
   zero,
@@ -241,6 +247,160 @@ export async function movementCashFlow(
   const outflow = sum([expense._sum.amount ?? zero(), transferOut._sum.amount ?? zero()]);
 
   return inflow.minus(outflow).toFixed(2);
+}
+
+/**
+ * El rango de fechas de un período como `where`, o vacío cuando no hay límites.
+ *
+ * `from`/`to` llegan ya validados (`YYYY-MM-DD`) o `null`: validar es trabajo de
+ * la ruta, igual que en `/api/reports`. Se escribe UNA vez porque el `@db.Date`
+ * tiene su propia conversión (`calendarToDb`) y repetirla en cada función es la
+ * clase de detalle que alguien cambia en un lugar y no en el otro.
+ */
+function dateRangeWhere(
+  from: string | null,
+  to: string | null,
+): Prisma.MovementWhereInput {
+  if (!from && !to) return {};
+  return {
+    date: {
+      ...(from ? { gte: calendarToDb(from) } : {}),
+      ...(to ? { lte: calendarToDb(to) } : {}),
+    },
+  };
+}
+
+/**
+ * Los gastos de un período que pueden elegirse para el burn mensualizado.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ SÓLO MIRA LAS FECHAS (Y NO LOS FILTROS DE PANTALLA)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Es la misma regla que el selector de categorías de `/api/reports`: un
+ * selector no se filtra a sí mismo. Si la lista de gastos respetara los filtros,
+ * elegir una categoría dejaría candidatos de una sola categoría —y filtrar por
+ * texto, candidatos que ni matchean—, sin forma de volver a ver el período
+ * entero. Además el burn se calcula contra los totales SIN filtrar (ver
+ * `movementBurn`): una lista filtrada ofrecería gastos que la fórmula no usa.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ ORDENADO POR MONTO Y TOPEADO
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Descendente por monto: el burn le sirve sobre todo a los gastos grandes —el
+ * anual que desarma un mes— y esos van primero. La lista se topea en
+ * `MOVEMENTS_MAX_ROWS` como toda lista que se muestra, y el tope se AVISA
+ * (`truncated`): una lista incompleta que se ve completa es la clase de mentira
+ * que este tope existe para no repetir. Lo que se CALCULA no se topea: el burn
+ * del gasto elegido se recalcula contra el período completo (ver
+ * `movementBurn`), así que una lista recortada no subestima ningún número.
+ *
+ * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ */
+export async function movementBurnCandidates(
+  db: Db,
+  period: { from: string | null; to: string | null },
+): Promise<{ candidates: BurnCandidateDTO[]; truncated: boolean }> {
+  const rows = await db.movement.findMany({
+    where: { kind: "EXPENSE", ...dateRangeWhere(period.from, period.to) },
+    select: {
+      id: true,
+      date: true,
+      amount: true,
+      description: true,
+      category: { select: { name: true } },
+    },
+    // Desempate por fecha y por id: sin él, dos gastos del mismo monto pueden
+    // salir en cualquier orden y la lista "se reordena" entre recargas.
+    orderBy: [{ amount: "desc" }, { date: "desc" }, { id: "asc" }],
+    // `+ 1` para saber si había más: el mismo patrón que la lista de
+    // movimientos (`take` topeado, `truncated` honesto).
+    take: MOVEMENTS_MAX_ROWS + 1,
+  });
+
+  const truncated = rows.length > MOVEMENTS_MAX_ROWS;
+
+  return {
+    truncated,
+    candidates: rows.slice(0, MOVEMENTS_MAX_ROWS).map((row) => ({
+      id: row.id,
+      date: dbToCalendar(row.date),
+      amount: row.amount.toFixed(2),
+      // `|| null`: el schema guarda "" cuando no hay descripción, pero el
+      // contrato de `BurnCandidateDTO` distingue "sin descripción" (null) de
+      // una descripción vacía — y es lo que hace que la etiqueta del selector
+      // caiga al nombre de la categoría en vez de quedar en blanco.
+      description: row.description || null,
+      categoryName: row.category?.name ?? null,
+    })),
+  };
+}
+
+/**
+ * El burn mensualizado de UN gasto: las dos vistas del período en números.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA CUENTA
+ * ─────────────────────────────────────────────────────────────────────────────
+ *     monthlyShare = amount ÷ 12            (half-even, 2 decimales)
+ *     burnExpenses = expenses − amount + monthlyShare
+ *     cashResult   = income − expenses
+ *     burnResult   = income − burnExpenses
+ *
+ * `expenses`/`income` son los del período COMPLETO —sin categoría ni texto—, no
+ * los de la pantalla filtrada. No es un detalle: la vista de caja que se muestra
+ * arriba de la tarjeta es la del subconjunto filtrado, pero el burn es un número
+ * del gasto elegido QUE TAMBIÉN ESTÁ en el total sin filtrar. Restándolo del
+ * total filtrado, si el filtro lo dejó afuera, se restaría algo que nunca sumó y
+ * el resultado sería un número que no corresponde a ningún mes.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ DEVUELVE `null` EN VEZ DE UN ERROR
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Un id que no existe, un movimiento que no es un EXPENSE o un gasto de otro
+ * período no son errores de la petición: son un gasto que no se puede mostrar.
+ * Mismo criterio permisivo que las fechas inválidas de `/api/reports`: la
+ * respuesta llega sin la vista de burn, en vez de un 400 que dejaría la pantalla
+ * en blanco por un id viejo en una URL.
+ *
+ * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ */
+export async function movementBurn(
+  db: Db,
+  input: { from: string | null; to: string | null; movementId: string },
+): Promise<BurnReportDTO | null> {
+  const movement = await db.movement.findUnique({
+    where: { id: input.movementId },
+    select: { id: true, kind: true, date: true, amount: true },
+  });
+
+  if (!movement || movement.kind !== "EXPENSE") return null;
+
+  // El período se compara como fecha de CALENDARIO (strings `YYYY-MM-DD`), el
+  // mismo tipo con el que `dateRangeWhere` consulta: un gasto de otro mes no es
+  // candidato de este período, aunque el id exista.
+  const date = dbToCalendar(movement.date);
+  if (input.from && date < input.from) return null;
+  if (input.to && date > input.to) return null;
+
+  const totals = await movementTotals(db, dateRangeWhere(input.from, input.to));
+
+  const amount = movement.amount;
+  const income = money(totals.income);
+  const expenses = money(totals.expenses);
+  const share = monthlyShare(amount);
+  const burnExpenses = expenses.minus(amount).plus(share);
+
+  return {
+    movementId: movement.id,
+    date,
+    amount: amount.toFixed(2),
+    monthlyShare: share.toFixed(2),
+    income: income.toFixed(2),
+    expenses: expenses.toFixed(2),
+    burnExpenses: burnExpenses.toFixed(2),
+    cashResult: income.minus(expenses).toFixed(2),
+    burnResult: income.minus(burnExpenses).toFixed(2),
+  };
 }
 
 /**

@@ -36,6 +36,8 @@ import {
   getDebtReport,
   getMonthReconciliation,
   getNetWorthSeries,
+  movementBurn,
+  movementBurnCandidates,
   movementCashFlow,
   movementCategoryBreakdown,
   movementDateBreakdown,
@@ -2347,5 +2349,226 @@ describeDb("Reportes de deuda · progreso, interés y DTI", () => {
     expect(report.totalDebt).toBe("518587.29");
     // El plan del préstamo sigue sumando al DTI: archivarla no lo cancela.
     expect(report.dti.percent).toBe("7.05");
+  });
+});
+
+describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  /**
+   * El escenario del burn: enero 2027, con el gasto anual entero en un mes.
+   *
+   *     Sueldo               +600.000,00   (2027-01-01)
+   *     Alquiler             −500.000,00   (2027-01-05)
+   *     Expensas anuales     −240.000,00   (2027-01-20)   ← el gasto del burn
+   *     Regalo de fin de año − 10.000,00   (2026-12-15)   ← OTRO período
+   *
+   * Los números a mano, para no repetir las fórmulas que se están probando:
+   *
+   *   Mes de caja:  600.000 − (500.000 + 240.000)               = −140.000,00
+   *   Burn:         600.000 − (740.000 − 240.000 + 240.000/12)  = + 80.000,00
+   *
+   * Enero 2027 y no un mes de 2026 a propósito: todos los demás tests del
+   * archivo viven en septiembre–octubre de 2026, así que el gasto anual acá no
+   * pisa ningún número ya verificado a mano.
+   */
+  async function seedAnnualScenario() {
+    const [sueldo, alquiler, expensas, regalos] = await Promise.all([
+      db.category.create({
+        data: { name: "Sueldo", normalizedName: "sueldo", kind: "INCOME" },
+      }),
+      db.category.create({
+        data: { name: "Alquiler", normalizedName: "alquiler", kind: "EXPENSE" },
+      }),
+      db.category.create({
+        data: { name: "Expensas", normalizedName: "expensas", kind: "EXPENSE" },
+      }),
+      db.category.create({
+        data: { name: "Regalos", normalizedName: "regalos", kind: "EXPENSE" },
+      }),
+    ]);
+
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+
+    const [sueldoEnero, alquilerEnero, expensasAnuales, regalo] =
+      await Promise.all([
+        db.movement.create({
+          data: {
+            kind: "INCOME",
+            amount: "600000",
+            date: calendarToDb("2027-01-01"),
+            accountId: bank.id,
+            categoryId: sueldo.id,
+            description: "Sueldo de enero",
+          },
+        }),
+        db.movement.create({
+          data: {
+            kind: "EXPENSE",
+            amount: "500000",
+            date: calendarToDb("2027-01-05"),
+            accountId: bank.id,
+            categoryId: alquiler.id,
+            description: "Alquiler de enero",
+          },
+        }),
+        db.movement.create({
+          data: {
+            kind: "EXPENSE",
+            amount: "240000",
+            date: calendarToDb("2027-01-20"),
+            accountId: bank.id,
+            categoryId: expensas.id,
+            description: "Expensas anuales",
+          },
+        }),
+        db.movement.create({
+          data: {
+            kind: "EXPENSE",
+            amount: "10000",
+            date: calendarToDb("2026-12-15"),
+            accountId: bank.id,
+            categoryId: regalos.id,
+            description: "Regalo de fin de año",
+          },
+        }),
+      ]);
+
+    return {
+      bank,
+      categories: { sueldo, alquiler, expensas, regalos },
+      sueldoEnero,
+      alquilerEnero,
+      expensasAnuales,
+      regalo,
+    };
+  }
+
+  it("los candidatos son los EXPENSE del período, de mayor a menor", async () => {
+    const { sueldoEnero, regalo } = await seedAnnualScenario();
+
+    const { candidates, truncated } = await movementBurnCandidates(db, {
+      from: "2027-01-01",
+      to: "2027-01-31",
+    });
+
+    // El sueldo no es candidato (no es un gasto) y el regalo tampoco (es de
+    // otro período): la lista es del período Y de los EXPENSE, las dos cosas.
+    expect(candidates.map((c) => c.amount)).toEqual(["500000.00", "240000.00"]);
+    expect(candidates.map((c) => c.id)).not.toContain(sueldoEnero.id);
+    expect(candidates.map((c) => c.id)).not.toContain(regalo.id);
+
+    // La opción del selector se arma con estos campos: fecha, monto íntegro y
+    // los dos textos posibles de etiqueta.
+    expect(candidates[1]).toMatchObject({
+      date: "2027-01-20",
+      description: "Expensas anuales",
+      categoryName: "Expensas",
+    });
+
+    expect(truncated).toBe(false);
+  });
+
+  it("el burn devuelve el mes de caja y el mismo mes repartido en 12", async () => {
+    const { expensasAnuales } = await seedAnnualScenario();
+
+    const burn = await movementBurn(db, {
+      from: "2027-01-01",
+      to: "2027-01-31",
+      movementId: expensasAnuales.id,
+    });
+
+    expect(burn).toMatchObject({
+      movementId: expensasAnuales.id,
+      date: "2027-01-20",
+      amount: "240000.00",
+      // 240.000 / 12 = 20.000, exacto.
+      monthlyShare: "20000.00",
+      income: "600000.00",
+      expenses: "740000.00",
+      // 740.000 − 240.000 + 20.000
+      burnExpenses: "520000.00",
+      // 600.000 − 740.000: el mes de caja, en rojo...
+      cashResult: "-140000.00",
+      // ...y 600.000 − 520.000: el mismo mes, previsible.
+      burnResult: "80000.00",
+    });
+  });
+
+  it("un id que no es un gasto del período no inventa una vista", async () => {
+    const { sueldoEnero, regalo } = await seedAnnualScenario();
+    const period = { from: "2027-01-01", to: "2027-01-31" };
+
+    // No existe.
+    expect(
+      await movementBurn(db, { ...period, movementId: "no-existe" }),
+    ).toBeNull();
+    // Existe, pero es un ingreso: no hay gasto que repartir.
+    expect(
+      await movementBurn(db, { ...period, movementId: sueldoEnero.id }),
+    ).toBeNull();
+    // Existe y es un gasto, pero de OTRO período.
+    expect(await movementBurn(db, { ...period, movementId: regalo.id })).toBeNull();
+
+    // El mismo regalo SÍ tiene burn en su propio período: el `null` de arriba
+    // es el período, no el gasto.
+    const diciembre = await movementBurn(db, {
+      from: "2026-12-01",
+      to: "2026-12-31",
+      movementId: regalo.id,
+    });
+    expect(diciembre?.monthlyShare).toBe("833.33"); // 10.000 / 12
+  });
+
+  it("el tope de la lista se avisa, pero el burn calcula sobre el período completo", async () => {
+    const { bank, categories, expensasAnuales } = await seedAnnualScenario();
+
+    // 500 gastos de 100 cruzan el tope de la lista con los tres movimientos del
+    // escenario (502 EXPENSE en el período).
+    await db.movement.createMany({
+      data: Array.from({ length: MOVEMENTS_MAX_ROWS }, () => ({
+        kind: "EXPENSE" as const,
+        amount: "100.00",
+        date: calendarToDb("2027-01-10"),
+        accountId: bank.id,
+        categoryId: categories.alquiler.id,
+      })),
+    });
+
+    const { candidates, truncated } = await movementBurnCandidates(db, {
+      from: "2027-01-01",
+      to: "2027-01-31",
+    });
+
+    // La lista se corta y LO DICE: una lista incompleta que se ve completa es
+    // la clase de mentira que el tope existe para no repetir.
+    expect(truncated).toBe(true);
+    expect(candidates).toHaveLength(MOVEMENTS_MAX_ROWS);
+    // Los dos gastos grandes quedaron primero (y el más chico de todos afuera).
+    expect(candidates[0]?.amount).toBe("500000.00");
+    expect(candidates[1]?.amount).toBe("240000.00");
+
+    const burn = await movementBurn(db, {
+      from: "2027-01-01",
+      to: "2027-01-31",
+      movementId: expensasAnuales.id,
+    });
+
+    // El cálculo mira los 502 gastos aunque la lista haya cortado en 500:
+    // 500 × 100 + 500.000 + 240.000 = 790.000, y con el burn 570.000. Si el
+    // cálculo usara la lista, los dos gastos descartados desaparecerían del
+    // resultado y el número no sería de ningún mes real.
+    expect(burn?.expenses).toBe("790000.00");
+    expect(burn?.burnExpenses).toBe("570000.00");
+    expect(burn?.burnResult).toBe("30000.00");
   });
 });

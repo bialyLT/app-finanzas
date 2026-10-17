@@ -1,0 +1,165 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 11 · Burn mensualizado — elegir un gasto y ver sus dos vistas (§5.3 #9)
+# ═════════════════════════════════════════════════════════════════════════════
+# Un gasto anual puesto entero en un mes hace que ESE mes parezca catastrófico.
+# La tarjeta del burn deja elegir un gasto del período y muestra, lado a lado,
+# el mes de caja (la plata salió entera) y la versión mensualizada (la misma
+# plata repartida en 12). Este flujo recorre la interacción COMPLETA, sobre el
+# estado real del final de la suite.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ ES EL ÚLTIMO FLUJO (Y POR QUÉ EL FLUJO 07 NO HACE ESTA ELECCIÓN)
+# ─────────────────────────────────────────────────────────────────────────────
+# El driver web de Maestro toca las <option> con un modelo de coordenadas
+# SINTÉTICAS: la opción k de un select aparece en [100000, 100000 + 20·k] y el
+# tap de una opción va al PRIMER <option> del DOM cuyas coordenadas contienen
+# ese punto (maestro-web.js · tapOnSyntheticElement). El select de categorías
+# de la barra de filtros va ANTES que el del burn en el DOM: cualquier opción
+# del burn con índice menor o igual a la cantidad de opciones de categoría es
+# intocable — el tap lo roba la opción de categoría de ese mismo índice.
+#
+# La vuelta: si el período tiene MÁS gastos que categorías, los índices más
+# altos del burn quedan libres. El estado del final de la suite (después de los
+# flujos 08 y 09) tiene 9 gastos (índices 1..9) contra 8 categorías más "Todas"
+# (índices 0..8): el índice 9 — el centavo de $ 0,01 de Arreglos — es tocable.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre en este punto de la suite)
+# ─────────────────────────────────────────────────────────────────────────────
+#   Ingresos 800.000,00 · Gastos 10.900.000,00 (9) → mes de caja −10.100.000,00
+#   Gasto elegido: Arreglos 0,01 → 0,01 / 12 = 0,00 (redondeo cabal)
+#   Gastos con burn:  10.900.000 − 0,01 + 0,00 = 10.899.999,99
+#   Te quedó repartido: −10.100.000 + 0,01 − 0,00 = −10.099.999,99
+#
+# La selección es EFÍMERA (sin URL, sin persistencia): la vuelta de navegación
+# por el encabezado (Inicio → Análisis) tiene que dejar el selector limpio.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 02 a 10 antes que éste: el estado de octubre que este
+# flujo necesita lo construyen los flujos 03, 04, 08 y 09.
+url: http://127.0.0.1:3000
+name: "11 · Burn mensualizado — la elección y las dos vistas"
+tags:
+  - smoke
+  - analisis
+  - burn
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar e ir al análisis ──────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- openLink: "${BASE}/analisis"
+
+- extendedWaitUntil:
+    visible: ".*2026-10-01.*"
+    timeout: 90000
+
+# ── Elegir el gasto: el centavo de Arreglos (índice 9, libre) ────────────────
+- scrollUntilVisible:
+    element:
+      id: "analisis-burn"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "analisis-burn"
+
+# Con el select enfocado, sus opciones entran a la jerarquía y la del centavo
+# es alcanzable: su índice (9) no existe en el select de categorías (0..8).
+- tapOn: '.*Arreglos.*0,01.*'
+
+# ── Las dos vistas del mismo número ──────────────────────────────────────────
+# La línea del burn es el número que NO existe en ningún otro estado de la
+# pantalla: si aparece, la elección se aplicó.
+#
+# OJO con cómo se espera: elegir dispara un refetch COMPLETO con estado de
+# carga (`Cargando…` reemplaza el contenido), la página se encoge y el
+# navegador deja el scroll ARRIBA — la línea queda al fondo, fuera del
+# viewport. `extendedWaitUntil` sólo mira el viewport y no la encontraría:
+# la espera se ancla por SCROLL al texto de la línea.
+- scrollUntilVisible:
+    element:
+      text: '.*0,01 ÷ 12 =.*'
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: ".*Gasto elegido:.*"
+- assertVisible: '.*0,01 ÷ 12 =.*'   # el gasto elegido, repartido en 12
+- assertVisible: ".*por mes.*"
+
+- scrollUntilVisible:
+    element:
+      text: '.*10\.899\.999,99.*'
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: '.*10\.899\.999,99.*'   # burn: los gastos, repartidos
+- assertVisible: '.*10\.099\.999,99.*'   # burn: el resultado
+- assertVisible: '.*10\.900\.000,00.*'   # caja: los gastos del período, enteros
+- assertVisible: '.*10\.100\.000,00.*'   # caja: el resultado, un centavo abajo
+- assertVisible: ".*Te quedó con el gasto entero en su mes.*"
+- assertVisible: ".*Te quedó repartiendo el gasto en 12.*"
+
+# ── La selección es EFÍMERA: sin URL, sin persistencia ───────────────────────
+# Se sale tocando "Inicio" del ENCABEZADO y se vuelve tocando "Análisis": dos
+# links de cliente reales (navegación SPA, la misma que usa una persona) que
+# además están SIEMPRE a la vista — el encabezado es sticky y no hace falta
+# scrollear nada. El link del pie ("Ver análisis del mes →") queda pegado al
+# fondo de la página: el scroll del driver no lo da por visible ahí (ver el
+# informe del tester), así que el flujo usa el encabezado.
+#
+# Si la selección viviera en un módulo o en almacenamiento, la vuelta la
+# conservaría y este bloque la caza. El select se centra para que las
+# aserciones negativas sean HONESTAS (trampa 7): con la selección viva, la
+# línea del gasto y las dos vistas estarían a la vista, justo debajo del
+# select.
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- tapOn: ".*Análisis.*"
+
+- extendedWaitUntil:
+    visible: ".*2026-10-01.*"
+    timeout: 90000
+
+- scrollUntilVisible:
+    element:
+      id: "analisis-burn"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: "Elegí un gasto…"
+- assertNotVisible: '.*÷ 12 =.*'
+- assertNotVisible: '.*10\.899\.999,99.*'
+- assertNotVisible: '.*10\.099\.999,99.*'

@@ -9,16 +9,16 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-17)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: 132 tests de vitest (85 unitarios + 47 de integración), 168 aserciones de smoke, 11 flows de Maestro en ~16m, build de producción limpio.
-- Fases 0, 1 y 2 cerradas; fases 4, 5, 6, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
+- Batería verde: 137 tests de vitest (86 unitarios + 51 de integración), 197 aserciones de smoke, 12 flows de Maestro en ~18m, build de producción limpio.
+- Fases 0, 1, 2 y 6 cerradas (a la 6 le falta solo la pasada del auditor de seguridad para el cierre formal); fases 4, 5, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
 
-- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las doce trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
+- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las trece trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
 - `README.md` — arquitectura, capas de test y cómo correr todo.
 - `agents/ui-tester.md` y `agents/security-auditor.md` — prompts de los subagentes autónomos (tester de UI con Maestro y auditor de seguridad).
-- `flows/README.md` — las **doce trampas** de Maestro. Leer antes de tocar los flows.
+- `flows/README.md` — las **trece trampas** de Maestro. Leer antes de tocar los flows.
 - Memoria persistente **Engram** (si está disponible en la máquina): buscar por proyecto; hay observaciones de arquitectura, bugs y decisiones.
 
 ## Decisiones que no se negocian
@@ -47,9 +47,9 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 132 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 168 aserciones end-to-end (servidor arriba)
-npm run flows             # 11 flows de Maestro: siembra la base y corre; ~16m
+npm test                  # 137 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 197 aserciones end-to-end (servidor arriba)
+npm run flows             # 12 flows de Maestro: siembra la base y corre; ~18m
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -63,9 +63,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 6 sigue** (detalle en `ROADMAP.md`): ya quedaron cerradas la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja**, la **serie mensual de patrimonio**, la **reconciliación visible** (`ΔPatrimonio = Ahorro` en `/api/reconciliation`) y los **reportes de deuda** (`/api/debts`: deuda viva, progreso de capital, interés pagado, cuotas restantes y DTI, con su tarjeta en el panel). De la Fase 6 queda solo el **burn mensualizado**.
+**Fase 6 con todos los ítems cerrados** (detalle en `ROADMAP.md`): la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja**, la **serie mensual de patrimonio**, la **reconciliación visible** (`ΔPatrimonio = Ahorro`), los **reportes de deuda** (`/api/debts` con progreso, interés y DTI) y el **burn mensualizado** (`/analisis`, §5.3 #9: las dos vistas del gasto anual con selección efímera). Para el cierre formal de la fase corre la pasada del **auditor de seguridad** (criterio de salida del loop, `ROADMAP.md` §9).
 
-Alternativas, en orden de costo/beneficio: Fase 5 (cuotas y resumen de tarjeta), Fase 3 (recurrencia), Fase 9 (endurecimiento si va a producción).
+Alternativas para después, en orden de costo/beneficio: Fase 5 (cuotas y resumen de tarjeta), Fase 3 (recurrencia), Fase 9 (endurecimiento si va a producción).
 
 ## Bloqueos que necesitan a la persona
 

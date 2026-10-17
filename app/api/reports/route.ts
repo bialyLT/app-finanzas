@@ -6,17 +6,19 @@ import { calendarToDb, isCalendarDate } from "@/lib/dates";
 import type { ReportsResponse } from "@/lib/finance";
 import {
   categoriesInPeriod,
+  movementBurn,
+  movementBurnCandidates,
   movementCategoryBreakdown,
   movementDateBreakdown,
   movementTotals,
 } from "@/lib/queries";
 
 /**
- * GET /api/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&categoryId=...&q=...
+ * GET /api/reports?from=YYYY-MM-DD&to=YYYY-MM-DD&categoryId=...&q=...&burn=...
  *
- * Devuelve `{ totals, byCategory, byDate, categories }`: los agregados que
- * alimentan `/analisis` (tarjetas, torta y barras), calculados en la base sobre
- * el período COMPLETO.
+ * Devuelve `{ totals, byCategory, byDate, categories, burnCandidates,
+ * burnCandidatesTruncated, burn }`: los agregados que alimentan `/analisis`
+ * (tarjetas, torta y barras), calculados en la base sobre el período COMPLETO.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * POR QUÉ EXISTE ESTA RUTA
@@ -42,6 +44,18 @@ import {
  * vez de devolver un 400 que dejaría la pantalla en blanco por un parámetro mal
  * armado.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL BURN MENSUALIZADO (`?burn=`) — ROADMAP §5.3 #9
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Un gasto anual puesto entero en un mes hace que ESE mes parezca catastrófico.
+ * Con `?burn=<movementId>`, la respuesta suma `burn`: el mismo período con ese
+ * gasto repartido en 12, al lado del mes de caja. `burnCandidates` (los EXPENSE
+ * del período, por monto) puebla el selector de la pantalla y —igual que
+ * `categories`— viaja SIN los filtros de categoría y texto: un selector no se
+ * filtra a sí mismo. El burn se calcula contra esos mismos totales sin filtrar
+ * (ver `movementBurn`); un id que no se puede mostrar viaja como `burn: null`,
+ * nunca como error.
+ *
  * Los GET no llevan chequeo CSRF —es el patrón existente: `assertSameOrigin`
  * sólo protege las mutaciones—, pero sí pasan por la DAL, que es la capa que de
  * verdad protege el dato (ver `lib/auth/dal.ts`).
@@ -55,6 +69,7 @@ export async function GET(req: Request) {
   const rawTo = searchParams.get("to");
   const categoryId = searchParams.get("categoryId");
   const q = (searchParams.get("q") ?? "").trim();
+  const burnId = searchParams.get("burn");
 
   // Se validan con `isCalendarDate` y no con un `new Date`: "2026-02-31" existe
   // para el constructor de JS (desborda a marzo) y no para el calendario. El
@@ -99,25 +114,34 @@ export async function GET(req: Request) {
     ...textFilter,
   };
 
-  // ── Las cuatro consultas, en paralelo ──────────────────────────────────────
+  // ── Las consultas, en paralelo ─────────────────────────────────────────────
   //
-  // No dependen entre sí y las cuatro van a la misma base: en serie sumarían
+  // No dependen entre sí y todas van a la misma base: en serie sumarían
   // latencia sin ningún motivo. `Promise.all` corta en el primer error, que es
   // lo que se quiere — mejor un 500 que una respuesta a medias.
   //
   // `categories` recibe `from`/`to` SIN `where` a propósito: el selector de la
   // pantalla no se filtra por categoría ni por texto (ver `ReportsResponse`).
-  const [totals, byCategory, byDate, categories] = await Promise.all([
-    movementTotals(prisma, where),
-    movementCategoryBreakdown(prisma, where),
-    movementDateBreakdown(prisma, where),
-    categoriesInPeriod(prisma, from, to),
-  ]);
+  // `burnCandidates` y el burn siguen la misma regla: miran el período, no los
+  // filtros de pantalla. El burn sólo se pide si lo pidieron — sin `?burn=`, la
+  // consulta ni se hace y el campo viaja `null`.
+  const [totals, byCategory, byDate, categories, burnCandidates, burn] =
+    await Promise.all([
+      movementTotals(prisma, where),
+      movementCategoryBreakdown(prisma, where),
+      movementDateBreakdown(prisma, where),
+      categoriesInPeriod(prisma, from, to),
+      movementBurnCandidates(prisma, { from, to }),
+      burnId ? movementBurn(prisma, { from, to, movementId: burnId }) : null,
+    ]);
 
   return NextResponse.json({
     totals,
     byCategory,
     byDate,
     categories,
+    burnCandidates: burnCandidates.candidates,
+    burnCandidatesTruncated: burnCandidates.truncated,
+    burn,
   } satisfies ReportsResponse);
 }

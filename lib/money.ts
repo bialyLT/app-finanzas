@@ -99,6 +99,23 @@ export function round(value: Money): Money {
   return value.toDecimalPlaces(MONEY_SCALE, Prisma.Decimal.ROUND_HALF_EVEN);
 }
 
+/**
+ * La parte mensual de un gasto anual: `amount ÷ 12`, redondeada.
+ *
+ * Es la mitad del "burn mensualizado" del ROADMAP (§5.3 #9): un gasto anual
+ * puesto entero en un mes hace que ESE mes parezca catastrófico, así que el
+ * reporte muestra además el mismo gasto repartido en 12. Se redondea con
+ * `round` (half-even, 2 decimales) porque el número que sale de acá se MUESTRA
+ * tal cual: dejar 20.833,333… y redondear en la pantalla sería una decisión de
+ * presentación repetida en cada lugar que consuma el resultado.
+ *
+ * La división es por 12 FIJO — el burn es "un gasto anual dividido por 12"
+ * (glosario del ROADMAP), no un prorrateo por los meses que falten del año.
+ */
+export function monthlyShare(amount: Money): Money {
+  return round(amount.dividedBy(12));
+}
+
 /** `true` si el valor es exactamente cero. */
 export function isZero(value: Money): boolean {
   return value.isZero();

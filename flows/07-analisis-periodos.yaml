@@ -11,6 +11,8 @@
 #     son gastos— no lo llenan.
 #   · El año suma TODOS los movimientos, incluidas las 3 transferencias.
 #   · En ningún estado aparece el cartel de truncado viejo ("más de 500").
+#   · El burn mensualizado (§5.3 #9): la tarjeta viva con su selector limpio
+#     (la elección de un gasto y las dos vistas se prueban en el flujo 11).
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # REQUISITO
@@ -145,13 +147,24 @@ env:
 # La torta vacía: el desembolso es una transferencia y una transferencia NO es
 # un gasto. Si acá apareciera una porción, el modelo volvió a contar plata que
 # sólo cambió de lugar como si se hubiera ido.
+#
+# centerElement: el estado vacío queda CENTRADO para que el assertNotVisible
+# de abajo sea honesto (trampa 7): sin gastos no hay candidatos y la tarjeta
+# del burn no existe; si existiera, estaría justo debajo, dentro de la mitad
+# inferior visible.
 - scrollUntilVisible:
     element:
       text: ".*No hay gastos en este período.*"
     direction: DOWN
     timeout: 30000
+    centerElement: true
 
 - assertVisible: ".*No hay gastos en este período.*"
+
+# Septiembre tiene una transferencia pero CERO gastos: no hay nada que elegir
+# para el burn, así que la tarjeta no se renderiza. El estado vacío de la
+# torta es lo último de la página.
+- assertNotVisible: "Burn mensualizado"
 
 # ── Agosto: un mes sin NINGÚN movimiento ─────────────────────────────────────
 #
@@ -212,3 +225,34 @@ env:
 - assertVisible: '.*300\.000,00.*'
 - assertVisible: '.*81\.412,71.*'
 - assertVisible: ".*2 movimientos entre tus cuentas.*"
+
+# ── Burn mensualizado: la tarjeta viva y su selector limpio (§5.3 #9) ────────
+#
+# Un gasto anual puesto entero en un mes hace que ESE mes parezca catastrófico.
+# La tarjeta del burn deja elegir un gasto del período y muestra el mes de caja
+# al lado del mismo gasto repartido en 12.
+#
+# En ESTE estado (octubre con 6 gastos por 500.000,00, después de los flujos
+# 02–06) la tarjeta tiene que estar viva y con el selector limpio: sin gasto
+# elegido no hay línea del burn ni vistas. La ELECCIÓN de un gasto y las dos
+# vistas se prueban en el FLUJO 11: acá el driver web de Maestro no puede tocar
+# una opción de este select — en su modelo de coordenadas sintéticas, el tap
+# de la opción k cae en la opción k del select de categorías, que va antes en
+# el DOM (el quirk está documentado en la cabecera del flujo 11).
+#
+# El scroll se ancla EN EL SELECT (el dato), no en el título de la tarjeta
+# (trampa 10), y la tarjeta está al fondo de todo.
+- scrollUntilVisible:
+    element:
+      id: "analisis-burn"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: "Burn mensualizado"
+- assertVisible: "Elegí un gasto…"
+
+# Sin selección no hay línea del burn en ningún lado de la pantalla: con la
+# tarjeta centrada, el lugar de la línea (justo debajo del select) queda a la
+# vista, así que la negativa es honesta (trampa 7).
+- assertNotVisible: '.*÷ 12 =.*'

@@ -139,6 +139,12 @@ export default function AnalisisPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
+  // ── El burn mensualizado ───────────────────────────────────────────────────
+  // El id del gasto elegido para verlo repartido en 12 (ROADMAP §5.3 #9). Es
+  // estado EFÍMERO: no viaja a la URL ni se persiste en ningún lado — la
+  // selección existe mientras la pantalla está abierta, y nada más.
+  const [burnId, setBurnId] = useState("");
+
   // ── El rango del período ───────────────────────────────────────────────────
   // Se calcula con `periodRange`, que sabe que febrero tiene 28 o 29 días y que
   // la semana argentina empieza el lunes. La versión anterior construía los
@@ -182,6 +188,10 @@ export default function AnalisisPage() {
         if (categoryId) params.set("categoryId", categoryId);
         const query = debouncedSearch.trim();
         if (query) params.set("q", query);
+        // El burn viaja por id. El servidor responde `burn: null` si el gasto
+        // no es un EXPENSE del período o ya no existe, así que un id viejo no
+        // rompe la pantalla: simplemente no hay tarjeta de burn que mostrar.
+        if (burnId) params.set("burn", burnId);
 
         const response = await fetch(`/api/reports?${params.toString()}`, {
           signal: controller.signal,
@@ -211,7 +221,7 @@ export default function AnalisisPage() {
 
     load();
     return () => controller.abort();
-  }, [range.from, range.to, categoryId, debouncedSearch]);
+  }, [range.from, range.to, categoryId, debouncedSearch, burnId]);
 
   function shift(direction: number) {
     setAnchor(shiftPeriod(mode, anchor, direction));
@@ -328,6 +338,22 @@ export default function AnalisisPage() {
 
   const categories = report?.categories ?? [];
   const hasFilters = categoryId !== "" || search !== "";
+
+  // ── El burn mensualizado ───────────────────────────────────────────────────
+  // La selección se valida contra los candidatos del período que el servidor
+  // acaba de mandar. Un gasto elegido en otro mes deja de aplicar solo: el
+  // select vuelve al estado inicial y los números no aparecen — en vez de
+  // quedar un control mostrando una opción que ya no existe en la lista.
+  // (El servidor hace la misma validación y devuelve `burn: null`; acá se
+  // espeja para que la interfaz nunca muestre una selección fantasma.)
+  const burnCandidates = report?.burnCandidates ?? [];
+  const burnSelected = burnCandidates.some(
+    (candidate) => candidate.id === burnId,
+  );
+  const burn = burnSelected ? report?.burn ?? null : null;
+  const selectedCandidate = burnCandidates.find(
+    (candidate) => candidate.id === burnId,
+  );
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
@@ -591,6 +617,118 @@ export default function AnalisisPage() {
               <p className="text-sm mt-1">
                 Cargá un gasto para ver el desglose por categoría.
               </p>
+            </div>
+          )}
+
+          {/* ── Burn mensualizado (ROADMAP §5.3 #9) ──────────────────────── */}
+          {/*
+            La tarjeta sólo existe si el período TIENE gastos: sin candidatos
+            no hay nada que elegir y un control vacío sería ruido. La lista de
+            candidatos ignora los filtros de pantalla a propósito (igual que
+            el selector de categorías): un selector no se filtra a sí mismo.
+          */}
+          {burnCandidates.length > 0 && (
+            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+              <div>
+                <h2 className="font-bold">Burn mensualizado</h2>
+                <p className="text-sm text-zinc-500">
+                  Un gasto anual, dividido por 12, para comparar meses entre
+                  sí. Elegí un gasto del período para verlo entero al lado de
+                  su versión repartida: las dos vistas del mismo número.
+                </p>
+              </div>
+
+              <select
+                id="analisis-burn"
+                value={burnSelected ? burnId : ""}
+                onChange={(event) => setBurnId(event.target.value)}
+                aria-label="Elegir un gasto para el burn mensualizado"
+                className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm outline-none [&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
+              >
+                <option value="">Elegí un gasto…</option>
+                {burnCandidates.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.description ?? candidate.categoryName ?? "Gasto"}{" "}
+                    · {formatMoney(candidate.amount)} · {candidate.date}
+                  </option>
+                ))}
+              </select>
+
+              {report?.burnCandidatesTruncated && (
+                <p className="text-xs text-zinc-500">
+                  Hay más gastos en el período: la lista muestra los 500 más
+                  grandes. El cálculo del burn no se recorta.
+                </p>
+              )}
+
+              {hasFilters && (
+                <p className="text-xs text-zinc-500">
+                  La lista y el cálculo usan el período completo: los filtros
+                  de arriba no los cambian.
+                </p>
+              )}
+
+              {burn && selectedCandidate && (
+                <>
+                  <p className="text-sm">
+                    <span className="text-zinc-500">Gasto elegido:</span>{" "}
+                    <strong>
+                      {selectedCandidate.description ??
+                        selectedCandidate.categoryName ??
+                        "Gasto"}
+                    </strong>{" "}
+                    — {formatMoney(burn.amount)} ÷ 12 ={" "}
+                    <strong>{formatMoney(burn.monthlyShare)}</strong> por mes
+                  </p>
+
+                  {/* Las dos vistas, una al lado de la otra: la de caja es un
+                      hecho (la plata salió de una vez) y la mensualizada es la
+                      misma plata repartida para poder comparar meses. */}
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
+                      <p className="text-xs uppercase text-zinc-500">
+                        Mes de caja
+                      </p>
+                      <p className="text-sm mt-1">
+                        Gastos:{" "}
+                        <span className="font-semibold">
+                          {formatMoney(burn.expenses)}
+                        </span>
+                      </p>
+                      <p className="text-lg font-extrabold mt-1">
+                        {formatMoney(burn.cashResult, { withSign: true })}
+                      </p>
+                      <p className="text-[11px] text-zinc-500">
+                        Te quedó con el gasto entero en su mes
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
+                      <p className="text-xs uppercase text-zinc-500">
+                        Burn mensualizado
+                      </p>
+                      <p className="text-sm mt-1">
+                        Gastos:{" "}
+                        <span className="font-semibold">
+                          {formatMoney(burn.burnExpenses)}
+                        </span>
+                      </p>
+                      <p
+                        className={`text-lg font-extrabold mt-1 ${
+                          toCents(burn.burnResult) >= 0
+                            ? "text-emerald-600 dark:text-emerald-400"
+                            : "text-rose-600 dark:text-rose-400"
+                        }`}
+                      >
+                        {formatMoney(burn.burnResult, { withSign: true })}
+                      </p>
+                      <p className="text-[11px] text-zinc-500">
+                        Te quedó repartiendo el gasto en 12
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </>

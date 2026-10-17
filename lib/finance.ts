@@ -451,6 +451,65 @@ export interface DateBreakdownDTO {
 }
 
 /**
+ * Un gasto del período que puede elegirse para el burn mensualizado.
+ *
+ * La tarjeta de burn de `/analisis` ofrece elegir UN gasto y verlo entero al
+ * lado de su versión repartida en 12. Éste es cada uno de los gastos que el
+ * selector puede mostrar: viajan los campos que la opción necesita para
+ * identificarse (fecha, monto y los dos textos posibles de etiqueta).
+ */
+export interface BurnCandidateDTO {
+  id: string;
+  /** Día del gasto, `YYYY-MM-DD`. */
+  date: string;
+  /** Monto íntegro del gasto, string decimal exacto. */
+  amount: string;
+  /** Descripción cargada por la persona, si hay. */
+  description: string | null;
+  /** Nombre de la categoría; `null` es defensivo (hoy un EXPENSE sin categoría no existe). */
+  categoryName: string | null;
+}
+
+/**
+ * El burn mensualizado de un gasto: las DOS vistas del período en números.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LAS DOS VISTAS
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Un gasto anual puesto entero en un mes hace que ESE mes parezca catastrófico
+ * (ROADMAP §5.3 #9). El "mes de caja" —lo que de verdad salió— es un hecho y no
+ * se maquilla; el burn mensualizado es el mismo mes con el gasto repartido en
+ * 12, para poder comparar meses entre sí. Las dos vistas conviven: mostrar sólo
+ * el burn escondería que la plata salió de una vez, y mostrar sólo la caja deja
+ * un mes que parece el fin del mundo cuando fue un gasto anual previsible.
+ *
+ * El servidor devuelve los CINCO números ya calculados (`income`, `expenses`,
+ * `burnExpenses`, `cashResult`, `burnResult`) y la interfaz sólo los formatea:
+ * si el cliente restara por su cuenta, la fórmula viviría en dos lugares y
+ * podría divergir.
+ */
+export interface BurnReportDTO {
+  /** El gasto elegido. */
+  movementId: string;
+  /** Su fecha (`YYYY-MM-DD`). */
+  date: string;
+  /** Su monto íntegro: es el gasto que el burn reparte. */
+  amount: string;
+  /** `amount ÷ 12`, redondeado half-even a 2 decimales. */
+  monthlyShare: string;
+  /** Ingresos del período COMPLETO: el burn no mira los filtros de pantalla. */
+  income: string;
+  /** Gastos del período completo, con el gasto anual ENTERO adentro (vista de caja). */
+  expenses: string;
+  /** `expenses − amount + monthlyShare`: los gastos con el gasto repartido. */
+  burnExpenses: string;
+  /** `income − expenses`: el "Te quedó" del mes de caja, el que se ve en el resumen. */
+  cashResult: string;
+  /** `income − burnExpenses`: el mismo resultado con el burn aplicado. */
+  burnResult: string;
+}
+
+/**
  * Respuesta de `/api/reports`: los tres agregados del período, calculados en la
  * base sobre el conjunto COMPLETO (sin el tope de la lista).
  *
@@ -464,6 +523,12 @@ export interface DateBreakdownDTO {
  * las categorías ya filtradas, quedarías encerrado en "Alquiler" sin forma de
  * volver a agrandar el período. Sólo respeta el rango de fechas: son las
  * categorías con al menos un movimiento en el período.
+ *
+ * `burnCandidates` sigue la MISMA regla que `categories` —un selector no se
+ * filtra a sí mismo—: son los EXPENSE del período por rango de fechas, sin
+ * categoría ni texto, ordenados por monto descendente. Y por coherencia, el
+ * burn de `?burn=` se calcula contra esos mismos totales sin filtrar: restarle
+ * al total un gasto que el filtro dejó afuera sería restar algo que nunca sumó.
  */
 export interface ReportsResponse {
   totals: PeriodTotalsDTO;
@@ -473,6 +538,27 @@ export interface ReportsResponse {
   byDate: DateBreakdownDTO[];
   /** Para poblar el selector de categorías. No lleva los filtros de pantalla. */
   categories: CategoryDTO[];
+  /** Para poblar el selector de burn. No lleva los filtros de pantalla. */
+  burnCandidates: BurnCandidateDTO[];
+  /**
+   * `true` si el período tenía más gastos que el tope de la lista de candidatos.
+   *
+   * El tope limita lo que se MUESTRA —la lista se corta en `MOVEMENTS_MAX_ROWS`
+   * como toda lista— y se avisa; lo que se CALCULA no: el burn del gasto
+   * elegido se recalcula contra el período completo, así que una lista topeada
+   * no subestima ningún número.
+   */
+  burnCandidatesTruncated: boolean;
+  /**
+   * El burn mensualizado del gasto pedido con `?burn=<movementId>`, o `null`.
+   *
+   * `null` en todos los casos en que no hay una vista que mostrar: no se pidió
+   * burn, el id no existe, el movimiento no es un EXPENSE, o es un gasto de
+   * otro período. Es el mismo criterio permisivo que las fechas inválidas de
+   * esta ruta: un parámetro que no se entiende no devuelve un 400 que dejaría
+   * la pantalla en blanco — simplemente la vista de burn no aparece.
+   */
+  burn: BurnReportDTO | null;
 }
 
 export interface CategoriesResponse {

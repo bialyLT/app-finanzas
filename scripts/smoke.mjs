@@ -652,9 +652,154 @@ async function main() {
     check("septiembre no cambia: su foto sigue cerrando el 30/09", serieCorta[10]?.net, "100000.00");
   }
 
+  // ── Burn mensualizado (ROADMAP §5.3 #9) ────────────────────────────────────
+  //
+  // Un gasto anual puesto entero en un mes hace que ESE mes parezca
+  // catastrófico; el reporte muestra las dos vistas: el mes de caja (la plata
+  // salió de una vez) y el burn mensualizado (el mismo gasto repartido en 12,
+  // para comparar meses entre sí).
+  //
+  // El escenario se siembra en ENERO 2027 a propósito: queda fuera de todos los
+  // rangos de 2026 que verifica el resto del archivo y fuera de los flujos de
+  // Maestro (que sólo navegan agosto–octubre de 2026 y el año 2026). Es el
+  // único lugar donde un gasto anual no pisa ningún número ya verificado.
+  //
+  //   Sueldo de enero        +600.000,00
+  //   Alquiler de enero      −500.000,00
+  //   Expensas anuales       −240.000,00   → 240.000 / 12 = 20.000 por mes
+  //
+  //   Mes de caja:  600.000 − 740.000 = −140.000,00
+  //   Burn:         600.000 − 520.000 =  +80.000,00
+  section("Burn mensualizado · el gasto anual en las dos vistas");
+  {
+    const anuales = [
+      {
+        kind: "INCOME",
+        amount: "600.000",
+        date: "2027-01-01",
+        accountId: banco.body?.id,
+        categoryName: "Sueldo",
+        description: "Sueldo de enero 2027",
+      },
+      {
+        kind: "EXPENSE",
+        amount: "500.000",
+        date: "2027-01-05",
+        accountId: banco.body?.id,
+        categoryName: "Alquiler",
+        description: "Alquiler de enero 2027",
+      },
+      {
+        // El gasto anual: la razón de ser del burn.
+        kind: "EXPENSE",
+        amount: "240.000",
+        date: "2027-01-20",
+        accountId: banco.body?.id,
+        categoryName: "Expensas",
+        description: "Expensas anuales 2027",
+      },
+    ];
+
+    for (const movement of anuales) {
+      const r = await post("/api/transactions", movement);
+      if (r.status !== 201) {
+        failed += 1;
+        console.log(`  FALLA al crear "${movement.description}": ${r.status} ${JSON.stringify(r.body)}`);
+      } else {
+        passed += 1;
+        console.log(`  ok    ${movement.kind.padEnd(8)} ${String(movement.amount).padStart(10)} · ${movement.description}`);
+      }
+    }
+
+    const { status: eneroStatus, body: enero } = await api(
+      "/api/reports?from=2027-01-01&to=2027-01-31",
+    );
+    check("/api/reports de enero responde 200", eneroStatus, 200);
+    check("enero · ingresos = 600.000,00", enero?.totals?.income, "600000.00");
+    check("enero · gastos = 740.000,00 (el anual, entero)", enero?.totals?.expenses, "740000.00");
+
+    // El selector de burn: sólo gastos, ordenados por monto descendente.
+    check("enero · dos candidatos (el sueldo no es gasto)", enero?.burnCandidates?.length, 2);
+    check("y van de mayor a menor", enero?.burnCandidates?.[0]?.amount, "500000.00");
+    check(
+      "el gasto anual es el segundo",
+      enero?.burnCandidates?.[1]?.description,
+      "Expensas anuales 2027",
+    );
+    checkTrue("la lista no está truncada", enero?.burnCandidatesTruncated === false);
+    checkTrue("sin ?burn, no hay vista de burn", enero?.burn === null);
+
+    const expensaId = enero?.burnCandidates?.[1]?.id;
+    const { body: burnEnero } = await api(
+      `/api/reports?from=2027-01-01&to=2027-01-31&burn=${expensaId}`,
+    );
+    check("el burn reparte: 240.000 ÷ 12 = 20.000,00", burnEnero?.burn?.monthlyShare, "20000.00");
+    check("gastos con el burn = 520.000,00", burnEnero?.burn?.burnExpenses, "520000.00");
+    check("mes de caja: −140.000,00", burnEnero?.burn?.cashResult, "-140000.00");
+    check("mes con burn: +80.000,00", burnEnero?.burn?.burnResult, "80000.00");
+
+    // Un id viejo o inventado no rompe la pantalla: la vista no aparece.
+    const { status: invalidoStatus, body: invalido } = await api(
+      "/api/reports?from=2027-01-01&to=2027-01-31&burn=no-existe",
+    );
+    check("un burn inválido no es un error", invalidoStatus, 200);
+    checkTrue("y la vista viaja en null", invalido?.burn === null);
+
+    // ── Octubre 2026: el reparto que NO da exacto ────────────────────────────
+    // 250.000 / 12 = 20.833,333… → 20.833,33. El centavo importa: es la prueba
+    // de que el redondeo vive en un solo lugar (half-even, 2 decimales).
+    const { body: octubreBase } = await api(
+      `/api/reports?from=${MES}-01&to=${MES}-31`,
+    );
+    const alquilerOctubre = (octubreBase?.burnCandidates ?? []).find(
+      (candidate) => candidate.description === "Alquiler de octubre",
+    );
+    checkTrue("el alquiler de octubre está entre los candidatos", Boolean(alquilerOctubre?.id));
+
+    // Sin descripción, la etiqueta del selector cae a la categoría: si el
+    // gasto viajara con `description: ""` (lo que guarda la base), la opción
+    // quedaría sin nombre ("· $ 120.000,00 · fecha") y `??` no caería nunca.
+    const sinDescripcion = (octubreBase?.burnCandidates ?? []).find(
+      (candidate) => candidate.categoryName === "Supermercado",
+    );
+    check("un gasto sin descripción viaja con description null", sinDescripcion?.description, null);
+    check("y conserva su categoría como etiqueta", sinDescripcion?.categoryName, "Supermercado");
+
+    const { body: burnOctubre } = await api(
+      `/api/reports?from=${MES}-01&to=${MES}-31&burn=${alquilerOctubre?.id}`,
+    );
+    check("octubre · 250.000 ÷ 12 = 20.833,33", burnOctubre?.burn?.monthlyShare, "20833.33");
+    check("octubre · gastos con burn = 260.833,33", burnOctubre?.burn?.burnExpenses, "260833.33");
+    check("octubre · el mes de caja queda en +310.000,00", burnOctubre?.burn?.cashResult, "310000.00");
+    check("octubre · repartido queda en +539.166,67", burnOctubre?.burn?.burnResult, "539166.67");
+
+    // ── Los filtros de pantalla no tocan la lista ni el cálculo ─────────────
+    // El selector de burn no se filtra a sí mismo (igual que el de categorías)
+    // y el burn se calcula contra el período completo: restarle al total un
+    // gasto que el filtro dejó afuera sería restar algo que nunca sumó.
+    const { body: categoriasBurn } = await api("/api/categories?kind=EXPENSE");
+    const ropaBurn = (categoriasBurn?.categories ?? []).find(
+      (category) => category.name === "Ropa",
+    );
+    const { body: conFiltro } = await api(
+      `/api/reports?from=${MES}-01&to=${MES}-31&categoryId=${ropaBurn?.id}&burn=${alquilerOctubre?.id}`,
+    );
+    check("con filtro Ropa, la pantalla se achica", conFiltro?.totals?.expenses, "50000.00");
+    check("pero la lista de candidatos no cambia", conFiltro?.burnCandidates?.length, 5);
+    check("ni los gastos del burn: 490.000,00 completos", conFiltro?.burn?.expenses, "490000.00");
+    check("y el resultado del burn tampoco", conFiltro?.burn?.burnResult, "539166.67");
+  }
+
   // La ruta que usa el panel (sin `asOf`) termina en el mes ACTUAL del reloj
   // local —el mismo que ve la persona en la interfaz— y su último punto tiene
   // que coincidir con `netWorth.net` de esa misma respuesta.
+  //
+  // Acá arriba se sembró A PROPÓSITO un escenario con movimientos futuros
+  // (enero 2027), así que este bloque es la prueba viva del corte: sin `asOf`,
+  // las TRES vistas usan HOY. Si los saldos sumaran todo el historial —lo que
+  // hacían antes—, el patrimonio daría 270.000,00 (410.000 − 140.000 de enero)
+  // mientras el último punto de la serie corta en hoy: dos "hoy" distintos en
+  // la misma respuesta, y el panel mostrando uno que su propia serie desmiente.
   {
     const { body: hoy } = await api("/api/accounts?includeArchived=false");
     const ahora = new Date();
@@ -662,6 +807,11 @@ async function main() {
     const ultimo = (hoy?.netWorthSeries ?? []).at(-1);
     check("sin asOf, la serie termina en el mes actual", ultimo?.month, mesActual);
     check("y su neto coincide con el patrimonio de hoy", ultimo?.net, hoy?.netWorth?.net);
+    check(
+      "sin asOf, el patrimonio de hoy NO cuenta los movimientos futuros",
+      hoy?.netWorth?.net,
+      "410000.00",
+    );
   }
 
   // ── La reconciliación visible (ΔPatrimonio = Ahorro) ───────────────────────

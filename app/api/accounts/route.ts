@@ -58,6 +58,13 @@ function isAccountKind(value: unknown): value is AccountKind {
  * última foto se corta ese día. Así no hay dos "hoy" distintos dentro de la
  * misma respuesta, que es la clase de detalle que después confunde a un test o
  * a una pantalla sin que nadie entienda por qué.
+ *
+ * Sin `asOf`, las tres vistas usan HOY (`todayCalendar()`): los saldos cortan
+ * en hoy y la serie termina en el mes en curso. Antes los saldos sumaban TODO
+ * —incluidos los movimientos con fecha futura— mientras la serie cortaba en
+ * hoy: dos definiciones de "patrimonio" que coincidían sólo mientras no hubiera
+ * movimientos futuros. Un gasto anual precargado para enero alcanzaba para que
+ * el panel mostrara un patrimonio distinto del último punto de su propia serie.
  */
 export async function GET(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
@@ -70,10 +77,14 @@ export async function GET(req: Request) {
     return badRequest("`asOf` tiene que ser una fecha AAAA-MM-DD válida.");
   }
 
+  // El "hoy" que comparten las tres vistas cuando no se pide `asOf`. Es la
+  // MISMA fecha que el ancla de la serie: un solo corte para toda la respuesta.
+  const cutoff = asOf ?? todayCalendar();
+
   const [balances, netWorth, netWorthSeries] = await Promise.all([
-    getAccountBalances(prisma, { asOf: asOf ?? undefined, includeArchived }),
-    getNetWorth(prisma, { asOf: asOf ?? undefined }),
-    getNetWorthSeries(prisma, { anchor: asOf ?? todayCalendar() }),
+    getAccountBalances(prisma, { asOf: cutoff, includeArchived }),
+    getNetWorth(prisma, { asOf: cutoff }),
+    getNetWorthSeries(prisma, { anchor: cutoff }),
   ]);
 
   return NextResponse.json({

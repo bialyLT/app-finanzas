@@ -58,9 +58,11 @@ certificó el dato.
 
 Los flows 03, 04, 08, 09 y 10 **sí** agregan movimientos, así que correrlos
 dos veces sin resetear hace que los totales no coincidan. De ahí el `--reset`.
-Y por eso los flows **08, 09 y 10 van al final, en ese orden**: parten de la
-suma que dejan los anteriores (el “en rojo”, los montos extremos y el saldo a
-favor no tienen lugar en el mes limpio del seed).
+Y por eso los flows **08, 09 y 10 van al final, en ese orden** (y el 11 corre
+último de todo): parten de la suma que dejan los anteriores (el “en rojo”, los
+montos extremos y el saldo a favor no tienen lugar en el mes limpio del seed), y
+con ese estado acumulado el select del burn tiene más gastos que el de categorías
+— la única combinación en la que el driver puede tocar su opción (trampa 13).
 
 El wrapper `scripts/maestro.ps1` se encarga de `JAVA_HOME`, de desactivar los
 analytics anónimos de Maestro y de ponerle un techo de memoria a la JVM (ver
@@ -71,7 +73,7 @@ También podés ver las corridas en vivo en el **Maestro Viewer**:
 
 ---
 
-## Las doce trampas
+## Las trece trampas
 
 Esta carpeta existe porque cada una de estas cosas nos costó una sesión de
 depuración. Están todas documentadas acá para que no vuelvan a pasar.
@@ -568,6 +570,37 @@ patrón corregido vive en `flows/02-panel.yaml` y el porqué completo, también.
 
 ---
 
+### 13. Las `<option>` de un `<select>` se tocan por ÍNDICE — y otro select puede robarse el tap
+
+El driver web de Maestro toca las opciones de un `<select>` con un modelo de
+coordenadas **sintéticas**: la opción `k` vive en `[100000, 100000 + 20·k]` y el
+tap va al **PRIMER `<option>` del DOM** cuyas coordenadas contengan ese punto.
+Con dos selects en la misma página, el de ARRIBA se roba los taps del de abajo
+mientras los índices se solapen.
+
+Síntoma: el `tapOn` de una opción dice **COMPLETED**, pero quien la recibió fue la
+opción homóloga del OTRO select (y si el punto no cae en ningún nodo `synthetic`,
+el tap retorna sin error y no hace nada). El fallo aparece en la aserción
+siguiente, por un motivo que no es el real — la misma familia que las trampas
+6/7/12.
+
+Cómo se diseña con esto: si un flow tiene que ELEGIR una opción de un select que
+comparte página con otro, usá un índice que el primer select no tenga (el flow 11
+lo aprovecha: al final de la suite octubre tiene más gastos que categorías, así el
+índice alto del burn queda libre) o mové la elección a un flow donde ese índice
+esté libre.
+
+Dos límites del driver que van de la mano: `pressKey` en web **sólo mapea ENTER y
+BACKSPACE** (las flechas no existen en ese camino) e `inputText` sobre un select
+escribe el `value` **sin disparar `change`** — no selecciona nada.
+
+**Corolario de carga**: elegir dispara el refetch con `Cargando…`; la página se
+encoge y el navegador deja el scroll ARRIBA, así que el resultado que vive al
+fondo queda fuera del viewport y un `extendedWaitUntil` no lo encuentra: la espera
+se ancla con `scrollUntilVisible` al **texto del resultado** (patrón del flow 11).
+
+---
+
 ## Convenciones
 
 - **Textos sin emoji en las aserciones.** El emoji se renderiza distinto según la
@@ -585,19 +618,20 @@ patrón corregido vive en `flows/02-panel.yaml` y el porqué completo, también.
 
 | Flow | Qué verifica | Estado |
 |---|---|---|
-| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (1m) |
+| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (47s) |
 | `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (32s) |
 | `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, la **reconciliación visible** (ΔPatrimonio +310.000 = Ahorro del mes +310.000, "cuadra al centavo"), la **tarjeta Deudas** (deuda viva 518.587,29 = Visa 50.000 + Préstamo 468.587,29; barra de progreso 6,28% = capital devuelto 31.412,71 / 500.000; «1 de 12 cubiertas · faltan 11»; interés pagado 25.000,00; DTI 7,05% = 56.412,71 / 800.000; "sin plan de cuotas" en la Visa; en septiembre «0 de 12 cubiertas» y DTI "no se puede calcular"), y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (2m 54s) |
-| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 18s) |
+| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 19s) |
 | `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 22s) |
-| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (39s) |
-| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 29s) |
-| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 16s) |
-| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 17s) |
-| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 57s) |
-| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 28s) |
+| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (38s) |
+| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 31s) |
+| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado, y la tarjeta del burn viva con su selector limpio (la elección completa vive en el flow 11) | ✅ Pasa (1m 57s) |
+| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 18s) |
+| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 56s) |
+| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 26s) |
+| `11-burn-mensualizado.yaml` | La elección COMPLETA del burn sobre el estado del final de la suite: el centavo de $ 0,01 repartido (`0,01 ÷ 12 = $ 0,00`), las dos vistas exactas (caja 10.900.000,00 / −10.100.000,00 contra burn 10.899.999,99 / −10.099.999,99), los dos pies del resultado, y que la selección sea EFÍMERA: volver por el encabezado deja el selector limpio y las vistas negadas con el select centrado | ✅ Pasa (1m 38s) |
 
-**Suite completa: 11/11 en 16m 14s.** Los tiempos no son decorativos: cuando había
+**Suite completa: 12/12 en 18m 19s.** Los tiempos no son decorativos: cuando había
 servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
 tardaba **5m51s en fallar** y los demás corrían entre 10 y 18 segundos más
 lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una
