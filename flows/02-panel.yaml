@@ -212,6 +212,58 @@ env:
 # dejara de cuadrar, esta frase desaparece y el test lo dice.
 - assertVisible: ".*cuadra al centavo.*"
 
+# ── La tarjeta Deudas (progreso, interés y DTI) ──────────────────────────────
+#
+# La tarjeta vive DEBAJO del bloque de reconciliación —el panel creció otra
+# vez— y sus números salen del mismo escenario sembrado, calculados a mano:
+#
+#   Deuda viva al 31/10:  Visa 50.000,00 + Préstamo 468.587,29 = 518.587,29
+#   Préstamo:             cuota 56.412,71 · 1 de 12 cubiertas · faltan 11
+#   Capital devuelto:     31.412,71 / 500.000 = 6,28% — el ancho de la barra
+#   Interés pagado:       25.000,00 (el de la cuota 1, sin estimar)
+#   DTI:                  56.412,71 / 800.000 = 7,05%
+#
+# El ancla del scroll es la ÚLTIMA línea de la tarjeta (trampa 10: anclar en el
+# último dato deja visibles todos los de arriba, y la tarjeta entra en una
+# pantalla de 597 px).
+- scrollUntilVisible:
+    element:
+      text: ".*Cuota mensual de los planes.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*Deudas.*octubre de 2026.*"
+
+# El corte del mes en curso: "deuda viva al <día>". La fecha exacta depende del
+# día en que se corra la suite; la etiqueta, no.
+- assertVisible: ".*deuda viva al.*"
+
+# El total de la tarjeta: el MISMO número que muestra patrimonio, porque es la
+# misma deuda — no una segunda fórmula.
+- assertVisible: '.*518\.587,29.*'
+
+# La Visa existe en el reporte pero NO tiene plan de amortización: el modelo no
+# conoce planes de tarjeta, así que dice "sin plan" en vez de inventarle cuotas
+# que nadie pactó. Por eso no se le puede afirmar barra ni "N de M": no las
+# tiene.
+- assertVisible: ".*sin plan de cuotas.*"
+
+# El préstamo: la cuota, las cuotas cubiertas por el capital efectivamente
+# amortizado (la transferencia del 15/10) y las que faltan.
+- assertVisible: '.*cuota.*56\.412,71.*1 de 12 cubiertas.*faltan 11.*'
+
+# El capital devuelto y su porcentaje son el MISMO valor que alimenta el ancho
+# de la barra de progreso: 31.412,71 de 500.000 son 6,28%. El interés pagado no
+# se estima con el calendario: es el interés de las cuotas cubiertas.
+- assertVisible: '.*capital devuelto.*31\.412,71.*6\.28%.*'
+- assertVisible: '.*interés pagado.*25\.000,00.*'
+
+# El DTI: la cuota mensual del plan sobre el ingreso ganado del mes mostrado.
+- assertVisible: ".*DTI.*ingresos comprometidos.*"
+- assertVisible: ".*7,05.*"
+- assertVisible: '.*Cuotas por.*56\.412,71.*sobre.*800\.000,00 de ingresos.*'
+- assertVisible: ".*1 plan con cuotas pendientes.*"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # VOLVER ARRIBA PARA SEGUIR CON LA NAVEGACIÓN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -292,6 +344,24 @@ env:
 # el modelo volvió a tratar el desembolso como plata ganada.
 - assertNotVisible: '.*800\.000,00.*'
 - assertNotVisible: '.*490\.000,00.*'
+
+# ── La tarjeta Deudas en septiembre: sin ingreso no hay DTI ──────────────────
+#
+# Al 30/09 el préstamo recién se desembolsó: 0 de 12 cuotas cubiertas, capital
+# amortizado 0,00 (la cuota es del 15/10). Septiembre no tuvo ingresos —el
+# desembolso es una transferencia, no ingreso— así que el DTI NO se muestra
+# como 0%, que afirmaría algo falso: dice "no se puede calcular".
+#
+# El scroll baja hasta la tarjeta y desde ahí sigue la lista de movimientos,
+# que está más abajo; las negativas de arriba ya corrieron.
+- scrollUntilVisible:
+    element:
+      text: ".*Cuota mensual de los planes.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*0 de 12 cubiertas.*faltan 12.*"
+- assertVisible: ".*no se puede calcular.*"
 
 # ── La fila de la transferencia, en la lista ─────────────────────────────────
 #

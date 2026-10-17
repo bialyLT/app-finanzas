@@ -402,3 +402,111 @@ export function loanSummary(
     schedule,
   };
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Progreso de un préstamo
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Cuántas cuotas de un cronograma quedan CUBIERTAS por el capital amortizado.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ HACE FALTA ESTA FUNCIÓN
+ * ─────────────────────────────────────────────────────────────────────────────
+ * El saldo de la cuenta dice CUÁNTO falta pagar, pero no CUÁNTAS cuotas. El
+ * capital de una cuota se registra como una TRANSFERENCIA, y una transferencia
+ * no lleva número de cuota: "Transferencia de 31.412,71 al préstamo" es todo lo
+ * que hay. Para poder decir "vas por la cuota 1 de 12" hace falta reconstruir
+ * la cuenta.
+ *
+ * La convención —la misma que usan los bancos— es que las cuotas se pagan EN
+ * ORDEN: lo primero que amortizás es la cuota 1, después la 2, y así. Entonces
+ * se CAMINA el cronograma acumulando la amortización de cada cuota y se cuentan
+ * las que quedan enteras por debajo del capital pagado. Un pago parcial que no
+ * llega a cubrir la próxima cuota no la cuenta: no está pagada.
+ *
+ * Con eso, "interés pagado a la fecha" tiene una definición honesta: la suma
+ * del interés de las cuotas cubiertas. No se estima ni se prorratea.
+ *
+ * @param schedule     El cronograma completo (`amortizationSchedule`).
+ * @param capitalPaid  Σ del capital amortizado hasta la fecha.
+ */
+export function installmentsCoveredBy(
+  schedule: readonly Installment[],
+  capitalPaid: Money | string,
+): number {
+  const paid = typeof capitalPaid === "string" ? money(capitalPaid) : capitalPaid;
+  let cumulative = zero();
+  let covered = 0;
+
+  for (const installment of schedule) {
+    cumulative = cumulative.plus(installment.principal);
+    // Las dos cantidades están redondeadas a 2 decimales, así que la
+    // comparación es exacta: `greaterThan` y no un épsilon.
+    if (cumulative.greaterThan(paid)) break;
+    covered += 1;
+  }
+
+  return covered;
+}
+
+/** El progreso de un préstamo contra su cronograma, al día de hoy. */
+export interface LoanProgress {
+  /** El total del préstamo: la suma exacta del capital del cronograma. */
+  principal: Money;
+  /** Capital amortizado, clampeado a `[0, principal]`: más que el préstamo no hay. */
+  capitalPaid: Money;
+  /** Cuántas cuotas quedan cubiertas (ver `installmentsCoveredBy`). */
+  installmentsCovered: number;
+  /** Interés acumulado de las cuotas cubiertas: el costo real pagado hasta acá. */
+  interestPaid: Money;
+  /** Cuántas cuotas faltan pagar (`total − cubiertas`). */
+  remainingCount: number;
+  /** `capitalPaid / principal × 100`, con dos decimales. Siempre entre 0 y 100. */
+  progressPercent: Money;
+}
+
+/**
+ * El progreso de un préstamo: capital amortizado, interés pagado, cuotas
+ * restantes y porcentaje del capital ya devuelto.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ EL PRINCIPAL SALE DEL CRONOGRAMA Y NO SE PIDE APARTE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Porque el cronograma suma EXACTAMENTE el principal (es una de sus
+ * invariantes, verificada en los tests). Si el principal entrara como parámetro
+ * separado, nada obligaría a que los dos números coincidieran y el porcentaje
+ * podría medirse contra una vara distinta de la que se usó para cobrar.
+ *
+ * El capital pagado se clampa a `[0, principal]`: un pago de más no "cubre 13
+ * cuotas de 12" ni produce un progreso de 120%. Y un principal de cero —caso
+ * defensivo: la base prohíbe un préstamo sin parámetros— devuelve 0,00 en vez
+ * de la división por cero.
+ *
+ * @param schedule     El cronograma completo (`amortizationSchedule`).
+ * @param capitalPaid  Σ del capital amortizado hasta la fecha.
+ */
+export function loanProgress(
+  schedule: readonly Installment[],
+  capitalPaid: Money | string,
+): LoanProgress {
+  const paid = typeof capitalPaid === "string" ? money(capitalPaid) : capitalPaid;
+  const principal = sum(schedule.map((installment) => installment.principal));
+  const clamped = max(min(paid, principal), zero());
+
+  const installmentsCovered = installmentsCoveredBy(schedule, clamped);
+  const interestPaid = sum(
+    schedule.slice(0, installmentsCovered).map((installment) => installment.interest),
+  );
+
+  return {
+    principal,
+    capitalPaid: clamped,
+    installmentsCovered,
+    interestPaid,
+    remainingCount: schedule.length - installmentsCovered,
+    progressPercent: principal.isZero()
+      ? zero()
+      : round(clamped.dividedBy(principal).times(100)),
+  };
+}

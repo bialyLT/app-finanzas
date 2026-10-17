@@ -29,7 +29,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
-import { getNetWorth, type Db } from "./balance";
+import { getAccountBalances, getNetWorth, type AccountBalance, type Db } from "./balance";
 import {
   calendarToDb,
   dbToCalendar,
@@ -44,12 +44,26 @@ import type {
   CategoryBreakdownDTO,
   CategoryDTO,
   DateBreakdownDTO,
+  DebtDtiDTO,
+  DebtPlanDTO,
+  DebtReportDTO,
+  DebtReportRowDTO,
   MovementDTO,
   NetWorthPointDTO,
   PeriodTotalsDTO,
   ReconciliationDTO,
 } from "./finance";
-import { isZero, money, sum, zero } from "./money";
+import {
+  amortizationSchedule,
+  isZero,
+  loanProgress,
+  money,
+  round,
+  sum,
+  zero,
+  type Installment,
+  type Money,
+} from "./money";
 
 /**
  * Relaciones que hay que traer siempre para armar un MovementDTO.
@@ -440,6 +454,50 @@ export async function getNetWorthSeries(
 }
 
 /**
+ * El corte de UN mes calendario: desde dónde, hasta dónde y si quedó en curso.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA CONVENCIÓN DE CORTE, ESCRITA UNA SOLA VEZ
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Los reportes que miran un mes del selector —la reconciliación y el reporte de
+ * deudas— tienen que contar la MISMA ventana: si cada uno resolviera su corte
+ * por su cuenta, dos pantallas del mismo mes podrían describir meses distintos
+ * y nadie lo notaría. La convención, con sus tres casos:
+ *
+ *   · mes cerrado  (su fin de mes quedó atrás del ancla) → se corta en su fin;
+ *   · mes en curso (el ancla cae adentro)                → se corta en el ancla
+ *     y viaja `partial: true`: el mes no terminó;
+ *   · mes futuro   (el ancla es anterior a su inicio)    → se corta en su fin:
+ *     si hay movimientos precargados, cuentan entre ellos; si no, da todo cero.
+ *
+ * `partial` es la marca honesta de una ventana que no llegó a fin de mes: la
+ * interfaz la muestra, y quien compara dos caminos sabe que ambos usan el
+ * mismo corte. Un "casi" presentado como mes cerrado es la clase de número que
+ * da falsas alarmas.
+ *
+ * @param month  Mes calendario `"YYYY-MM"`.
+ * @param anchor Día desde el cual mirar (`YYYY-MM-DD`). Hoy, en producción;
+ *               una fecha fija, en los tests.
+ */
+function monthCut(
+  month: string,
+  anchor: CalendarDate,
+): {
+  monthStart: CalendarDate;
+  asOfEnd: CalendarDate;
+  partial: boolean;
+} {
+  const monthStart = `${month}-01`;
+  const monthEnd = endOfMonth(monthStart);
+
+  const closed = monthEnd < anchor;
+  const current = monthStart <= anchor && anchor <= monthEnd;
+  const asOfEnd = closed ? monthEnd : current ? anchor : monthEnd;
+
+  return { monthStart, asOfEnd, partial: asOfEnd < monthEnd };
+}
+
+/**
  * La reconciliación de UN mes: `ΔPatrimonio = Ahorro`, comparado al centavo.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -478,12 +536,14 @@ export async function getNetWorthSeries(
  * ─────────────────────────────────────────────────────────────────────────────
  * EL MES EN CURSO (y qué ventana se compara)
  * ─────────────────────────────────────────────────────────────────────────────
- * Las dos puntas usan la MISMA ventana: un mes cerrado se corta en su último
- * día; el mes en curso se corta en `anchor` (hoy) para ambos lados, porque
- * comparar una variación parcial contra el ahorro de un mes completo —o dejar
- * que un movimiento cargado con fecha futura entre sólo en un lado— sería
- * comparar ventanas distintas y el control daría una falsa alarma. El mes
- * viaja marcado `partial` para que la interfaz lo diga.
+ * Las dos puntas usan la MISMA ventana, y esa ventana sale de `monthCut` —la
+ * convención de corte escrita una sola vez, compartida con el reporte de
+ * deudas—: un mes cerrado se corta en su último día; el mes en curso se corta
+ * en `anchor` (hoy) para ambos lados, porque comparar una variación parcial
+ * contra el ahorro de un mes completo —o dejar que un movimiento cargado con
+ * fecha futura entre sólo en un lado— sería comparar ventanas distintas y el
+ * control daría una falsa alarma. El mes viaja marcado `partial` para que la
+ * interfaz lo diga.
  *
  * Un mes futuro (ancla anterior a su inicio) se corta en su fin de mes, igual
  * que uno cerrado: si hay movimientos precargados, reconcilian entre ellos, y
@@ -499,17 +559,10 @@ export async function getMonthReconciliation(
   db: Db,
   options: { month: string; anchor?: CalendarDate },
 ): Promise<ReconciliationDTO> {
-  const monthStart = `${options.month}-01`;
-  const monthEnd = endOfMonth(monthStart);
   const anchor = options.anchor ?? todayCalendar();
-
-  // Los tres casos, con el corte de la foto del mes ya resuelto:
-  //   · mes cerrado → fin de mes;
-  //   · mes en curso → hoy (parcial, salvo que hoy sea el último día);
-  //   · mes futuro → fin de mes (los precargados reconcilian entre ellos).
-  const closed = monthEnd < anchor;
-  const current = monthStart <= anchor && anchor <= monthEnd;
-  const asOfEnd = closed ? monthEnd : current ? anchor : monthEnd;
+  // El corte de la foto del mes (los tres casos) es la convención compartida
+  // del módulo: vive en `monthCut`, en un solo lugar.
+  const { monthStart, asOfEnd, partial } = monthCut(options.month, anchor);
 
   // El corte de la foto anterior es siempre el último día del mes anterior.
   const asOfStart = endOfMonth(addMonths(monthStart, -1));
@@ -546,8 +599,240 @@ export async function getMonthReconciliation(
     // pantalla muestre un menos delante de un cero que no significa nada.
     difference: balanced ? zero().toFixed(2) : difference.toFixed(2),
     balanced,
-    partial: asOfEnd < monthEnd,
+    partial,
     cutAt: asOfEnd,
+  };
+}
+
+/**
+ * El cronograma de un préstamo a partir de los parámetros de su cuenta.
+ *
+ * Devuelve `null` —"sin plan", no un plan inventado— cuando falta algún
+ * parámetro. La base lo prohíbe con el CHECK `loan_has_parameters`, así que ese
+ * caso no debería existir; la defensa también cubre una cantidad de cuotas no
+ * positiva, que el CHECK permite y `amortizationSchedule` rechaza lanzando: un
+ * dato así no puede tumbar el reporte de deudas entero.
+ */
+function loanSchedule(account: {
+  principal: Prisma.Decimal | null;
+  tnaPercent: Prisma.Decimal | null;
+  installmentCount: number | null;
+}): Installment[] | null {
+  const { principal, tnaPercent, installmentCount } = account;
+
+  if (principal === null || tnaPercent === null || installmentCount === null) {
+    return null;
+  }
+  if (installmentCount <= 0) return null;
+
+  return amortizationSchedule(principal, tnaPercent, installmentCount);
+}
+
+/** Una cuenta de deuda: préstamo o tarjeta. */
+type DebtBalance = AccountBalance & { kind: "LOAN" | "CREDIT_CARD" };
+
+/**
+ * El reporte de deudas de UN mes: deuda viva, progreso del capital, interés
+ * pagado, cuotas restantes y DTI — todo calculado del lado del servidor.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LAS DEFINICIONES DEL §5.2, UNA VEZ CADA UNA
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   · Deuda viva → el saldo de la cuenta al corte del mes mostrado, de
+ *     `getAccountBalances` — la MISMA función con la que el patrimonio y la
+ *     reconciliación calculan saldos. No hay una segunda fórmula de deuda que
+ *     pueda divergir en silencio.
+ *   · Capital pagado → Σ de las TRANSFERENCIAS que entraron a la cuenta de
+ *     deuda hasta el corte. Una transferencia al préstamo ES la amortización:
+ *     el progreso se mide con la plata que consta, no con el calendario.
+ *   · Interés pagado → Σ del interés de las cuotas CUBIERTAS por ese capital
+ *     (`loanProgress`): no se estima ni se prorratea.
+ *   · Cuotas restantes → `total − cubiertas`.
+ *   · DTI → Σ de la cuota mensual de los planes CON cuotas pendientes ÷ el
+ *     ingreso ganado del mes mostrado (la misma `movementTotals` y la misma
+ *     ventana que la reconciliación).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LOS CASOS "NO SE SABE" VIAJAN NULL, NUNCA COMO NÚMEROS INVENTADOS
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   · Una tarjeta tiene deuda viva pero no plan: el modelo no conoce ningún
+ *     `CardPlan`, así que `plan`, `capitalPaid`, `interestPaid` y
+ *     `progressPercent` van `null` y la pantalla dice "sin plan". Inventarle 12
+ *     cuotas a una Visa daría números de aspecto confiable sobre algo que nadie
+ *     pactó.
+ *   · Un préstamo sin parámetros (`loanSchedule` → `null`) va por el mismo
+ *     camino: la base lo prohíbe, la defensa es para una base ya rota.
+ *   · Sin ingreso no hay DTI (`percent: null`): no es "0% de compromiso", es
+ *     "no se puede calcular" — y la pantalla lo dice con palabras.
+ *   · El préstamo que YO di (alguien me debe a mí) no tiene representación en
+ *     el modelo todavía —no existe un `OWED_TO_ME`—: no hay nada que reportar.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUÉ FILAS SE MUESTRAN (y qué suma el total)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Se muestran todas las cuentas de deuda NO archivadas —aunque deban cero: el
+ * cero es un dato— y las archivadas sólo si todavía tienen deuda viva, marcadas
+ * para que la pantalla lo diga. Una cuenta archivada en cero se omite: es una
+ * fila que ya no dice nada. `totalDebt` suma exactamente las filas mostradas,
+ * para que la lista y el total no puedan divergir. El orden de las filas es el
+ * de `getAccountBalances` (no archivadas primero; después, creación y nombre).
+ *
+ * El compromiso del DTI, en cambio, se junta ANTES de ese filtro: un plan con
+ * cuotas pendientes sigue comprometiendo su cuota aunque su fila no se muestre.
+ *
+ * @param month Mes calendario `"YYYY-MM"`.
+ * @param anchor Día hasta el cual mirar (`YYYY-MM-DD`). Por defecto, hoy; los
+ *               tests fijan una fecha para no depender del día en que corran.
+ * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ */
+export async function getDebtReport(
+  db: Db,
+  options: { month: string; anchor?: CalendarDate },
+): Promise<DebtReportDTO> {
+  const anchor = options.anchor ?? todayCalendar();
+  const { monthStart, asOfEnd, partial } = monthCut(options.month, anchor);
+
+  // La deuda viva y el ingreso del mes (el denominador del DTI) no dependen
+  // entre sí: van en paralelo.
+  const [balances, totals] = await Promise.all([
+    getAccountBalances(db, { asOf: asOfEnd }),
+    movementTotals(db, {
+      date: { gte: calendarToDb(monthStart), lte: calendarToDb(asOfEnd) },
+    }),
+  ]);
+
+  const debtAccounts = balances.filter(
+    (balance): balance is DebtBalance =>
+      balance.kind === "LOAN" || balance.kind === "CREDIT_CARD",
+  );
+  const loanIds = debtAccounts
+    .filter((balance) => balance.kind === "LOAN")
+    .map((balance) => balance.id);
+
+  // Los parámetros del plan y el capital amortizado tampoco dependen entre sí.
+  // El capital mira TODA la vida de la deuda hasta el corte (no sólo el mes):
+  // la amortización es acumulada, igual que este número.
+  const [loanAccounts, capitalRows] = await Promise.all([
+    db.account.findMany({
+      where: { kind: "LOAN" },
+      select: {
+        id: true,
+        principal: true,
+        tnaPercent: true,
+        installmentCount: true,
+      },
+    }),
+    db.movement.groupBy({
+      by: ["toAccountId"],
+      where: {
+        kind: "TRANSFER",
+        toAccountId: { in: loanIds },
+        date: { lte: calendarToDb(asOfEnd) },
+      },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const paramsById = new Map(
+    loanAccounts.map((account) => [account.id, account]),
+  );
+
+  const capitalPaidByLoan = new Map<string, Money>();
+  for (const row of capitalRows) {
+    // El `where` exige destino en un préstamo, así que no hay grupo `null`; el
+    // tipo lo admite igual y se descarta, como en `getAccountBalances`.
+    if (row.toAccountId === null) continue;
+    if (row._sum.amount === null) continue;
+    capitalPaidByLoan.set(row.toAccountId, money(row._sum.amount));
+  }
+
+  const rows: DebtReportRowDTO[] = [];
+  const visibleDebts: Money[] = [];
+  const commitments: Money[] = [];
+
+  for (const balance of debtAccounts) {
+    // Sólo las cuentas de deuda pasaron el filtro; en ellas `debt` no es null.
+    const debt = balance.debt ?? zero();
+
+    // ── El plan del préstamo, con su progreso al corte ────────────────────────
+    // El compromiso del DTI se junta ACÁ, antes del filtro de visibilidad de
+    // las filas: un plan con cuotas pendientes sigue comprometiendo su cuota
+    // aunque su fila esté archivada y no se muestre.
+    let plan: DebtPlanDTO | null = null;
+    let capitalPaid: string | null = null;
+    let interestPaid: string | null = null;
+    let progressPercent: string | null = null;
+
+    if (balance.kind === "LOAN") {
+      const params = paramsById.get(balance.id);
+      const schedule = params ? loanSchedule(params) : null;
+
+      if (schedule) {
+        const progress = loanProgress(
+          schedule,
+          capitalPaidByLoan.get(balance.id) ?? zero(),
+        );
+
+        plan = {
+          // La cuota constante, la del cronograma: las siguientes son iguales
+          // salvo la última, que ajusta el centavo del redondeo.
+          payment: schedule[0].payment.toFixed(2),
+          // El principal sale del cronograma (no de un parámetro aparte): el
+          // porcentaje no se mide contra una vara distinta de la que se cobra.
+          principal: progress.principal.toFixed(2),
+          installmentCount: schedule.length,
+          paidCount: progress.installmentsCovered,
+          remainingCount: progress.remainingCount,
+        };
+        capitalPaid = progress.capitalPaid.toFixed(2);
+        interestPaid = progress.interestPaid.toFixed(2);
+        progressPercent = progress.progressPercent.toFixed(2);
+
+        // Un plan terminado libera su cuota: no compromete más.
+        if (progress.remainingCount > 0) {
+          commitments.push(schedule[0].payment);
+        }
+      }
+    }
+
+    // ── La fila, si corresponde ───────────────────────────────────────────────
+    if (balance.archived && isZero(debt)) continue;
+
+    visibleDebts.push(debt);
+
+    rows.push({
+      accountId: balance.id,
+      name: balance.name,
+      kind: balance.kind,
+      archived: balance.archived,
+      debt: debt.toFixed(2),
+      plan,
+      capitalPaid,
+      interestPaid,
+      progressPercent,
+    });
+  }
+
+  // ── El DTI ──────────────────────────────────────────────────────────────────
+  const monthlyCommitment = sum(commitments);
+  const income = money(totals.income);
+
+  return {
+    month: options.month,
+    cutAt: asOfEnd,
+    partial,
+    totalDebt: sum(visibleDebts).toFixed(2),
+    rows,
+    dti: {
+      monthlyCommitment: monthlyCommitment.toFixed(2),
+      income: income.toFixed(2),
+      // Sin ingreso la división no existe: `null` es "no se puede calcular",
+      // no "0% de compromiso".
+      percent: income.isZero()
+        ? null
+        : round(monthlyCommitment.dividedBy(income).times(100)).toFixed(2),
+      planCount: commitments.length,
+    },
   };
 }
 

@@ -9,7 +9,7 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-17)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: 113 tests de vitest (72 unitarios + 41 de integración), 119 aserciones de smoke, 11 flows de Maestro en ~14m, build de producción limpio.
+- Batería verde: 132 tests de vitest (85 unitarios + 47 de integración), 168 aserciones de smoke, 11 flows de Maestro en ~16m, build de producción limpio.
 - Fases 0, 1 y 2 cerradas; fases 4, 5, 6, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
@@ -47,9 +47,9 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 113 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 119 aserciones end-to-end (servidor arriba)
-npm run flows             # 11 flows de Maestro: siembra la base y corre; ~14m
+npm test                  # 132 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 168 aserciones end-to-end (servidor arriba)
+npm run flows             # 11 flows de Maestro: siembra la base y corre; ~16m
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -63,7 +63,7 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 6 sigue** (detalle en `ROADMAP.md`): ya quedaron cerradas la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja** del panel, la **serie mensual de patrimonio** (12 fotos mensuales con la misma función del panel cortada por `asOf`) y la **reconciliación visible** (`ΔPatrimonio = Ahorro` en `/api/reconciliation`, con su bloque en el panel y alerta si no cuadra). Lo más valioso que queda, en orden: los reportes de deuda (progreso, interés acumulado, meses restantes, DTI) y el **burn mensualizado**.
+**Fase 6 sigue** (detalle en `ROADMAP.md`): ya quedaron cerradas la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja**, la **serie mensual de patrimonio**, la **reconciliación visible** (`ΔPatrimonio = Ahorro` en `/api/reconciliation`) y los **reportes de deuda** (`/api/debts`: deuda viva, progreso de capital, interés pagado, cuotas restantes y DTI, con su tarjeta en el panel). De la Fase 6 queda solo el **burn mensualizado**.
 
 Alternativas, en orden de costo/beneficio: Fase 5 (cuotas y resumen de tarjeta), Fase 3 (recurrencia), Fase 9 (endurecimiento si va a producción).
 

@@ -163,6 +163,11 @@ async function main() {
   {
     const sinSesion = await fetch(`${BASE_URL}/api/accounts`, { headers: { Origin: BASE_URL } });
     check("sin sesión, /api/accounts responde 401", sinSesion.status, 401);
+
+    const deudaSinSesion = await fetch(`${BASE_URL}/api/debts?month=${MES}`, {
+      headers: { Origin: BASE_URL },
+    });
+    check("sin sesión, /api/debts responde 401", deudaSinSesion.status, 401);
   }
 
   if (checkOnly) {
@@ -768,6 +773,158 @@ async function main() {
     // reconciliación inventada de ceros.
     const { status: mesMalo } = await api("/api/reconciliation?month=2026-13");
     check("month=2026-13 responde 400", mesMalo, 400);
+  }
+
+  // ── Los reportes de deuda (progreso, interés y DTI) ────────────────────────
+  //
+  // El reporte de UN mes: deuda viva al corte, progreso del capital, interés
+  // pagado, cuotas restantes y DTI — todo del servidor. Los números se arman A
+  // MANO sobre el seed, como todo lo demás en este script:
+  //
+  //   Deuda viva al 31/10:  Visa 50.000,00 (la compra del 12/10)
+  //                         Préstamo 468.587,29 (500.000 − 31.412,71)
+  //   Cuota 1 del préstamo: 56.412,71 = 31.412,71 de capital + 25.000,00 de interés
+  //   Progreso:             31.412,71 / 500.000 = 6,28% → 11 cuotas por pagar
+  //   DTI:                  56.412,71 / 800.000 = 7,05% del ingreso del mes
+  section("Los reportes de deuda (progreso, interés y DTI)");
+  {
+    const { status: deudaStatus, body: deudaData } = await api(
+      `/api/debts?month=${MES}&asOf=${MES}-31`,
+    );
+    const deuda = deudaData?.debtReport;
+
+    check("/api/debts responde 200", deudaStatus, 200);
+    check("octubre · el corte es el 31/10", deuda?.cutAt, `${MES}-31`);
+    checkTrue("octubre · no es un corte parcial", deuda?.partial === false);
+
+    // Las filas: TODAS las cuentas de deuda, en el orden del panel (no
+    // archivadas primero; después, por creación). Visa se creó antes que el
+    // préstamo, así que va primera.
+    const filas = deuda?.rows ?? [];
+    check("se muestran las dos cuentas de deuda (Visa y Préstamo)", filas.length, 2);
+    check("la primera fila es la Visa (orden del panel)", filas[0]?.name, "Visa Santander");
+
+    const visa = filas.find((f) => f.name === "Visa Santander");
+    const prestamo = filas.find((f) => f.name === "Préstamo personal");
+
+    check("Visa · deuda viva 50.000,00", visa?.debt, "50000.00");
+    check(
+      "Visa · sin plan (el modelo no conoce planes de tarjeta): null, no un plan inventado",
+      visa?.plan,
+      null,
+    );
+    check("Préstamo · deuda viva 468.587,29", prestamo?.debt, "468587.29");
+    check("Préstamo · cuota mensual del plan = 56.412,71", prestamo?.plan?.payment, "56412.71");
+    check(
+      "Préstamo · el principal del plan sale del cronograma (500.000,00)",
+      prestamo?.plan?.principal,
+      "500000.00",
+    );
+    check("Préstamo · 1 de 12 cuotas cubiertas", prestamo?.plan?.paidCount, 1);
+    check("Préstamo · 11 cuotas restantes", prestamo?.plan?.remainingCount, 11);
+    check("Préstamo · capital amortizado 31.412,71 (la transferencia al préstamo)", prestamo?.capitalPaid, "31412.71");
+    check("Préstamo · interés pagado 25.000,00 (el de la cuota 1, sin estimar)", prestamo?.interestPaid, "25000.00");
+    check("Préstamo · progreso 6,28%", prestamo?.progressPercent, "6.28");
+    check("el total de deuda suma las dos filas", deuda?.totalDebt, "518587.29");
+
+    check(
+      "DTI · compromiso mensual = 56.412,71 (sólo planes con cuotas pendientes)",
+      deuda?.dti?.monthlyCommitment,
+      "56412.71",
+    );
+    check("DTI · ingreso del mes = 800.000,00", deuda?.dti?.income, "800000.00");
+    check("DTI · 7,05% del ingreso comprometido", deuda?.dti?.percent, "7.05");
+    check("DTI · un plan con cuotas pendientes", deuda?.dti?.planCount, 1);
+
+    // Septiembre: al 30/09 la deuda es SOLO el préstamo recién desembolsado (la
+    // tarjeta todavía no compró), no hay capital amortizado —y por lo tanto
+    // tampoco interés— y el mes no tuvo ingresos: el DTI NO se muestra como 0%,
+    // viaja `null` ("no se puede calcular"). La Visa, en cero, igual aparece:
+    // una cuenta de deuda abierta se muestra aunque deba cero.
+    const { body: deudaSep } = await api(
+      `/api/debts?month=2026-09&asOf=${MES}-31`,
+    );
+    const sep = deudaSep?.debtReport;
+    const visaSep = (sep?.rows ?? []).find((f) => f.name === "Visa Santander");
+    const prestamoSep = (sep?.rows ?? []).find((f) => f.name === "Préstamo personal");
+
+    check("septiembre · el corte es el 30/09", sep?.cutAt, "2026-09-30");
+    check("septiembre · la Visa aparece en cero (no se esconde)", visaSep?.debt, "0.00");
+    check("septiembre · deuda total 500.000,00 (sin la tarjeta todavía)", sep?.totalDebt, "500000.00");
+    check("septiembre · capital amortizado 0,00", prestamoSep?.capitalPaid, "0.00");
+    check("septiembre · 12 cuotas restantes", prestamoSep?.plan?.remainingCount, 12);
+    check("septiembre · interés pagado 0,00 (no se estima)", prestamoSep?.interestPaid, "0.00");
+    check("septiembre · ingreso del mes 0,00", sep?.dti?.income, "0.00");
+    check("septiembre · sin ingreso el DTI viaja null", sep?.dti?.percent, null);
+
+    // Un corte EN CURSO (al 02/10) tampoco rompe nada: la deuda de la Visa es
+    // la de ESA fecha —la compra del 12/10 todavía no pasó— y el corte lo dice.
+    const { body: deudaCorto } = await api(
+      `/api/debts?month=${MES}&asOf=${MES}-02`,
+    );
+    const corto = deudaCorto?.debtReport;
+    const visaCorta = (corto?.rows ?? []).find((f) => f.name === "Visa Santander");
+
+    checkTrue("al 02/10 · marcado en curso (parcial)", corto?.partial === true);
+    check("al 02/10 · la Visa todavía debe 0,00 (la compra del 12/10 no pasó)", visaCorta?.debt, "0.00");
+    check("al 02/10 · deuda total 500.000,00 (sólo el préstamo)", corto?.totalDebt, "500000.00");
+
+    // La ruta que usará el panel (sin `asOf`) corta con el reloj: tiene que
+    // responder igual, sin que el corte se pase del fin del mes mostrado.
+    const { status: deudaHoyStatus, body: deudaHoy } = await api(
+      `/api/debts?month=${MES}`,
+    );
+    check("sin asOf también responde 200", deudaHoyStatus, 200);
+    checkTrue(
+      "sin asOf el corte no pasa del fin del mes",
+      deudaHoy?.debtReport?.cutAt <= `${MES}-31`,
+      `cutAt = ${deudaHoy?.debtReport?.cutAt}`,
+    );
+
+    // Un mes que no existe es una entrada inválida: 400, no un 500 ni un
+    // reporte inventado de ceros.
+    const { status: mesMaloDeudas } = await api("/api/debts?month=2026-13");
+    check("month=2026-13 responde 400", mesMaloDeudas, 400);
+    const { status: mesTexto } = await api("/api/debts?month=octubre");
+    check("month=octubre (texto) responde 400", mesTexto, 400);
+    const { status: asOfMalo } = await api(`/api/debts?month=${MES}&asOf=2026-02-31`);
+    check("asOf=2026-02-31 (fecha inexistente) responde 400", asOfMalo, 400);
+    const { status: asOfTexto } = await api(`/api/debts?month=${MES}&asOf=basura`);
+    check("asOf=basura responde 400", asOfTexto, 400);
+
+    // Agosto: el corte es el 31/08 y en esa fecha NO existía ningún movimiento
+    // de deuda — la compra con tarjeta es del 12/10 y el desembolso, del 30/09.
+    // Las dos cuentas aparecen en cero (el cero es un dato), el plan del
+    // préstamo todavía no cubrió ninguna cuota y, sin ingresos en ese mes, el
+    // DTI viaja null. "Deuda viva" es al corte del mes: mostrarla de HOY acá
+    // sería viajar en el tiempo con el número equivocado.
+    const { body: deudaAgo } = await api(
+      `/api/debts?month=2026-08&asOf=${MES}-31`,
+    );
+    const ago = deudaAgo?.debtReport;
+    const visaAgo = (ago?.rows ?? []).find((f) => f.name === "Visa Santander");
+    const prestamoAgo = (ago?.rows ?? []).find((f) => f.name === "Préstamo personal");
+
+    check("agosto · el corte es el 31/08", ago?.cutAt, "2026-08-31");
+    check("agosto · la Visa debe 0,00 en ese corte (la compra es del 12/10)", visaAgo?.debt, "0.00");
+    check("agosto · el préstamo debe 0,00 (el desembolso es del 30/09)", prestamoAgo?.debt, "0.00");
+    check("agosto · deuda total 0,00", ago?.totalDebt, "0.00");
+    check("agosto · 0 de 12 cuotas cubiertas", prestamoAgo?.plan?.paidCount, 0);
+    check("agosto · sin ingreso el DTI viaja null", ago?.dti?.percent, null);
+
+    // Un mes FUTURO se corta a fin de mes (la misma convención de `monthCut`
+    // que la reconciliación): sin movimientos precargados da el mismo estado
+    // que octubre, y el DTI de noviembre queda null porque ese mes no tiene
+    // ingresos aún. Lo que NO puede pasar es que el corte se corra a hoy.
+    const { body: deudaNov } = await api(
+      `/api/debts?month=2026-11&asOf=${MES}-31`,
+    );
+    const nov = deudaNov?.debtReport;
+    check("noviembre · mes futuro: el corte es el 30/11", nov?.cutAt, "2026-11-30");
+    checkTrue("noviembre · no es parcial (la convención corta a fin de mes)", nov?.partial === false);
+    check("noviembre · deuda total 518.587,29 (misma foto que octubre)", nov?.totalDebt, "518587.29");
+    check("noviembre · 11 cuotas restantes", (nov?.rows ?? []).find((f) => f.name === "Préstamo personal")?.plan?.remainingCount, 11);
+    check("noviembre · sin ingresos, DTI null", nov?.dti?.percent, null);
   }
 
   // ── Los reportes de /analisis, agregados en el SERVIDOR ────────────────────

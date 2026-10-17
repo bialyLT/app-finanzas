@@ -16,6 +16,7 @@ import {
   MOVEMENT_KIND_LABEL,
   type AccountBalanceDTO,
   type CategoryDTO,
+  type DebtReportDTO,
   type MovementDTO,
   type MovementKindDTO,
   type MovementsResponse,
@@ -101,6 +102,13 @@ export default function Home() {
    * `ReconciliationDTO` y `getMonthReconciliation`.
    */
   const [reconciliation, setReconciliation] = useState<ReconciliationDTO | null>(null);
+  /**
+   * El reporte de deudas del mes MOSTRADO (no del mes de hoy): deuda viva al
+   * corte, progreso del capital de cada préstamo, interés pagado, cuotas
+   * restantes y DTI. Todo llega resuelto del servidor (ver `DebtReportDTO` y
+   * `getDebtReport` en lib/queries.ts) — acá sólo se eligen las palabras.
+   */
+  const [debtReport, setDebtReport] = useState<DebtReportDTO | null>(null);
   const [categories, setCategories] = useState<CategoryDTO[]>([]);
   const [truncated, setTruncated] = useState(false);
 
@@ -140,23 +148,30 @@ export default function Home() {
     setLoading(true);
     setLoadError("");
     try {
-      // El mes de la reconciliación sale del rango que se está pidiendo y no
-      // del estado `month` directo, así la URL siempre describe el MISMO mes
-      // que la lista y los totales de esta carga.
+      // El mes de los reportes (reconciliación y deudas) sale del rango que se
+      // está pidiendo y no del estado `month` directo, así la URL siempre
+      // describe el MISMO mes que la lista y los totales de esta carga.
       const shownMonth = range.from.slice(0, 7);
-      const [movementsRes, categoriesRes, accountsRes, reconciliationRes] =
-        await Promise.all([
-          fetch(`/api/transactions?from=${range.from}&to=${range.to}`),
-          fetch("/api/categories"),
-          fetch("/api/accounts?includeArchived=false"),
-          fetch(`/api/reconciliation?month=${shownMonth}`),
-        ]);
+      const [
+        movementsRes,
+        categoriesRes,
+        accountsRes,
+        reconciliationRes,
+        debtRes,
+      ] = await Promise.all([
+        fetch(`/api/transactions?from=${range.from}&to=${range.to}`),
+        fetch("/api/categories"),
+        fetch("/api/accounts?includeArchived=false"),
+        fetch(`/api/reconciliation?month=${shownMonth}`),
+        fetch(`/api/debts?month=${shownMonth}`),
+      ]);
 
       if (
         !movementsRes.ok ||
         !categoriesRes.ok ||
         !accountsRes.ok ||
-        !reconciliationRes.ok
+        !reconciliationRes.ok ||
+        !debtRes.ok
       ) {
         throw new Error("Alguno de los pedidos falló.");
       }
@@ -173,6 +188,9 @@ export default function Home() {
       const reconciliationData = (await reconciliationRes.json()) as {
         reconciliation: ReconciliationDTO;
       };
+      const debtData = (await debtRes.json()) as {
+        debtReport: DebtReportDTO;
+      };
 
       setMovements(movementsData.movements);
       setTruncated(movementsData.truncated);
@@ -182,6 +200,7 @@ export default function Home() {
       setNetWorth(accountsData.netWorth);
       setNetWorthSeries(accountsData.netWorthSeries);
       setReconciliation(reconciliationData.reconciliation);
+      setDebtReport(debtData.debtReport);
     } catch {
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
@@ -675,6 +694,142 @@ export default function Home() {
           >
             + Agregar cuenta
           </button>
+        </div>
+      )}
+
+      {/* ── Deudas ───────────────────────────────────────────────────────── */}
+      {/*
+        Deudas del mes MOSTRADO: deuda viva al corte, progreso del capital,
+        interés pagado, cuotas restantes y DTI. Los números llegan calculados
+        del servidor (`DebtReportDTO`); acá sólo se eligen las palabras.
+
+        Dos casos que la interfaz cuenta sin disfrazarlos:
+          · Una tarjeta no tiene plan de cuotas (`plan: null`): dice "sin
+            plan" en vez de inventarle cuotas que nadie pactó.
+          · Sin ingresos no hay DTI (`percent: null`): "no se puede calcular",
+            no un 0% que afirmaría algo falso.
+      */}
+      {debtReport && debtReport.rows.length > 0 && (
+        <div className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-4 shadow-sm">
+          <div className="flex items-baseline justify-between flex-wrap gap-2">
+            <div>
+              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+                Deudas ·{" "}
+                {formatCalendar(`${debtReport.month}-01`, LOCALE, {
+                  month: "long",
+                  year: "numeric",
+                })}
+                {debtReport.partial && (
+                  <span className="text-zinc-400"> · en curso</span>
+                )}
+              </p>
+              <p className="text-2xl font-extrabold text-rose-600">
+                {formatMoney(debtReport.totalDebt)}
+              </p>
+            </div>
+            <p className="text-[11px] text-zinc-400 text-right">
+              deuda viva al {formatCalendar(debtReport.cutAt)}
+              {debtReport.partial ? " · el mes sigue" : ""}
+            </p>
+          </div>
+
+          <div
+            id="debt-report"
+            className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 divide-y divide-zinc-100 dark:divide-zinc-800"
+          >
+            {debtReport.rows.map((row) => (
+              <div
+                key={row.accountId}
+                id={`debt-${row.accountId}`}
+                className="py-2.5"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="text-sm">
+                    {row.name}
+                    {row.archived && (
+                      <span className="text-[11px] text-zinc-400">
+                        {" "}
+                        · archivada
+                      </span>
+                    )}
+                  </p>
+                  {/* `formatLiability` elige la palabra según el lado: "debe
+                      $ 50.000,00" o "a favor $ 50.000,00" — nunca un monto con
+                      signo que se lea como un error. Sin `withSign`: un "+$" en
+                      esta tarjeta es ruido. */}
+                  <p className="text-sm font-bold text-rose-600">
+                    {formatLiability(row.debt)}
+                  </p>
+                </div>
+
+                {row.plan ? (
+                  <div className="mt-1.5">
+                    <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-rose-500"
+                        style={{ width: `${row.progressPercent}%` }}
+                      />
+                    </div>
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      cuota {formatMoney(row.plan.payment)} · {row.plan.paidCount}{" "}
+                      de {row.plan.installmentCount} cubiertas ·{" "}
+                      {row.plan.remainingCount === 0
+                        ? "sin cuotas pendientes"
+                        : `faltan ${row.plan.remainingCount}`}
+                    </p>
+                    <p className="text-[11px] text-zinc-400">
+                      capital devuelto {formatMoney(row.capitalPaid ?? "0.00")} (
+                      {row.progressPercent}%) · interés pagado{" "}
+                      {formatMoney(row.interestPaid ?? "0.00")}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[11px] text-zinc-400">
+                    sin plan de cuotas: la tarjeta no pacta una cuota fija
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/*
+            El DTI: la cuota mensual de los planes con cuotas pendientes sobre
+            el ingreso del mes. Es un indicador, describe —no dictamina—, y
+            cuando el mes no tuvo ingresos llega `null`: la frase lo dice en vez
+            de mostrar un número que no existe.
+          */}
+          <div
+            id="debt-dti"
+            className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800"
+          >
+            <div className="flex items-baseline justify-between flex-wrap gap-1">
+              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+                DTI · ingresos comprometidos
+              </p>
+              <p className="text-sm font-bold">
+                {debtReport.dti.percent === null ? (
+                  <span className="text-zinc-400">no se puede calcular</span>
+                ) : (
+                  <span className="text-rose-600">
+                    {formatPercent(debtReport.dti.percent)}
+                  </span>
+                )}
+              </p>
+            </div>
+            <p className="text-[11px] text-zinc-500">
+              {debtReport.dti.percent === null
+                ? "No hubo ingresos este mes: sin ingreso, el DTI no se puede calcular."
+                : `Cuotas por ${formatMoney(debtReport.dti.monthlyCommitment)} sobre ${formatMoney(debtReport.dti.income)} de ingresos.`}
+            </p>
+            <p className="text-[11px] text-zinc-400">
+              {debtReport.dti.planCount === 0
+                ? "Ningún plan con cuotas pendientes."
+                : `${debtReport.dti.planCount} ${
+                    debtReport.dti.planCount === 1 ? "plan" : "planes"
+                  } con cuotas pendientes.`}{" "}
+              Cuota mensual de los planes ÷ ingresos ganados del mes.
+            </p>
+          </div>
         </div>
       )}
 

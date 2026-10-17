@@ -22,8 +22,10 @@ import {
   formatMoney,
   formatPercent,
   installmentPayment,
+  installmentsCoveredBy,
   isNegative,
   isZero,
+  loanProgress,
   loanSummary,
   max,
   min,
@@ -351,5 +353,118 @@ describe("EL CASO QUE JUSTIFICA TODO EL REDISEÑO", () => {
 
     // Este es el tamaño del autoengaño que la app anterior producía.
     expect(toNumber(naiveRate.minus(trueRate))).toBeGreaterThan(20);
+  });
+});
+
+describe("installmentsCoveredBy · cuántas cuotas cubre el capital pagado", () => {
+  // Los números del cronograma del §3.2 (500.000 al 60% en 12 cuotas), con las
+  // amortizaciones acumuladas calculadas A MANO:
+  //   cuota 1: 31.412,71 → acumulado 31.412,71
+  //   cuota 2: 32.983,35 → acumulado 64.396,06
+  //   cuota 11: …        → acumulado 446.273,69
+  //   cuota 12: …        → acumulado 500.000,00 exactos (la invariante)
+  const schedule = amortizationSchedule("500000", "60", 12);
+
+  it("sin capital pagado, ninguna cuota", () => {
+    expect(installmentsCoveredBy(schedule, "0")).toBe(0);
+  });
+
+  it("un centavo menos que la amortización de la cuota 1 NO la cubre", () => {
+    // El pago parcial no "casi" cuenta: hasta que no se cubre la amortización
+    // completa de la próxima cuota, esa cuota no está pagada. Es lo que hace el
+    // banco, y evita decir "vas por la cuota 2" debiendo la 1.
+    expect(installmentsCoveredBy(schedule, "31412.70")).toBe(0);
+    expect(installmentsCoveredBy(schedule, "31412.71")).toBe(1);
+  });
+
+  it("las amortizaciones se acumulan cuota por cuota", () => {
+    expect(installmentsCoveredBy(schedule, "64396.06")).toBe(2);
+    expect(installmentsCoveredBy(schedule, "446273.69")).toBe(11);
+    expect(installmentsCoveredBy(schedule, "500000")).toBe(12);
+  });
+
+  it("pagar más que el préstamo no cubre cuotas de más", () => {
+    // Un cronograma tiene 12 cuotas: ni con 600.000 hay una cuota 13.
+    expect(installmentsCoveredBy(schedule, "600000")).toBe(12);
+  });
+
+  it("un pago de 40.000 cubre la cuota 1 y nada más", () => {
+    expect(installmentsCoveredBy(schedule, "40000")).toBe(1);
+  });
+
+  it("un cronograma vacío no cubre nada", () => {
+    expect(installmentsCoveredBy([], "1000")).toBe(0);
+  });
+});
+
+describe("loanProgress · capital, interés y cuotas restantes", () => {
+  const schedule = amortizationSchedule("500000", "60", 12);
+
+  it("sin pagos: todo en cero y 12 cuotas restantes", () => {
+    const progress = loanProgress(schedule, "0");
+    expect(progress.capitalPaid.toFixed(2)).toBe("0.00");
+    expect(progress.installmentsCovered).toBe(0);
+    expect(progress.interestPaid.toFixed(2)).toBe("0.00");
+    expect(progress.remainingCount).toBe(12);
+    expect(progress.progressPercent.toFixed(2)).toBe("0.00");
+  });
+
+  it("con la cuota 1 pagada: el interés pagado es SOLO el de esa cuota", () => {
+    // 25.000,00: el costo real del primer mes. El resto de la cuota baja deuda.
+    const progress = loanProgress(schedule, "31412.71");
+    expect(progress.capitalPaid.toFixed(2)).toBe("31412.71");
+    expect(progress.installmentsCovered).toBe(1);
+    expect(progress.interestPaid.toFixed(2)).toBe("25000.00");
+    expect(progress.remainingCount).toBe(11);
+    // 31.412,71 / 500.000 = 6,282542% → 6,28.
+    expect(progress.progressPercent.toFixed(2)).toBe("6.28");
+  });
+
+  it("con dos cuotas pagadas el interés se acumula", () => {
+    const progress = loanProgress(schedule, "64396.06");
+    expect(progress.installmentsCovered).toBe(2);
+    // 25.000,00 + 23.429,36.
+    expect(progress.interestPaid.toFixed(2)).toBe("48429.36");
+    expect(progress.remainingCount).toBe(10);
+    expect(progress.progressPercent.toFixed(2)).toBe("12.88");
+  });
+
+  it("el capital se clampa al principal y el progreso nunca supera 100%", () => {
+    const progress = loanProgress(schedule, "600000");
+    expect(progress.principal.toFixed(2)).toBe("500000.00");
+    expect(progress.capitalPaid.toFixed(2)).toBe("500000.00");
+    expect(progress.installmentsCovered).toBe(12);
+    // El interés total del préstamo: lo único que pagaste de más.
+    expect(progress.interestPaid.toFixed(2)).toBe("176952.44");
+    expect(progress.remainingCount).toBe(0);
+    expect(progress.progressPercent.toFixed(2)).toBe("100.00");
+  });
+
+  it("un pago parcial de 40.000 deja 11 cuotas pendientes y 8,00% de progreso", () => {
+    const progress = loanProgress(schedule, "40000");
+    expect(progress.capitalPaid.toFixed(2)).toBe("40000.00");
+    expect(progress.installmentsCovered).toBe(1);
+    expect(progress.interestPaid.toFixed(2)).toBe("25000.00");
+    expect(progress.remainingCount).toBe(11);
+    expect(progress.progressPercent.toFixed(2)).toBe("8.00");
+  });
+
+  it("un principal de cero devuelve 0% y no NaN", () => {
+    // Caso defensivo: la base prohíbe un préstamo sin parámetros, pero una
+    // división por cero viajando como "NaN" por la interfaz sería peor.
+    const progress = loanProgress(amortizationSchedule("0", "60", 12), "100");
+    expect(progress.progressPercent.toFixed(2)).toBe("0.00");
+    expect(progress.capitalPaid.toFixed(2)).toBe("0.00");
+  });
+
+  it("LA INVARIANTE: el progreso queda siempre entre 0 y 100 y las cuotas suman 12", () => {
+    for (const paid of ["0", "1", "31412.71", "250000", "499999.99", "999999"]) {
+      const progress = loanProgress(schedule, paid);
+      expect(progress.capitalPaid.greaterThanOrEqualTo(0)).toBe(true);
+      expect(progress.capitalPaid.lessThanOrEqualTo(progress.principal)).toBe(true);
+      expect(progress.progressPercent.greaterThanOrEqualTo(0)).toBe(true);
+      expect(progress.progressPercent.lessThanOrEqualTo(100)).toBe(true);
+      expect(progress.installmentsCovered + progress.remainingCount).toBe(12);
+    }
   });
 });

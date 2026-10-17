@@ -33,6 +33,7 @@ import { amortizationSchedule } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
 import {
   categoriesInPeriod,
+  getDebtReport,
   getMonthReconciliation,
   getNetWorthSeries,
   movementCashFlow,
@@ -68,6 +69,112 @@ async function seedCategories() {
     }),
   ]);
   return { gastos, sueldo };
+}
+
+/**
+ * El escenario del §3.2, idéntico al que siembra `scripts/smoke.mjs`:
+ * banco con 100.000 de saldo inicial, tarjeta, préstamo de 500.000 al 60% en
+ * 12 cuotas desembolsado el 30/09, el mes de octubre completo y la cuota 1
+ * partida en capital (transferencia) e interés (gasto).
+ *
+ * Vive acá, en el módulo, y no dentro de un `describe`: lo comparten la
+ * reconciliación y los reportes de deuda — dos reportes del MISMO escenario.
+ */
+async function seedScenario() {
+  const { gastos, sueldo } = await seedCategories();
+
+  const [bank, card] = await Promise.all([
+    db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    }),
+    db.account.create({ data: { name: "Visa", kind: "CREDIT_CARD" } }),
+  ]);
+
+  const loan = await db.account.create({
+    data: {
+      name: "Préstamo",
+      kind: "LOAN",
+      principal: "500000",
+      tnaPercent: "60",
+      installmentCount: 12,
+    },
+  });
+
+  await db.movement.create({
+    data: {
+      kind: "TRANSFER",
+      amount: "500000",
+      date: calendarToDb("2026-09-30"),
+      accountId: loan.id,
+      toAccountId: bank.id,
+      description: "Desembolso del préstamo",
+    },
+  });
+
+  await db.movement.createMany({
+    data: [
+      {
+        kind: "INCOME",
+        amount: "800000",
+        date: calendarToDb("2026-10-01"),
+        accountId: bank.id,
+        categoryId: sueldo.id,
+      },
+      {
+        kind: "EXPENSE",
+        amount: "250000",
+        date: calendarToDb("2026-10-03"),
+        accountId: bank.id,
+        categoryId: gastos.id,
+      },
+      {
+        kind: "EXPENSE",
+        amount: "120000",
+        date: calendarToDb("2026-10-05"),
+        accountId: bank.id,
+        categoryId: gastos.id,
+      },
+      {
+        kind: "EXPENSE",
+        amount: "45000",
+        date: calendarToDb("2026-10-08"),
+        accountId: bank.id,
+        categoryId: gastos.id,
+      },
+      {
+        kind: "EXPENSE",
+        amount: "50000",
+        date: calendarToDb("2026-10-12"),
+        accountId: card.id,
+        categoryId: gastos.id,
+      },
+    ],
+  });
+
+  const first = amortizationSchedule("500000", "60", 12)[0];
+
+  await db.movement.createMany({
+    data: [
+      {
+        kind: "TRANSFER",
+        amount: first.principal.toFixed(2),
+        date: calendarToDb("2026-10-15"),
+        accountId: bank.id,
+        toAccountId: loan.id,
+        description: "Cuota 1 · capital",
+      },
+      {
+        kind: "EXPENSE",
+        amount: first.interest.toFixed(2),
+        date: calendarToDb("2026-10-15"),
+        accountId: bank.id,
+        categoryId: gastos.id,
+        description: "Cuota 1 · interés",
+      },
+    ],
+  });
+
+  return { bank, card, loan };
 }
 
 describeDb("Invariantes del modelo en la base de datos", () => {
@@ -1745,109 +1852,6 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
     await db.$disconnect();
   });
 
-  /**
-   * El escenario del §3.2, idéntico al que siembran los tests de la serie:
-   * banco con 100.000 de saldo inicial, tarjeta, préstamo de 500.000 al 60% en
-   * 12 cuotas desembolsado el 30/09, el mes de octubre completo y la cuota 1
-   * partida en capital (transferencia) e interés (gasto).
-   */
-  async function seedScenario() {
-    const { gastos, sueldo } = await seedCategories();
-
-    const [bank, card] = await Promise.all([
-      db.account.create({
-        data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
-      }),
-      db.account.create({ data: { name: "Visa", kind: "CREDIT_CARD" } }),
-    ]);
-
-    const loan = await db.account.create({
-      data: {
-        name: "Préstamo",
-        kind: "LOAN",
-        principal: "500000",
-        tnaPercent: "60",
-        installmentCount: 12,
-      },
-    });
-
-    await db.movement.create({
-      data: {
-        kind: "TRANSFER",
-        amount: "500000",
-        date: calendarToDb("2026-09-30"),
-        accountId: loan.id,
-        toAccountId: bank.id,
-        description: "Desembolso del préstamo",
-      },
-    });
-
-    await db.movement.createMany({
-      data: [
-        {
-          kind: "INCOME",
-          amount: "800000",
-          date: calendarToDb("2026-10-01"),
-          accountId: bank.id,
-          categoryId: sueldo.id,
-        },
-        {
-          kind: "EXPENSE",
-          amount: "250000",
-          date: calendarToDb("2026-10-03"),
-          accountId: bank.id,
-          categoryId: gastos.id,
-        },
-        {
-          kind: "EXPENSE",
-          amount: "120000",
-          date: calendarToDb("2026-10-05"),
-          accountId: bank.id,
-          categoryId: gastos.id,
-        },
-        {
-          kind: "EXPENSE",
-          amount: "45000",
-          date: calendarToDb("2026-10-08"),
-          accountId: bank.id,
-          categoryId: gastos.id,
-        },
-        {
-          kind: "EXPENSE",
-          amount: "50000",
-          date: calendarToDb("2026-10-12"),
-          accountId: card.id,
-          categoryId: gastos.id,
-        },
-      ],
-    });
-
-    const first = amortizationSchedule("500000", "60", 12)[0];
-
-    await db.movement.createMany({
-      data: [
-        {
-          kind: "TRANSFER",
-          amount: first.principal.toFixed(2),
-          date: calendarToDb("2026-10-15"),
-          accountId: bank.id,
-          toAccountId: loan.id,
-          description: "Cuota 1 · capital",
-        },
-        {
-          kind: "EXPENSE",
-          amount: first.interest.toFixed(2),
-          date: calendarToDb("2026-10-15"),
-          accountId: bank.id,
-          categoryId: gastos.id,
-          description: "Cuota 1 · interés",
-        },
-      ],
-    });
-
-    return { bank, card, loan };
-  }
-
   it("octubre cierra cuadrando al centavo: Δ +310.000,00 = ahorro +310.000,00", async () => {
     await seedScenario();
 
@@ -2100,5 +2104,248 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
     // Y la diferencia viaja TAL CUAL: −500,00, sin redondear a cero.
     expect(rec.difference).toBe("-500.00");
     expect(rec.balanced).toBe(false);
+  });
+});
+
+/**
+ * Los reportes de deuda: deuda viva, progreso del capital, interés pagado,
+ * cuotas restantes y DTI.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUÉ SE VERIFICA Y POR QUÉ CON ESTOS NÚMEROS
+ * ─────────────────────────────────────────────────────────────────────────────
+ * El escenario es el mismo de la reconciliación (`seedScenario`, §3.2 del
+ * ROADMAP). Los números de estos tests se calculan A MANO sobre él:
+ *
+ *   · Deuda viva al 31/10:  Visa 50.000,00 (la compra con tarjeta del 12/10)
+ *                           Préstamo 468.587,29 (500.000 − 31.412,71 de capital)
+ *   · Cuota 1: 56.412,71 = 31.412,71 de capital + 25.000,00 de interés
+ *   · Progreso: 31.412,71 / 500.000 = 6,28% → 11 cuotas restantes de 12
+ *   · DTI: 56.412,71 / 800.000 = 7,05%
+ *
+ * Las dos definiciones que más fácil se romperían sin que nadie lo note:
+ *
+ *   · El interés pagado NO se estima con el calendario: es la suma del interés
+ *     de las cuotas EFECTIVAMENTE cubiertas por el capital amortizado. Con el
+ *     pago parcial del 20/10 (que deja 40.000,00) sigue cubierta UNA sola
+ *     cuota: la próxima necesita 64.396,06 acumulados.
+ *   · El DTI no divide por cero: un mes sin ingresos devuelve `percent: null`
+ *     ("no se puede calcular"), no un 0% que afirmaría algo falso.
+ */
+describeDb("Reportes de deuda · progreso, interés y DTI", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  it("octubre · deuda viva, progreso e interés al corte, y el DTI del mes", async () => {
+    const { card, loan } = await seedScenario();
+
+    const report = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    expect(report).toEqual({
+      month: "2026-10",
+      cutAt: "2026-10-31",
+      partial: false,
+      totalDebt: "518587.29",
+      rows: [
+        {
+          accountId: card.id,
+          name: "Visa",
+          kind: "CREDIT_CARD",
+          archived: false,
+          debt: "50000.00",
+          // Una tarjeta no tiene plan: no es un cero, es "no se sabe".
+          plan: null,
+          capitalPaid: null,
+          interestPaid: null,
+          progressPercent: null,
+        },
+        {
+          accountId: loan.id,
+          name: "Préstamo",
+          kind: "LOAN",
+          archived: false,
+          debt: "468587.29",
+          plan: {
+            payment: "56412.71",
+            principal: "500000.00",
+            installmentCount: 12,
+            paidCount: 1,
+            remainingCount: 11,
+          },
+          capitalPaid: "31412.71",
+          interestPaid: "25000.00",
+          progressPercent: "6.28",
+        },
+      ],
+      dti: {
+        monthlyCommitment: "56412.71",
+        income: "800000.00",
+        percent: "7.05",
+        planCount: 1,
+      },
+    });
+  });
+
+  it("un corte anterior a la cuota no cuenta ni capital ni compra", async () => {
+    await seedScenario();
+
+    // Al 10/10 la cuota es del 15 y la compra con tarjeta, del 12: las dos
+    // quedan FUERA del corte. El corte del mes en curso es el ancla —la misma
+    // convención que la reconciliación (`monthCut`)— y viaja marcado parcial.
+    const al10 = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-10",
+    });
+
+    expect(al10.cutAt).toBe("2026-10-10");
+    expect(al10.partial).toBe(true);
+    expect(al10.totalDebt).toBe("500000.00");
+
+    const visa = al10.rows.find((row) => row.kind === "CREDIT_CARD");
+    const prestamo = al10.rows.find((row) => row.kind === "LOAN");
+    expect(visa?.debt).toBe("0.00");
+    expect(prestamo?.debt).toBe("500000.00");
+    expect(prestamo?.capitalPaid).toBe("0.00");
+    expect(prestamo?.interestPaid).toBe("0.00");
+    expect(prestamo?.plan?.paidCount).toBe(0);
+    expect(prestamo?.plan?.remainingCount).toBe(12);
+  });
+
+  it("septiembre · la deuda es sólo el préstamo y el DTI sin ingreso es null", async () => {
+    await seedScenario();
+
+    // Al 30/09 sólo pasó el desembolso: el préstamo debe 500.000,00 y no hay
+    // capital amortizado —ni, por lo tanto, interés pagado—. Septiembre no tuvo
+    // ingresos: el DTI viaja como "no se puede calcular".
+    const report = await getDebtReport(db, {
+      month: "2026-09",
+      anchor: "2026-10-31",
+    });
+
+    expect(report.cutAt).toBe("2026-09-30");
+    expect(report.partial).toBe(false);
+    expect(report.totalDebt).toBe("500000.00");
+    expect(report.dti).toEqual({
+      monthlyCommitment: "56412.71",
+      income: "0.00",
+      percent: null,
+      planCount: 1,
+    });
+
+    const prestamo = report.rows.find((row) => row.kind === "LOAN");
+    expect(prestamo?.debt).toBe("500000.00");
+    expect(prestamo?.capitalPaid).toBe("0.00");
+    expect(prestamo?.interestPaid).toBe("0.00");
+    expect(prestamo?.progressPercent).toBe("0.00");
+    expect(prestamo?.plan?.paidCount).toBe(0);
+    expect(prestamo?.plan?.remainingCount).toBe(12);
+
+    // La Visa, aunque deba 0, sigue apareciendo: el cero es un dato.
+    const visa = report.rows.find((row) => row.kind === "CREDIT_CARD");
+    expect(visa?.debt).toBe("0.00");
+    expect(visa?.plan).toBeNull();
+  });
+
+  it("un pago parcial suma capital pero no cubre la cuota siguiente", async () => {
+    const { bank, loan } = await seedScenario();
+
+    // 31.412,71 (cuota 1) + 8.587,29 = 40.000,00 exactos. La cuota 2 se daría
+    // por cubierta recién con 64.396,06 acumulados: el progreso se mide con la
+    // PLATA amortizada, no con "pagó algo este mes".
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "8587.29",
+        date: calendarToDb("2026-10-20"),
+        accountId: bank.id,
+        toAccountId: loan.id,
+        description: "Pago parcial del préstamo",
+      },
+    });
+
+    const report = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    const prestamo = report.rows.find((row) => row.kind === "LOAN");
+    expect(prestamo?.debt).toBe("460000.00");
+    expect(prestamo?.capitalPaid).toBe("40000.00");
+    expect(prestamo?.interestPaid).toBe("25000.00");
+    expect(prestamo?.progressPercent).toBe("8.00");
+    expect(prestamo?.plan?.paidCount).toBe(1);
+    expect(prestamo?.plan?.remainingCount).toBe(11);
+  });
+
+  it("un plan terminado libera su cuota: el DTI queda en 0% y el progreso en 100", async () => {
+    const { bank, loan } = await seedScenario();
+
+    // Amortizar TODO lo que quedaba (468.587,29 al 20/10) lleva el capital
+    // pagado a 500.000,00 exactos: las 12 cuotas quedan cubiertas, el interés
+    // pagado es el total del plan y el préstamo ya no compromete cuota mensual.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "468587.29",
+        date: calendarToDb("2026-10-20"),
+        accountId: bank.id,
+        toAccountId: loan.id,
+        description: "Cancelación del préstamo",
+      },
+    });
+
+    const report = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    const prestamo = report.rows.find((row) => row.kind === "LOAN");
+    expect(prestamo?.debt).toBe("0.00");
+    expect(prestamo?.capitalPaid).toBe("500000.00");
+    expect(prestamo?.interestPaid).toBe("176952.44");
+    expect(prestamo?.progressPercent).toBe("100.00");
+    expect(prestamo?.plan?.paidCount).toBe(12);
+    expect(prestamo?.plan?.remainingCount).toBe(0);
+
+    // Sin cuotas pendientes no hay compromiso: 0,00 sobre un ingreso real es un
+    // 0% verdadero (ya no es "no se puede calcular").
+    expect(report.dti.monthlyCommitment).toBe("0.00");
+    expect(report.dti.planCount).toBe(0);
+    expect(report.dti.percent).toBe("0.00");
+  });
+
+  it("archivada con deuda se muestra marcada; archivada en cero se omite", async () => {
+    const { card } = await seedScenario();
+
+    // Una tarjeta vieja, archivada y sin movimientos (deuda 0): no dice nada y
+    // no se muestra. La Visa, archivada pero con 50.000 vivos, es deuda real:
+    // se muestra marcada, después del préstamo (las no archivadas van primero).
+    await db.account.create({
+      data: { name: "Vieja", kind: "CREDIT_CARD", archived: true },
+    });
+    await db.account.update({
+      where: { id: card.id },
+      data: { archived: true },
+    });
+
+    const report = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    expect(report.rows.map((row) => row.name)).toEqual(["Préstamo", "Visa"]);
+    expect(report.rows.map((row) => row.archived)).toEqual([false, true]);
+    expect(report.totalDebt).toBe("518587.29");
+    // El plan del préstamo sigue sumando al DTI: archivarla no lo cancela.
+    expect(report.dti.percent).toBe("7.05");
   });
 });

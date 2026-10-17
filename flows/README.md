@@ -585,19 +585,19 @@ patrón corregido vive en `flows/02-panel.yaml` y el porqué completo, también.
 
 | Flow | Qué verifica | Estado |
 |---|---|---|
-| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (48s) |
+| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (1m) |
 | `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (32s) |
-| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, la **reconciliación visible** (ΔPatrimonio +310.000 = Ahorro del mes +310.000, "cuadra al centavo"), y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (2m 11s) |
-| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 5s) |
-| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 14s) |
+| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, la **reconciliación visible** (ΔPatrimonio +310.000 = Ahorro del mes +310.000, "cuadra al centavo"), la **tarjeta Deudas** (deuda viva 518.587,29 = Visa 50.000 + Préstamo 468.587,29; barra de progreso 6,28% = capital devuelto 31.412,71 / 500.000; «1 de 12 cubiertas · faltan 11»; interés pagado 25.000,00; DTI 7,05% = 56.412,71 / 800.000; "sin plan de cuotas" en la Visa; en septiembre «0 de 12 cubiertas» y DTI "no se puede calcular"), y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (2m 54s) |
+| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 18s) |
+| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 22s) |
 | `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (39s) |
-| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 27s) |
-| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 15s) |
-| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 5s) |
-| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 38s) |
-| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 15s) |
+| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 29s) |
+| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 16s) |
+| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 17s) |
+| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 57s) |
+| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 28s) |
 
-**Suite completa: 11/11 en 14m 9s.** Los tiempos no son decorativos: cuando había
+**Suite completa: 11/11 en 16m 14s.** Los tiempos no son decorativos: cuando había
 servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
 tardaba **5m51s en fallar** y los demás corrían entre 10 y 18 segundos más
 lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una

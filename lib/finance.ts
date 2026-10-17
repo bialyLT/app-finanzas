@@ -187,6 +187,123 @@ export interface ReconciliationDTO {
   cutAt: string;
 }
 
+/**
+ * El plan de cuotas de un préstamo, con el progreso al día del corte.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LAS DEFINICIONES (§5.2 del ROADMAP), ESCRITAS UNA VEZ
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   · Cuota mensual → la cuota fija del sistema francés (`installmentPayment`).
+ *   · Cuotas cubiertas → se camina el cronograma acumulando la amortización de
+ *     cada cuota y se cuentan las que quedan enteras por debajo del capital
+ *     pagado. Un pago parcial no cubre la próxima cuota.
+ *   · Cuotas restantes → `installmentCount − paidCount`.
+ *
+ * El progreso NO se estima con el tiempo transcurrido ("ya pasaron 3 meses"):
+ * se mide con la PLATA efectivamente amortizada, que es lo único que consta.
+ */
+export interface DebtPlanDTO {
+  /** La cuota fija que se paga todos los meses. */
+  payment: string;
+  /** El total del préstamo (el capital original). */
+  principal: string;
+  /** Cuántas cuotas tiene el plan en total. */
+  installmentCount: number;
+  /** Cuántas cuotas quedan cubiertas por el capital ya amortizado. */
+  paidCount: number;
+  /** Cuántas cuotas faltan pagar. */
+  remainingCount: number;
+}
+
+/**
+ * Una cuenta de deuda dentro del reporte: deuda viva, plan y progreso.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ HAY CASOS "NO SE SABE" Y NO CEROS
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Una tarjeta de crédito es deuda viva, pero no tiene plan de amortización: no
+ * existe —el modelo todavía no tiene `CardPlan`— la cuota fija, el total ni las
+ * cuotas restantes. Inventar un plan de 12 cuotas para una tarjeta daría
+ * números de aspecto confiable sobre algo que nadie pactó. Por eso `plan`,
+ * `capitalPaid`, `interestPaid` y `progressPercent` viajan `null` y la pantalla
+ * muestra "sin plan".
+ *
+ * Lo mismo para un préstamo al que le falten parámetros (caso defensivo: la
+ * base lo prohíbe con el CHECK `loan_has_parameters`).
+ *
+ * `debt` viaja en POSITIVO cuando se debe y en NEGATIVO cuando la cuenta quedó
+ * con saldo a favor (se pagó de más). La palabra ("debe" / "a favor") la elige
+ * la interfaz con `formatLiability`.
+ */
+export interface DebtReportRowDTO {
+  accountId: string;
+  name: string;
+  /** Sólo cuentas de deuda: préstamos y tarjetas. */
+  kind: "LOAN" | "CREDIT_CARD";
+  /** Una cuenta archivada con deuda viva se muestra marcada, no se esconde. */
+  archived: boolean;
+  /** Deuda viva al corte del mes mostrado. */
+  debt: string;
+  /** El plan del préstamo, con su progreso. `null` en tarjetas y sin datos. */
+  plan: DebtPlanDTO | null;
+  /** Σ del capital amortizado al corte, clampeado al principal. `null` sin plan. */
+  capitalPaid: string | null;
+  /** Σ del interés de las cuotas cubiertas. `null` sin plan. */
+  interestPaid: string | null;
+  /** `capitalPaid / principal × 100` con dos decimales. `null` sin plan. */
+  progressPercent: string | null;
+}
+
+/**
+ * El DTI: cuánto de tu ingreso mensual está comprometido con cuotas de deuda.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA DEFINICIÓN (§5.2) Y SUS DOS LÍMITES HONESTOS
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   DTI = Σ cuota mensual de los planes CON cuotas pendientes ÷ ingreso del mes
+ *
+ * El numerador mira el PRESENTE (el corte del mes mostrado): un plan terminado
+ * libera su cuota y no suma más. El denominador es el ingreso ganado del mes
+ * mostrado, sobre la MISMA ventana que los demás reportes (`movementTotals`).
+ *
+ *   · Sin ingreso (mes vacío o consulta por gastos), `percent` es `null`: una
+ *     división por cero no es "0% de compromiso", es "no se puede calcular". La
+ *     UI lo dice con palabras en vez de mostrar un número falso.
+ *   · El DTI es un indicador, no una regla: describe, no dictamina.
+ */
+export interface DebtDtiDTO {
+  /** Σ de la cuota mensual de los planes con cuotas pendientes al corte. */
+  monthlyCommitment: string;
+  /** Ingreso ganado del mes mostrado (misma ventana que el resto de reportes). */
+  income: string;
+  /** `monthlyCommitment / income × 100` con dos decimales. `null` sin ingreso. */
+  percent: string | null;
+  /** Cuántos planes con cuotas pendientes suman al compromiso. */
+  planCount: number;
+}
+
+/**
+ * El reporte de deudas de UN mes: deuda viva, progreso, interés pagado, cuotas
+ * restantes y DTI — todo calculado en el servidor.
+ *
+ * Igual que la reconciliación, es un reporte del mes MOSTRADO (el del selector
+ * del panel), no del mes de hoy: navegar meses es viajar en el tiempo con las
+ * deudas, y el corte de cada mes usa la misma convención (`monthCut`): mes
+ * cerrado → fin de mes; mes en curso → el ancla (hoy); mes futuro → fin de mes.
+ */
+export interface DebtReportDTO {
+  /** Mes calendario `"YYYY-MM"`. */
+  month: string;
+  /** El día hasta el que se contaron las deudas (`YYYY-MM-DD`). */
+  cutAt: string;
+  /** `true` si el corte quedó antes del último día del mes. */
+  partial: boolean;
+  /** Σ de la deuda viva de las filas. */
+  totalDebt: string;
+  rows: DebtReportRowDTO[];
+  dti: DebtDtiDTO;
+}
+
 export interface AccountsResponse {
   accounts: AccountBalanceDTO[];
   netWorth: NetWorthDTO;
