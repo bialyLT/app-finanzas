@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { todayCalendar } from "@/lib/dates";
 import {
   type AccountBalanceDTO,
@@ -454,7 +455,10 @@ export default function TransactionForm({
               id="tx-date"
               type="date"
               value={date}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(e) => {
+                setDate(e.target.value);
+                clearDateInputIfEmptied(e.target);
+              }}
               className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
             />
           </div>

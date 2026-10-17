@@ -126,6 +126,26 @@ export default function Home() {
   const [loadError, setLoadError] = useState("");
   const [modal, setModal] = useState<Modal>(null);
 
+  /**
+   * Aviso del generador de recurrencia.
+   *
+   * La corrida corre ANTES de cargar el panel (ver `load`), y si falla se
+   * muestra acá sin romper el panel: lo que no se pudo materializar simplemente
+   * no está en los números de abajo, y eso hay que decirlo en vez de mostrarlo
+   * como si estuviera completo.
+   */
+  const [recurrenceRunError, setRecurrenceRunError] = useState("");
+
+  /**
+   * Cuántas ocurrencias de reglas están esperando confirmación en la bandeja.
+   *
+   * Sólo alimenta el banner hacia /recurrencia: el número NO entra en ningún
+   * total (un pendiente no es plata — criterio de aceptación 4). Llega de un
+   * pedido EXTRA a `/api/recurrence` que puede fallar sin consecuencias; si no
+   * llega, el banner simplemente no aparece.
+   */
+  const [pendingCount, setPendingCount] = useState(0);
+
   const [filter, setFilter] = useState<"ALL" | MovementKindDTO>("ALL");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [search, setSearch] = useState("");
@@ -148,6 +168,30 @@ export default function Home() {
     setLoading(true);
     setLoadError("");
     try {
+      // ── El generador de recurrencia corre PRIMERO ─────────────────────────
+      //
+      // Materializa las fechas vencidas desde la última corrida; las reglas
+      // AUTO postean sus movimientos ahí. Tiene que ir ANTES de los pedidos de
+      // abajo: si corriera después, los totales del panel (que se suman en la
+      // base) no incluirían lo recién materializado y el panel mostraría
+      // números viejos con cara de nuevos.
+      //
+      // Su fallo NO bloquea el panel: un generador caído no puede dejar sin
+      // ver tus movimientos. Se avisa y se sigue.
+      try {
+        const runRes = await fetch("/api/recurrence/run", { method: "POST" });
+        if (runRes.ok) {
+          setRecurrenceRunError("");
+        } else {
+          const data = (await runRes.json().catch(() => ({}))) as { error?: string };
+          setRecurrenceRunError(
+            data.error ?? "No se pudo correr el generador de recurrencia.",
+          );
+        }
+      } catch {
+        setRecurrenceRunError("No se pudo correr el generador de recurrencia.");
+      }
+
       // El mes de los reportes (reconciliación y deudas) sale del rango que se
       // está pidiendo y no del estado `month` directo, así la URL siempre
       // describe el MISMO mes que la lista y los totales de esta carga.
@@ -158,12 +202,16 @@ export default function Home() {
         accountsRes,
         reconciliationRes,
         debtRes,
+        recurrenceRes,
       ] = await Promise.all([
         fetch(`/api/transactions?from=${range.from}&to=${range.to}`),
         fetch("/api/categories"),
         fetch("/api/accounts?includeArchived=false"),
         fetch(`/api/reconciliation?month=${shownMonth}`),
         fetch(`/api/debts?month=${shownMonth}`),
+        // Sólo para el banner de pendientes. Con `catch` propio: un fallo de
+        // ESTE pedido no puede tumbar un panel que por lo demás cargó bien.
+        fetch("/api/recurrence").catch(() => null),
       ]);
 
       if (
@@ -191,6 +239,10 @@ export default function Home() {
       const debtData = (await debtRes.json()) as {
         debtReport: DebtReportDTO;
       };
+      const recurrenceData =
+        recurrenceRes && recurrenceRes.ok
+          ? ((await recurrenceRes.json()) as { pending: unknown[] })
+          : null;
 
       setMovements(movementsData.movements);
       setTruncated(movementsData.truncated);
@@ -201,6 +253,7 @@ export default function Home() {
       setNetWorthSeries(accountsData.netWorthSeries);
       setReconciliation(reconciliationData.reconciliation);
       setDebtReport(debtData.debtReport);
+      setPendingCount(recurrenceData?.pending.length ?? 0);
     } catch {
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
@@ -363,6 +416,41 @@ export default function Home() {
           →
         </button>
       </div>
+
+      {/* ── Aviso del generador de recurrencia ───────────────────────────── */}
+      {recurrenceRunError && (
+        <p
+          id="rec-panel-run-error"
+          role="alert"
+          className="text-xs rounded-2xl bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-4 py-3"
+        >
+          No se pudo correr el generador de recurrencia: {recurrenceRunError} Los
+          números de abajo pueden no incluir vencimientos de hoy.
+        </p>
+      )}
+
+      {/* ── Bandeja de recurrencia ───────────────────────────────────────── */}
+      {/* Un pendiente NO es plata: este aviso no muestra ningún monto, sólo
+          la cantidad de promesas esperando decisión. Los montos viven en
+          /recurrencia, donde se aceptan o se saltean. */}
+      {pendingCount > 0 && (
+        <Link
+          id="rec-pending-banner"
+          href="/recurrencia"
+          className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 rounded-2xl px-4 py-3 text-sm shadow-sm hover:bg-amber-100 dark:hover:bg-amber-900"
+        >
+          <span>
+            🔁 {pendingCount}{" "}
+            {pendingCount === 1
+              ? "ocurrencia de tus reglas espera confirmación"
+              : "ocurrencias de tus reglas esperan confirmación"}
+            .
+          </span>
+          <span className="font-bold whitespace-nowrap underline">
+            Revisarlas →
+          </span>
+        </Link>
+      )}
 
       {/* ── Balance del mes ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1016,6 +1104,15 @@ export default function Home() {
                       </>
                     ) : (
                       movement.category?.name ?? "Sin categoría"
+                    )}
+                    {/* Marca de origen: esto lo posteó una regla, no se cargó
+                        a mano (`recurrenceRuleId != null` ⇔ regla, la
+                        equivalencia que documenta el esquema). Es identidad,
+                        no plata: no cambia ningún número. */}
+                    {movement.recurrenceRuleId && (
+                      <span className="ml-2 align-middle text-[10px] uppercase font-bold rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-1.5 py-0.5">
+                        🔁 regla
+                      </span>
                     )}
                   </p>
 

@@ -9,16 +9,16 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-17)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: **202 tests** de vitest (131 unitarios + 71 de integración), **330 aserciones** de smoke, 12 flows de Maestro en ~18m, build de producción limpio.
-- Fases 0, 1, 2 y 6 cerradas (la 6 cerró con la auditoría de seguridad pasada: sin hallazgos altos ni críticos); **fase 3 (recurrencia) en curso: la ronda 1 (núcleo server-side) quedó completa y verificada — falta la UI (ronda 2)**; fases 4, 5, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
+- Batería verde: **202 tests** de vitest (131 unitarios + 71 de integración), **330 aserciones** de smoke, **16 flows** de Maestro (suite completa en 33m 18s), build de producción limpio (19 entradas de ruta).
+- Fases 0, 1, 2, 3 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3 en dos rondas, núcleo server-side + UI, con el fix U1 del input de fecha incluido); fases 4, 5, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
 
-- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las trece trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
+- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las catorce trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
 - `README.md` — arquitectura, capas de test y cómo correr todo.
 - `agents/ui-tester.md` y `agents/security-auditor.md` — prompts de los subagentes autónomos (tester de UI con Maestro y auditor de seguridad).
-- `flows/README.md` — las **trece trampas** de Maestro. Leer antes de tocar los flows.
+- `flows/README.md` — las **catorce trampas** de Maestro. Leer antes de tocar los flows.
 - Memoria persistente **Engram** (si está disponible en la máquina): buscar por proyecto; hay observaciones de arquitectura, bugs y decisiones.
 
 ## Decisiones que no se negocian
@@ -49,7 +49,7 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 npm run typecheck         # tipos
 npm test                  # 202 tests (unitarios + integración contra finanzas_test)
 npm run smoke             # 330 aserciones end-to-end (servidor arriba)
-npm run flows             # 12 flows de Maestro: siembra la base y corre; ~18m
+npm run flows             # 16 flows de Maestro: siembra la base y corre; ~33m
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -63,9 +63,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 6 completa y auditada** (detalle en `ROADMAP.md`): la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja**, la **serie mensual de patrimonio**, la **reconciliación visible** (`ΔPatrimonio = Ahorro`), los **reportes de deuda** (`/api/debts` con progreso, interés y DTI), el **burn mensualizado** (`/analisis`, §5.3 #9: las dos vistas del gasto anual con selección efímera) y la **auditoría de seguridad** (sin hallazgos altos ni críticos; 4 correcciones con test y 1 recomendación pendiente de decisión: revocación de sesión con estado en servidor).
+**Fase 3 (recurrencia) completa — rondas 1 y 2.** El núcleo server-side (`RecurrenceRule` + `RecurrenceOccurrence`, motor `nextOccurrence` con clamp de fin de mes, generador *Since Last Run* `AUTO`/`NOTIFY`, API de reglas y bandeja) y la UI (`/recurrencia`: bandeja con aceptar/saltar, gestión de reglas con crear/editar/pausar/archivar/borrar, proyección; badge `🔁 regla`; generador al cargar) quedaron verificados end-to-end: typecheck 0 · 202/202 tests · 330/330 smoke · build limpio de 19 rutas · **suite 16/16 en 33m 18s** (flows 12–15 nuevos). La ronda del tester encontró y arregló **U1** (input de fecha que quedaba en `badInput` al borrar con backspace y frenaba el submit: `lib/date-input.ts` en los 4 inputs de fecha de la app).
 
-**Fase 3 (recurrencia) en curso — ronda 1/2 hecha.** La ronda 1 (**núcleo server-side**: `RecurrenceRule` + `RecurrenceOccurrence`, motor `nextOccurrence` con clamp de fin de mes, generador *Since Last Run* `AUTO`/`NOTIFY`, API de reglas y bandeja, sin UI) quedó completa y verificada: typecheck 0 · 202/202 tests · 330/330 smoke · build limpio de 18 rutas. **Sigue la ronda 2: la UI** (bandeja de pendientes + gestión de reglas, con flows de Maestro y los criterios de aceptación end-to-end). Después: Fase 5 (cuotas y resumen de tarjeta). La Fase 9 (endurecimiento) queda para cuando vaya a producción.
+**Sigue la Fase 5 (tarjetas y cuotas)** — orden elegido por el usuario: `closingDay`/`dueDay`/`creditLimit` en las cuentas `CREDIT_CARD`, planes en N cuotas (`CardPlan`/`CardPlanItem` con asignación por período de resumen), `Statement` (cierre/vencimiento/mínimo), aviso de tasa implícita y panel de cuotas comprometidas + utilización del límite. Después: lo que quede de las fases 4/7 y la Fase 9 (endurecimiento) para producción.
 
 ## Bloqueos que necesitan a la persona
 

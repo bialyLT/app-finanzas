@@ -1,0 +1,387 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 15 · Recurrencia — proyección, edición y borrado sin historial (Fase 3)
+# ═════════════════════════════════════════════════════════════════════════════
+# La letra chica de la proyección y del borrado, sobre una regla que todavía
+# no existe para la app (arranca en 2027):
+#
+#   1. Una regla futura con ancla 31, tope de 3 y fecha de fin proyecta las 3
+#      fechas con clamp: 31 de enero, 28 de febrero (febrero no tiene 31) y 31
+#      de marzo — y nada más: el corte por fin y por tope se respeta.
+#   2. La proyección NO es plata: la tarjeta lo dice ("no son movimientos ni
+#      suman a ningún total") y el panel no se mueve ni un centavo.
+#   3. Editar una regla mensual a semanal limpia el ancla (el campo "Día del
+#      mes" desaparece y viaja como null — el B1 de la ronda 1), el fin y el
+#      tope se borran con eraseText, y el formulario guarda con ENTER.
+#   4. El borrado de una regla SIN historia no da 409: flash "borrada." y la
+#      tarjeta se va de verdad.
+#
+# El flujo es NETO CERO: crea y borra la misma regla, así que no deja rastro
+# para ningún flujo posterior. Y es el test de regresión del arreglo de los
+# inputs de fecha: el borrado con backspace dejaba a Chrome en `badInput`
+# (segmento `mm/31/2027` pegado) y el submit moría bloqueado por una burbuja
+# en inglés; el arreglo —limpiar sólo cuando el campo quedó vacío— vive en
+# `lib/date-input.ts` y este flujo lo ejercita en el paso de edición.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre en este punto de la suite)
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 14):
+#
+#   gastos        10.905.000,00
+#   quedó        −10.105.000,00
+#   flujo        −10.186.712,71
+#   banco         −9.647.823,75
+#   Visa      a favor  50.300,00
+#   transferencias 4
+#
+# Y acá no se mueve NINGUNO: la regla nueva arranca el 31 de enero de 2027
+# (no hay nada que materializar en octubre), su proyección no es plata, y la
+# regla se borra antes de tener historial. El flujo entero es una ida y
+# vuelta sobre los mismos tres números de la home.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 01 a 14 antes que éste (los tres números de octubre los
+# termina de construir el flujo 14; sin esa cadena, la primera aserción falla
+# y hace bien: los números no serían los de acá).
+url: http://127.0.0.1:3000
+name: "15 · Recurrencia — proyección, edición y borrado sin historial"
+tags:
+  - smoke
+  - recurrencia
+  - proyeccion
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# Baseline del dinero ANTES de tocar nada: el flujo entero no debe moverlo.
+- assertVisible: '.*10\.905\.000,00.*'          # gastos
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó
+- assertVisible: '.*-\$.*10\.186\.712,71.*'      # flujo de caja
+
+- tapOn:
+    id: "nav-recurrence"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- assertVisible: '.*No había fechas vencidas nuevas.*'
+
+# ── Alta: regla que arranca en el futuro, ancla 31, corte por fin y tope ─────
+- tapOn:
+    id: "rec-add-rule"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-title"
+- inputText: "Proyección de prueba"
+
+- tapOn:
+    id: "rec-amount"
+- inputText: "750"
+- assertVisible: '.*\$.*750,00.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-day-of-month"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-day-of-month"
+- inputText: "31"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-category"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-category"
+- inputText: "Transporte"
+- assertVisible: '.*Se usa la categoría existente.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-start-date"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-start-date"
+- inputText: "2027-01-31"
+- assertVisible: '.*2027-01-31.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-end-date"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-end-date"
+- inputText: "2027-03-31"
+- assertVisible: '.*2027-03-31.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-count"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-count"
+- inputText: "3"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-form-submit"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-form-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-flash"
+    timeout: 30000
+- assertVisible: '.*Regla creada.*'
+
+# Nada vencido: la regla arranca en 2027.
+- extendedWaitUntil:
+    visible: '.*No había fechas vencidas nuevas.*'
+    timeout: 30000
+- assertVisible:
+    id: "rec-pending-empty"
+
+# ── La tarjeta: proyección con clamp (31 → 28 feb → 31 mar), sin plata ───────
+- scrollUntilVisible:
+    element:
+      text: '.*28 de feb de 2027.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Proyección de prueba.*'
+- assertVisible: '.*Todos los meses · día 31.*'
+- assertVisible: '.*Sale de Banco Galicia · Transporte.*'
+- assertVisible: '.*Desde el 31 de ene de 2027 · hasta el 31 de mar de 2027 · 3 veces.*'
+- assertVisible: '.*Próximas \(proyección\).*'
+- assertVisible: '.*31 de ene de 2027.*'
+- assertVisible: '.*28 de feb de 2027.*'
+- assertVisible: '.*31 de mar de 2027.*'
+- assertNotVisible: '.*30 de abr de 2027.*'
+- assertVisible: '.*no son movimientos ni suman a ningún total.*'
+
+# ── La proyección no mueve ni un centavo del mes ─────────────────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: '.*10\.905\.000,00.*'
+    timeout: 30000
+
+- assertVisible: '.*-\$.*10\.105\.000,00.*'
+- assertVisible: '.*-\$.*10\.186\.712,71.*'
+
+# ── Edición: el ancla se va con la frecuencia; count y fin se limpian ────────
+- openLink: "${BASE}/recurrencia"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: '.*28 de feb de 2027.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+# El Editar de ESTA tarjeta: el único botón rec-edit-* que está DEBAJO del
+# texto "28 de feb de 2027" (las otras dos tarjetas activas están arriba).
+- tapOn:
+    id: "rec-edit-.*"
+    below: '.*28 de feb de 2027.*'
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+- assertVisible: '.*Editar regla.*'
+
+# Frecuencia MONTHLY → WEEKLY: el campo "Día del mes" desaparece y el form lo
+# manda como null (limpieza implícita del ancla — el bug B1 de la ronda 1).
+- scrollUntilVisible:
+    element:
+      id: "rec-freq-WEEKLY"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-freq-WEEKLY"
+
+# eraseText sobre un `type="date"` con valor: es el paso que en la app quedaba
+# en `badInput` (Chrome deja pegado el segmento `mm/31/2027` y el submit se
+# bloquea con una burbuja en inglés). El arreglo vive en `lib/date-input.ts`
+# y este par tapOn + eraseText es su regresión.
+- scrollUntilVisible:
+    element:
+      id: "rec-end-date"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-end-date"
+- eraseText: 20
+
+- scrollUntilVisible:
+    element:
+      id: "rec-count"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-count"
+- eraseText: 10
+
+# Guardar con ENTER desde el campo enfocado (teclado, no el botón).
+- pressKey: Enter
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-flash"
+    timeout: 30000
+- assertVisible: '.*Regla “Proyección de prueba” actualizada.*'
+
+- extendedWaitUntil:
+    visible: '.*No había fechas vencidas nuevas.*'
+    timeout: 30000
+
+# ── La tarjeta editada: semanal sin fin, proyección nueva, vieja fecha fuera ─
+- scrollUntilVisible:
+    element:
+      text: '.*7 de feb de 2027.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Todas las semanas.*'
+- assertVisible: '.*Desde el 31 de ene de 2027 · sin fin.*'
+- assertVisible: '.*31 de ene de 2027.*'
+- assertVisible: '.*7 de feb de 2027.*'
+- assertVisible: '.*14 de feb de 2027.*'
+- assertVisible: '.*28 de feb de 2027.*'
+- assertNotVisible: '.*31 de mar de 2027.*'
+
+# ── Borrado SIN historial: no hay 409, la regla se va ────────────────────────
+# La fila de botones de la 3ª tarjeta arranca DEBAJO del pliegue de la ventana
+# de los tests: el árbol del primer fallo sólo tenía el Borrar de las tarjetas
+# 1 y 2 y el tap murió con "not found" — no por el `below` (trampa 9, caso
+# hermano del pliegue). El toggle "Ver archivadas" NO sirve como ancla: vive
+# ARRIBA de la lista (debajo del encabezado "Reglas"). El último nodo anclable
+# es el link "Volver al panel": scrolleado hasta él (100% visible), la fila
+# entera de la 3ª tarjeta queda arriba y a la vista (trampa 10, corolario).
+# SIN centerElement: a esa altura el link ya no puede llegar al centro del
+# viewport y el scroll moriría por timeout (trampa 12, corolario); no hace
+# falta — no se lo toca, sólo marca hasta dónde bajar. (La nota al pie está
+# más abajo pero cierra la página pegada al borde inferior: para ella, 100%
+# visible es inalcanzable.)
+- scrollUntilVisible:
+    element:
+      text: '.*Volver al panel.*'
+    direction: DOWN
+    timeout: 20000
+
+- tapOn:
+    id: "rec-delete-.*"
+    below: '.*28 de feb de 2027.*'
+
+- extendedWaitUntil:
+    visible: '.*¿Borrar la regla\?.*'
+    timeout: 30000
+
+- tapOn:
+    id: "rec-delete-confirm-.*"
+
+# El flash de la acción, arriba de todo: dice "borrada", que es la prueba de
+# que NO hubo 409 (una regla con historial se rechaza con otro mensaje). El
+# refresh post-borrado suele dejar la página en el tope, pero no se asume: se
+# ancla en el botón del encabezado y queda visible en cualquier caso. SIN
+# centerElement — trampa 12, corolario: a esa altura el centro es inalcanzable.
+- scrollUntilVisible:
+    element:
+      id: "rec-add-rule"
+    direction: UP
+    timeout: 20000
+
+- extendedWaitUntil:
+    visible: '.*Regla “Proyección de prueba” borrada.*'
+    timeout: 30000
+
+# Y la tarjeta se fue DE VERDAD. Ojo con el flash: contiene el nombre de la
+# regla, así que un `notVisible` del nombre sería imposible con el flash en
+# pantalla. En su lugar: se baja hasta el final de la lista (quedan 2 activas)
+# y los textos únicos de la borrada —su chip semanal y su fecha del 28— no
+# aparecen. La negativa va acá, con la región A LA VISTA: hecha desde arriba
+# pasaría por vacío (trampa 7). Y si la regla siguiera viva, su tarjeta entera
+# entraría en los últimos píxeles de la página, con ambos textos a la vista.
+- scrollUntilVisible:
+    element:
+      text: '.*Volver al panel.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertNotVisible: '.*Todas las semanas.*'
+- assertNotVisible: '.*28 de feb de 2027.*'
+
+# ── Cierre: la plata del mes sigue intacta después de todo ──────────────────
+- openLink: "${BASE}"
+
+- extendedWaitUntil:
+    visible: '.*10\.905\.000,00.*'
+    timeout: 30000
+
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó
+- assertVisible: '.*-\$.*10\.186\.712,71.*'      # flujo de caja

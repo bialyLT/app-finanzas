@@ -1,0 +1,328 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 12 · Recurrencia — validaciones, bandeja y archivo (Fase 3)
+# ═════════════════════════════════════════════════════════════════════════════
+# El primer flujo de la feature de recurrencia. Cubre el ciclo completo de una
+# regla que vence HOY:
+#
+#   1. Las validaciones del alta dicen QUÉ falta, en el orden en que la persona
+#      completa el formulario (nombre → monto → categoría).
+#   2. La vista previa del monto interpreta los extremos: 0,01 y 9.999.999,99
+#      (formato argentino completo) se ven formateados antes de guardar.
+#   3. La ocurrencia de HOY cae en la bandeja de pendientes y NO es plata: el
+#      panel no se mueve hasta aceptarla.
+#   4. Aceptar (con doble toque: el segundo no duplica) convierte el pendiente
+#      en UN movimiento de 5.000 y los tres números del mes se mueven exacto.
+#   5. Archivar no borra: la regla sale de la vista pero sus movimientos
+#      quedan, y la tarjeta archivada sólo ofrece Reactivar y Borrar.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre en este punto de la suite)
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que dejan los flujos 09 y 10):
+#
+#   gastos        10.900.000,00
+#   quedó        −10.100.000,00
+#   flujo        −10.181.412,71
+#   banco         −9.631.412,71
+#
+# Y esta regla agrega un gasto de 5.000,00 en octubre:
+#
+#   gastos        10.900.000 + 5.000 = 10.905.000,00
+#   quedó        −10.100.000 − 5.000 = −10.105.000,00
+#   flujo        −10.181.412,71 − 5.000 = −10.186.412,71
+#   banco         −9.631.412,71 − 5.000 = −9.636.412,71
+#
+# Los valores viejos que NO deben quedar en pantalla: el gasto anterior
+# (10.900.000,00) y la suma del doble toque (10.910.000,00).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 01 a 11 antes que éste: la base de 10.900.000 que este
+# flujo verifica la construyen los flujos 08, 09 y 10. Sin ellos, la primera
+# aserción falla y hace bien: los números no serían los de acá.
+url: http://127.0.0.1:3000
+name: "12 · Recurrencia — validaciones, bandeja y archivo"
+tags:
+  - smoke
+  - recurrencia
+  - bandeja
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida. El desarrollo completo del
+# porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Punto de partida (lo que dejó el flujo 11) ───────────────────────────────
+- assertVisible: '.*10\.900\.000,00.*'      # gastos
+- assertNotVisible:
+    id: "rec-pending-banner"
+
+- tapOn:
+    id: "nav-recurrence"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- assertVisible:
+    id: "rec-rules-empty"
+- assertVisible:
+    id: "rec-pending-empty"
+- assertVisible: '.*No había fechas vencidas nuevas.*'
+
+# ── Formulario: validaciones que dicen QUÉ falta ─────────────────────────────
+- tapOn:
+    id: "rec-add-rule"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-form-submit"
+- extendedWaitUntil:
+    visible:
+      id: "rec-form-error"
+    timeout: 30000
+- assertVisible: "Poné un nombre para la regla."
+
+- tapOn:
+    id: "rec-title"
+- inputText: "Gimnasio de prueba"
+- tapOn:
+    id: "rec-form-submit"
+- extendedWaitUntil:
+    visible: "Escribí un monto mayor a cero."
+    timeout: 30000
+
+# ── Montos extremos: la vista previa es la que decide ────────────────────────
+- tapOn:
+    id: "rec-amount"
+- inputText: "0,01"
+- assertVisible: '.*\$.*0,01.*'
+
+- tapOn:
+    id: "rec-form-submit"
+- extendedWaitUntil:
+    visible: "Escribí en qué se gasta."
+    timeout: 30000
+
+- tapOn:
+    id: "rec-amount"
+- eraseText: 10
+- inputText: "9999999,99"
+- assertVisible: '.*\$.*9\.999\.999,99.*'
+
+- tapOn:
+    id: "rec-amount"
+- eraseText: 20
+- inputText: "5000"
+- assertVisible: '.*\$.*5\.000,00.*'
+
+# ── Categoría (abajo) y alta ─────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-category"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-category"
+- inputText: "Alquiler"
+- assertVisible: '.*Se usa la categoría existente.*'
+
+- tapOn:
+    id: "rec-form-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-flash"
+    timeout: 30000
+- assertVisible: '.*Regla creada.*'
+
+- extendedWaitUntil:
+    visible: '.*Materializó 1 fecha nueva.*'
+    timeout: 30000
+- assertVisible: '.*1 ocurrencia quedó esperando confirmación.*'
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-pending-.*"
+    timeout: 30000
+
+- assertVisible: '.*Venció el 17 de oct de 2026.*'
+- assertVisible: '.*Sale de Banco Galicia.*Alquiler.*'
+- assertVisible: '.*5\.000,00.*'
+
+# ── La regla: proyección de fechas, nunca plata ──────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-rule-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Gimnasio de prueba.*'
+- assertVisible: '.*Todos los meses.*'
+- assertVisible: '.*Desde el 17 de oct de 2026 · sin fin.*'
+- assertVisible: '.*Avisar y confirmar.*'
+- assertVisible:
+    id: "rec-upcoming-.*"
+- assertVisible: '.*no son movimientos ni suman a ningún total.*'
+
+# ── Criterio 4: el pendiente NO es plata ─────────────────────────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: '.*10\.900\.000,00.*'
+    timeout: 30000
+
+- assertVisible:
+    id: "rec-pending-banner"
+- assertVisible: '.*1 ocurrencia de tus reglas espera confirmación.*'
+- assertNotVisible: '.*10\.905\.000,00.*'
+
+# ── Aceptar (doble toque: el segundo no debe duplicar) ───────────────────────
+- tapOn:
+    id: "rec-pending-banner"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-pending-.*"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-accept-.*"
+- tapOn:
+    id: "rec-accept-.*"
+    optional: true
+
+- extendedWaitUntil:
+    visible: '.*Aceptada.*'
+    timeout: 30000
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-pending-empty"
+    timeout: 30000
+
+# ── El movimiento suma UNA vez ───────────────────────────────────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: '.*10\.905\.000,00.*'
+    timeout: 30000
+
+# Los otros tres números que mueve el movimiento aceptado:
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó
+- assertVisible: '.*-\$.*10\.186\.412,71.*'      # flujo de caja
+- assertVisible: '.*-\$.*9\.636\.412,71.*'       # banco
+
+# ── Los valores viejos, ANTES de scrollear (trampa 7) ────────────────────────
+- assertNotVisible: '.*10\.900\.000,00.*'        # el gasto anterior
+- assertNotVisible: '.*10\.910\.000,00.*'        # el doble toque duplicado
+
+- scrollUntilVisible:
+    element:
+      text: '.*Gimnasio de prueba.*'
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: '.*regla.*'
+- assertVisible: '.*5\.000,00.*'
+
+# ── Archivar: sale de la vista, los movimientos quedan ───────────────────────
+- tapOn:
+    id: "nav-recurrence"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-archive-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-archive-.*"
+
+- extendedWaitUntil:
+    visible: '.*archivada: sale de la vista, pero sus movimientos quedan.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-rules-empty"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible:
+    id: "rec-rules-empty"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-toggle-archived"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-toggle-archived"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-rule-.*"
+    timeout: 30000
+
+- assertVisible: '.*Archivada.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-resume-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Reactivar.*'
+- assertVisible:
+    id: "rec-delete-.*"
+- assertNotVisible:
+    id: "rec-edit-.*"
+- assertNotVisible:
+    id: "rec-pause-.*"
+- assertNotVisible:
+    id: "rec-archive-.*"

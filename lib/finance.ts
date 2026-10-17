@@ -57,6 +57,18 @@ export interface MovementDTO {
   toAccount: AccountDTO | null;
   /** Sólo en INCOME y EXPENSE. */
   category: CategoryDTO | null;
+
+  /**
+   * La regla de recurrencia que posteó este movimiento, o `null` si se cargó a
+   * mano.
+   *
+   * Es la equivalencia que documenta el esquema (`recurrenceRuleId != null` ⇔
+   * el movimiento vino de una regla) expuesta al cliente: la lista de
+   * movimientos la usa para marcar con "🔁 regla" lo que no se cargó a mano,
+   * sin tener que cruzar la lista contra `/api/recurrence` ni inventar un
+   * segundo origen. No agrega ningún número: es identidad, no plata.
+   */
+  recurrenceRuleId: string | null;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,410 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 13 · Recurrencia — posteo automático, anclas y 409 (Fase 3)
+# ═════════════════════════════════════════════════════════════════════════════
+# Una regla que ya "pasó" nueve veces: mensual, ancla 31, desde el 31 de enero
+# de 2026, 20 veces, modo AUTOMÁTICO (postea sola, sin bandeja). Este flujo
+# verifica la mecánica completa:
+#
+#   1. Al crearla materializa las 9 fechas vencidas (ene–sep) y POSTEA los 9
+#      movimientos sola: no queda nada pendiente de confirmar.
+#   2. El ancla 31 se respeta y se clampea: feb se postea el 28, y en marzo
+#      vuelve al 31 (el ancla no se "corre").
+#   3. Octubre no se mueve: las 9 fechas son de meses anteriores.
+#   4. Septiembre queda con el asiento exacto: −1.234,56 y flujo 498.765,44
+#      (el desembolso del préstamo como única transferencia, menos el gasto).
+#   5. Una regla CON historia no se borra —409—: el intento de borrado
+#      desemboca en el aviso que manda a archivarla, y archivarla no toca la
+#      historia (septiembre queda igual).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre en este punto de la suite)
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 12): octubre
+#
+#   gastos        10.905.000,00
+#   quedó        −10.105.000,00
+#   flujo        −10.186.412,71
+#
+# La regla agrega 1.234,56 por mes, enero a septiembre. En septiembre, que
+# parte de 500.000,00 (el desembolso del préstamo, que no es ingreso):
+#
+#   flujo        500.000,00 − 1.234,56 = 498.765,44
+#   transferencias 1 (el desembolso)
+#
+# Octubre no cambia: ni los 9 movimientos posteados ni el archivado tocaron
+# sus números.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 01 a 12 antes que éste (la base de 10.905.000 la deja el
+# flujo 12, y la de 10.900.000 de atrás, los flujos 08, 09 y 10).
+url: http://127.0.0.1:3000
+name: "13 · Recurrencia — posteo automático, anclas y 409"
+tags:
+  - smoke
+  - recurrencia
+  - auto
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*10\.905\.000,00.*'          # gastos
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó
+- assertVisible: '.*-\$.*10\.186\.412,71.*'      # flujo de caja
+
+- tapOn:
+    id: "nav-recurrence"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- assertVisible:
+    id: "rec-rules-empty"
+- assertVisible:
+    id: "rec-pending-empty"
+
+# ── Alta: mensual, ancla 31, desde enero, 20 veces, AUTO ─────────────────────
+- tapOn:
+    id: "rec-add-rule"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-title"
+- inputText: "Alquiler automático"
+
+- tapOn:
+    id: "rec-amount"
+- inputText: "1.234,56"
+- assertVisible: '.*\$.*1\.234,56.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-day-of-month"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-day-of-month"
+- inputText: "31"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-category"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-category"
+- inputText: "Alquiler"
+- assertVisible: '.*Se usa la categoría existente.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-start-date"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-start-date"
+- inputText: "2026-01-31"
+- assertVisible: '.*2026-01-31.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-count"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-count"
+- inputText: "20"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-mode-AUTO"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-mode-AUTO"
+
+- tapOn:
+    id: "rec-form-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-flash"
+    timeout: 30000
+- assertVisible: '.*Regla creada.*'
+
+- extendedWaitUntil:
+    visible: '.*Materializó 9 fechas nuevas.*'
+    timeout: 30000
+- assertVisible: '.*Posteó 9 movimientos sola.*'
+- assertVisible:
+    id: "rec-pending-empty"
+
+# ── La regla: ancla, límites y proyección con clamp ──────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-rule-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Alquiler automático.*'
+- assertVisible: '.*Todos los meses · día 31.*'
+- assertVisible: '.*1\.234,56.*'
+- assertVisible: '.*Sale de Banco Galicia · Alquiler.*'
+- assertVisible: '.*Desde el 31 de ene de 2026 · 20 veces · Automático.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-upcoming-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*31 de oct de 2026.*'
+- assertVisible: '.*30 de nov de 2026.*'
+- assertVisible: '.*31 de dic de 2026.*'
+- assertVisible: '.*31 de ene de 2027.*'
+- assertVisible: '.*28 de feb de 2027.*'
+- assertNotVisible: '.*31 de mar de 2027.*'
+
+# ── Octubre no cambia: las 9 fechas son de meses anteriores ──────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: '.*10\.905\.000,00.*'
+    timeout: 30000
+- assertVisible: '.*-\$.*10\.105\.000,00.*'
+- assertVisible: '.*-\$.*10\.186\.412,71.*'
+
+# ── Septiembre: el 30/09 posteado, con el monto exacto ──────────────────────
+- tapOn:
+    id: "btn-prev-month"
+
+- extendedWaitUntil:
+    visible: ".*septiembre de 2026.*"
+    timeout: 30000
+
+- assertVisible: '.*1\.234,56.*'
+- assertVisible: '.*-\$.*1\.234,56.*'
+- assertVisible: '.*498\.765,44.*'
+- assertVisible: ".*1 transferencia entre tus cuentas.*"
+
+- scrollUntilVisible:
+    element:
+      text: '.*Alquiler automático.*'
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: '.*30 de septiembre.*'
+- assertVisible: '.*regla.*'
+
+# ── Marzo: después del clamp de febrero, VUELVE al 31 ────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "btn-next-month"
+    direction: UP
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+- extendedWaitUntil:
+    visible: ".*agosto de 2026.*"
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+- extendedWaitUntil:
+    visible: ".*julio de 2026.*"
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+- extendedWaitUntil:
+    visible: ".*junio de 2026.*"
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+- extendedWaitUntil:
+    visible: ".*mayo de 2026.*"
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+- extendedWaitUntil:
+    visible: ".*abril de 2026.*"
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+- extendedWaitUntil:
+    visible: ".*marzo de 2026.*"
+    timeout: 30000
+
+- assertVisible: '.*1\.234,56.*'
+- assertVisible: '.*-\$.*1\.234,56.*'
+- assertVisible: '.*Sin ingresos este mes.*'
+- assertVisible: '.*Sin transferencias este mes.*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*31 de marzo.*'
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: '.*Alquiler automático.*'
+
+# ── Febrero: el ancla 31 se clampea al 28 ────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "btn-next-month"
+    direction: UP
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+- extendedWaitUntil:
+    visible: ".*febrero de 2026.*"
+    timeout: 30000
+
+- assertVisible: '.*1\.234,56.*'
+- scrollUntilVisible:
+    element:
+      text: '.*28 de febrero.*'
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: '.*Alquiler automático.*'
+
+# ── 409: una regla con historia no se borra, se archiva ──────────────────────
+- tapOn:
+    id: "nav-recurrence"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-delete-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-delete-.*"
+- tapOn:
+    id: "rec-delete-confirm-.*"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-delete-notice-.*"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*La regla ya generó ocurrencias o movimientos.*'
+- assertVisible: '.*Archivala en vez de borrarla.*'
+- assertVisible:
+    id: "rec-archive-.*"
+
+- tapOn:
+    id: "rec-archive-.*"
+
+- extendedWaitUntil:
+    visible: '.*archivada: sale de la vista, pero sus movimientos quedan.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-rules-empty"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible:
+    id: "rec-rules-empty"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-toggle-archived"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-toggle-archived"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-rule-.*"
+    timeout: 30000
+- assertVisible: '.*Archivada.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-resume-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+- assertVisible: '.*Reactivar.*'
+
+# ── Archivar no borra la historia: septiembre sigue igual ────────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: '.*10\.905\.000,00.*'
+    timeout: 30000
+
+- tapOn:
+    id: "btn-prev-month"
+
+- extendedWaitUntil:
+    visible: ".*septiembre de 2026.*"
+    timeout: 30000
+- assertVisible: '.*1\.234,56.*'
+- assertVisible: '.*498\.765,44.*'

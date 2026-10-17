@@ -631,14 +631,28 @@ export async function deleteMovement(
  * `upcoming` se proyecta ESTRICTAMENTE después de hoy: lo de hoy ya está en la
  * bandeja (o posteado), y repetirlo en la lista de "lo que viene" mostraría dos
  * veces la misma fecha con dos significados distintos.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ `includeArchived` ES UNA OPCIÓN Y NO EL COMPORTAMIENTO POR DEFECTO
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Archivar es "sacar de la vista": la vista normal —el panel, la pantalla de
+ * recurrencia recién abierta— no tiene que mostrar las archivadas ni obligar a
+ * mirar más allá de ellas para encontrar lo vivo. Pero una regla archivada no
+ * se borró: sus movimientos siguen ahí, y poder RELEERLA es parte de que el
+ * historial sea auditable. El botón "Ver archivadas" pide la lista completa con
+ * esta opción; el default queda intacto (un cambio de default rompería la
+ * semántica ya verificada por el smoke: archivar es salir de la vista).
+ *
+ * El orden por `status` deja las archivadas al final solas (el enum está en
+ * orden ACTIVE, PAUSED, ARCHIVED), sin una segunda clave que ordenar.
  */
 export async function getRecurrenceOverview(
   db: Db,
-  options: { today: CalendarDate },
+  options: { today: CalendarDate; includeArchived?: boolean },
 ): Promise<RecurrenceResponse> {
   const [rules, pending] = await Promise.all([
     db.recurrenceRule.findMany({
-      where: { status: { not: "ARCHIVED" } },
+      where: options.includeArchived ? {} : { status: { not: "ARCHIVED" } },
       include: recurrenceRuleInclude,
       // ACTIVE antes que PAUSED (el orden del enum) y, dentro de cada estado,
       // de la más vieja a la más nueva: la lista no se reordena entre recargas.

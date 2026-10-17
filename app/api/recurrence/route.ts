@@ -5,10 +5,14 @@ import { todayCalendar } from "@/lib/dates";
 import { getRecurrenceOverview } from "@/lib/recurring";
 
 /**
- * GET /api/recurrence
+ * GET /api/recurrence[?includeArchived=1]
  *
  * Devuelve `{ rules, pending, truncated }`: las reglas activas y pausadas con
  * sus próximas fechas proyectadas, y la bandeja de ocurrencias pendientes.
+ * Con `includeArchived=1` la lista de reglas también trae las archivadas (al
+ * final): es el "ver archivadas" de la pantalla, para poder releer una regla
+ * que se sacó de la vista sin haberla borrado. La bandeja no cambia con el
+ * parámetro: una ocurrencia pendiente es trabajo, no archivo.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * POR QUÉ ESTE GET NO MATERIALIZA NADA
@@ -23,12 +27,20 @@ import { getRecurrenceOverview } from "@/lib/recurring";
  * proyección y el generador tienen que usar el MISMO "hoy", y la única forma de
  * garantizarlo es que haya un solo lugar que lo lea.
  */
-export async function GET() {
+export async function GET(req: Request) {
   // Capa autoritativa de autenticación (ver lib/auth/dal.ts). Es una lectura,
   // así que no lleva chequeo de origen.
   if (!(await requireApiSession())) return unauthorized();
 
-  const overview = await getRecurrenceOverview(prisma, { today: todayCalendar() });
+  // Sólo el valor explícito cuenta: `?includeArchived=1`. Cualquier otra cosa
+  // (o nada) es el default de siempre, así el contrato viejo no se mueve.
+  const includeArchived =
+    new URL(req.url).searchParams.get("includeArchived") === "1";
+
+  const overview = await getRecurrenceOverview(prisma, {
+    today: todayCalendar(),
+    includeArchived,
+  });
 
   return NextResponse.json(overview);
 }

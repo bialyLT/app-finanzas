@@ -81,6 +81,9 @@ export const movementInclude = {
   account: true,
   toAccount: true,
   category: true,
+  // Sin `recurrenceRuleId`: `include` ya devuelve TODOS los escalares, así que
+  // `MovementRow` lo tiene sin declararlo acá (un escalar en `include` es un
+  // error de tipos, no una redundancia inocente).
 } as const satisfies Prisma.MovementInclude;
 
 /**
@@ -1106,6 +1109,7 @@ export function toMovementDTO(movement: MovementRow): MovementDTO {
     account: toAccountDTO(movement.account),
     toAccount: movement.toAccount ? toAccountDTO(movement.toAccount) : null,
     category: movement.category ? toCategoryDTO(movement.category) : null,
+    recurrenceRuleId: movement.recurrenceRuleId,
   };
 }
 

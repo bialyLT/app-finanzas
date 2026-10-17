@@ -345,8 +345,17 @@ function parseRuleFields(input: {
   }
 
   // ── Cantidad de ocurrencias ────────────────────────────────────────────────
+  //
+  // Mismo criterio que `dayOfMonth` y `endDate`: `null` (o "") es un valor
+  // EXPLÍCITO que limpia el tope —"esta regla ya no se corta sola"—, no un "no
+  // vino". Antes se colaba por el `else if (existing)` y `count` viejo
+  // sobrevivía: quitarle el tope a una regla era IMPOSIBLE por PATCH (mandar
+  // `count: null` lo conservaba en silencio, y la regla seguía terminando en la
+  // ocurrencia N aunque la persona hubiera pedido "para siempre").
   let count: number | null;
-  if (body.count !== undefined && body.count !== null && body.count !== "") {
+  if (body.count === null || body.count === "") {
+    count = null;
+  } else if (body.count !== undefined) {
     const parsed = Number(body.count);
     if (!Number.isInteger(parsed) || parsed < 1 || parsed > 10_000) {
       return fail("La cantidad de ocurrencias tiene que ser un número entero entre 1 y 10000.");

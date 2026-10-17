@@ -1,0 +1,497 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 14 · Recurrencia — pausa, saltos y transferencia programada (Fase 3)
+# ═════════════════════════════════════════════════════════════════════════════
+# La letra chica del ciclo de vida de una regla, y los dos tipos que el flujo
+# 12 no toca:
+#
+#   1. Una regla futura nace SIN ocurrencias (no hay nada que generar).
+#   2. Pausarla y editarla en pausa NO materializa aunque haya fechas vencidas:
+#      el generador no corre con la regla pausada.
+#   3. Reactivarla materializa las 4 fechas vencidas de golpe, y saltarlas una
+#      por una no las vuelve a generar (correr de nuevo no revive lo saltado).
+#   4. Una regla de INGRESO no ofrece préstamos ni tarjetas como cuenta; una de
+#      TRANSFERENCIA no ofrece categoría y sí cuenta destino.
+#   5. Aceptar la transferencia programada mueve la plata entre cuentas: la
+#      caja lo registra como salida (−300) y gastos/te quedó NO se mueven.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre en este punto de la suite)
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 13):
+#
+#   gastos        10.905.000,00
+#   quedó        −10.105.000,00
+#   flujo        −10.186.412,71
+#   banco         −9.647.523,75   (los 9 posteos de la regla AUTO)
+#   Visa      a favor  50.000,00  (el pago de más del flujo 10)
+#   transferencias 3
+#
+# Y se acepta una transferencia programada de 300 del banco a la Visa:
+#
+#   banco         −9.647.523,75 − 300 = −9.647.823,75
+#   flujo        −10.186.412,71 − 300 = −10.186.712,71
+#                (banco → tarjeta SALE de la caja, igual que el pago del 10)
+#   Visa      a favor  50.000,00 + 300 =  50.300,00
+#   transferencias 4
+#   gastos y "Te quedó": INTACTOS — una transferencia no es gasto.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 01 a 13 antes que éste (la base de 10.905.000 la deja el
+# flujo 12; los 9 posteos del banco, el 13).
+url: http://127.0.0.1:3000
+name: "14 · Recurrencia — pausa, saltos y transferencia programada"
+tags:
+  - smoke
+  - recurrencia
+  - transfer
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*10\.905\.000,00.*'          # gastos
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó
+- assertVisible: '.*-\$.*10\.186\.412,71.*'      # flujo de caja
+
+- tapOn:
+    id: "nav-recurrence"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- assertVisible:
+    id: "rec-rules-empty"
+- assertVisible:
+    id: "rec-pending-empty"
+
+# ── Regla futura: nace sin ocurrencias ───────────────────────────────────────
+- tapOn:
+    id: "rec-add-rule"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-title"
+- inputText: "Cuota de prueba"
+
+- tapOn:
+    id: "rec-amount"
+- inputText: "300"
+- assertVisible: '.*\$.*300,00.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-category"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-category"
+- inputText: "Transporte"
+- assertVisible: '.*Se usa la categoría existente.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-start-date"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-start-date"
+- inputText: "2027-01-17"
+- assertVisible: '.*2027-01-17.*'
+
+- tapOn:
+    id: "rec-form-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-flash"
+    timeout: 30000
+- assertVisible: '.*Regla creada.*'
+
+- extendedWaitUntil:
+    visible: '.*No había fechas vencidas nuevas.*'
+    timeout: 30000
+- assertVisible:
+    id: "rec-pending-empty"
+
+# ── Pausa ────────────────────────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-pause-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-pause-.*"
+
+- extendedWaitUntil:
+    visible: '.*pausada: no va a generar hasta que la reactives.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-resume-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Pausada.*'
+- assertVisible: '.*Reactivar.*'
+
+# ── Editada en pausa: tres fechas vencidas, y el generador NO corre ──────────
+- scrollUntilVisible:
+    element:
+      id: "rec-edit-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-edit-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+- assertVisible: '.*Editar regla.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-start-date"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-start-date"
+- inputText: "2026-07-17"
+- assertVisible: '.*2026-07-17.*'
+
+- tapOn:
+    id: "rec-form-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-flash"
+    timeout: 30000
+- assertVisible: '.*Regla “Cuota de prueba” actualizada.*'
+- assertVisible: '.*No había fechas vencidas nuevas.*'
+- assertVisible:
+    id: "rec-pending-empty"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-resume-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Desde el 17 de jul de 2026.*'
+- assertVisible: '.*Pausada.*'
+
+# ── Reactivar: AHORA sí materializa las cuatro vencidas ──────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-resume-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-resume-.*"
+
+- extendedWaitUntil:
+    visible: '.*reactivada.*'
+    timeout: 30000
+- assertVisible: '.*Materializó 4 fechas nuevas.*'
+- assertVisible: '.*4 ocurrencias quedaron esperando confirmación.*'
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-pending-.*"
+    timeout: 30000
+- assertVisible: '.*Venció el 17 de jul de 2026.*'
+- assertVisible: '.*Venció el 17 de ago de 2026.*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*Venció el 17 de sept de 2026.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Venció el 17 de sept de 2026.*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*Venció el 17 de oct de 2026.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Venció el 17 de oct de 2026.*'
+
+# ── Saltar una por una: la fecha no se vuelve a generar ──────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-skip-.*"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-skip-.*"
+- extendedWaitUntil:
+    visible: '.*Saltada.*17 de jul de 2026.*'
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible: '.*Venció el 17 de jul de 2026.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-skip-.*"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-skip-.*"
+- extendedWaitUntil:
+    visible: '.*Saltada.*17 de ago de 2026.*'
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible: '.*Venció el 17 de ago de 2026.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-skip-.*"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-skip-.*"
+- extendedWaitUntil:
+    visible: '.*Saltada.*17 de sept de 2026.*'
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible: '.*Venció el 17 de sept de 2026.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "rec-skip-.*"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-skip-.*"
+- extendedWaitUntil:
+    visible: '.*Saltada.*17 de oct de 2026.*'
+    timeout: 30000
+- extendedWaitUntil:
+    visible:
+      id: "rec-pending-empty"
+    timeout: 30000
+
+# ── Correr de nuevo: lo saltado no vuelve ────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-run-again"
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-run-again"
+- extendedWaitUntil:
+    visible: '.*No había fechas vencidas nuevas.*'
+    timeout: 30000
+- assertVisible:
+    id: "rec-pending-empty"
+
+# ── INCOME: el selector no ofrece préstamos ni tarjetas ──────────────────────
+- openLink: "${BASE}/recurrencia"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-add-rule"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-kind-INCOME"
+
+- scrollUntilVisible:
+    element:
+      id: "rec-account"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-account"
+- assertVisible: '.*Banco Galicia ·.*'
+- assertNotVisible: '.*Préstamo personal.*'
+- assertNotVisible: '.*Visa Santander ·.*'
+
+- tapOn:
+    id: "rec-form-cancel"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "rec-title"
+    timeout: 30000
+
+# ── TRANSFER: sin categoría, con destino, y la plata entre cuentas ───────────
+- openLink: "${BASE}/recurrencia"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-run-summary"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-add-rule"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-title"
+    timeout: 30000
+
+- tapOn:
+    id: "rec-title"
+- inputText: "Traspaso de prueba"
+
+- tapOn:
+    id: "rec-kind-TRANSFER"
+
+- tapOn:
+    id: "rec-amount"
+- inputText: "300"
+- assertVisible: '.*\$.*300,00.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-to-account"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-to-account"
+- inputText: "visa"
+
+# Blur: tocar el hint (debajo del select) porque rec-amount quedó fuera de pantalla
+- tapOn: '.*entre tus propias cuentas.*'
+
+- assertVisible: '.*Visa Santander ·.*'
+- assertNotVisible: '.*En qué se gasta.*'
+
+- scrollUntilVisible:
+    element:
+      id: "rec-form-submit"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-form-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-flash"
+    timeout: 30000
+- assertVisible: '.*Regla creada.*'
+- assertVisible: '.*Materializó 1 fecha nueva.*'
+- assertVisible: '.*1 ocurrencia quedó esperando confirmación.*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*Banco Galicia → Visa Santander.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Banco Galicia → Visa Santander.*'
+- assertVisible: '.*300,00.*'
+
+# ── Aceptar: mueve la plata, no toca gastos ni resultado ─────────────────────
+- scrollUntilVisible:
+    element:
+      id: "rec-accept-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "rec-accept-.*"
+
+- extendedWaitUntil:
+    visible: '.*Aceptada.*300,00.*'
+    timeout: 30000
+
+- extendedWaitUntil:
+    visible:
+      id: "rec-pending-empty"
+    timeout: 30000
+
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: '.*10\.905\.000,00.*'
+    timeout: 30000
+
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó intacto
+- assertVisible: '.*-\$.*10\.186\.712,71.*'      # flujo: la salida de caja
+- assertVisible: '.*-\$.*9\.647\.823,75.*'       # banco
+- assertVisible: '.*a favor.*50\.300,00.*'       # la Visa
+- assertVisible: ".*4 transferencias entre tus cuentas.*"
+
+# ── Los valores viejos, ANTES de scrollear (trampa 7) ────────────────────────
+- assertNotVisible: '.*-\$.*10\.186\.412,71.*'   # el flujo de antes de aceptar
+- assertNotVisible: '.*a favor.*50\.000,00.*'    # la Visa de antes de aceptar

@@ -56,13 +56,15 @@ Separarlo tiene una ventaja concreta: si un flow falla, la pregunta "¿el dato
 estaba mal o la pantalla lo muestra mal?" se responde sola. El smoke test ya
 certificó el dato.
 
-Los flows 03, 04, 08, 09 y 10 **sí** agregan movimientos, así que correrlos
-dos veces sin resetear hace que los totales no coincidan. De ahí el `--reset`.
-Y por eso los flows **08, 09 y 10 van al final, en ese orden** (y el 11 corre
-último de todo): parten de la suma que dejan los anteriores (el “en rojo”, los
-montos extremos y el saldo a favor no tienen lugar en el mes limpio del seed), y
-con ese estado acumulado el select del burn tiene más gastos que el de categorías
-— la única combinación en la que el driver puede tocar su opción (trampa 13).
+Los flows 03, 04, 08, 09, 10, 12, 13 y 14 **sí** agregan movimientos (o posteos
+de reglas), así que correrlos dos veces sin resetear hace que los totales no
+coincidan. De ahí el `--reset`. Y por eso los flows **08, 09 y 10 van al final,
+en ese orden**, y después la cierra la cadena **11 → 12 → 13 → 14 → 15** (el 15
+es neto cero: crea y borra la misma regla). Los primeros parten de la suma que
+dejan los anteriores (el “en rojo”, los montos extremos y el saldo a favor no
+tienen lugar en el mes limpio del seed), y con ese estado acumulado el select
+del burn tiene más gastos que el de categorías — la única combinación en la que
+el driver puede tocar su opción (trampa 13).
 
 El wrapper `scripts/maestro.ps1` se encarga de `JAVA_HOME`, de desactivar los
 analytics anónimos de Maestro y de ponerle un techo de memoria a la JVM (ver
@@ -73,7 +75,7 @@ También podés ver las corridas en vivo en el **Maestro Viewer**:
 
 ---
 
-## Las trece trampas
+## Las catorce trampas
 
 Esta carpeta existe porque cada una de estas cosas nos costó una sesión de
 depuración. Están todas documentadas acá para que no vuelvan a pasar.
@@ -243,6 +245,13 @@ que un punto suelto significa "cualquier carácter" y `'.*50.000,00.*'` también
 por buena una pantalla que muestra `450.000,00`. Una aserción que pasa por el
 motivo equivocado es peor que una que falla.
 
+**Y no es sólo el punto: todo metacarácter del texto se escapa.** La app también
+dice `¿Borrar la regla?` y `Próximas (proyección)`, y un `?`, un `(` o un `)`
+sueltos cambian el patrón: `'.*¿Borrar la regla?.*'` matchearía `¿Borrar la
+regl?` (el `?` vuelve opcional a la `a`), y un paréntesis desbalanceado mata la
+regex sin decir por qué. Los patrones correctos del flow 15:
+`'.*¿Borrar la regla\?.*'` y `'.*Próximas \(proyección\).*'`.
+
 **Comillas simples en YAML.** En comillas dobles la barra invertida activa
 secuencias de escape, y `"\."` no es una secuencia válida: YAML da error antes de
 que Maestro llegue a ver el texto.
@@ -308,6 +317,16 @@ categoría— necesita un `scrollUntilVisible` antes de poder afirmarse.
 La forma de darse cuenta de que está pasando: un `assertNotVisible` que pasa
 demasiado fácil. Si el elemento que negás está en el encabezado de la página y vos
 venís de scrollear hacia abajo, sospechá.
+
+**Corolario: el flash de la acción CONTIENE el nombre de lo que borraste.** En
+`/recurrencia`, después de borrar, el flash dice `Regla “Proyección de prueba”
+borrada.` — así que un `assertNotVisible` del nombre de la regla es imposible
+mientras el flash esté en pantalla (y el refresh del borrado deja la página en el
+tope, con el flash a la vista). La negación honesta no nombra la regla: usa sus
+marcadores únicos —el chip `Todas las semanas`, la fecha `28 de feb de 2027`— y
+se hace con la región A LA VISTA: se baja hasta el final de la lista (si la
+tarjeta siguiera viva, entraría completa en pantalla con ambos textos). El patrón
+vive en `flows/15-proyeccion-y-borrado.yaml`.
 
 ### 8. Maestro comparte el perfil de Chrome: las cookies persisten entre flows
 
@@ -407,6 +426,8 @@ un control, la primera pregunta no es cómo hacer que el test lo encuentre, sino
 "los tiene".
 
 **Caso hermano (Fase 6): el pliegue de la página.** Con la serie mensual de patrimonio, el bloque nuevo estiró el panel y los botones de acción quedaron **debajo de la ventana** de 1018×597. A diferencia del modal recortado, acá el usuario llega scrolleando: el problema no era de la app, era del test. El árbol web de Maestro ve la ventana, y `tapOn` no scrollea nunca — un control debajo del pliegue "no existe" para el driver aunque exista para cualquier persona. El patrón que quedó en 03/04/08/09/10: `scrollUntilVisible` hasta el botón con `centerElement: true` antes de tocarlo, y después del submit, cerrar el modal y volver arriba anclando en una línea superior (trampa 12).
+
+**Caso hermano 2 (Fase 3): la fila de acciones de la ÚLTIMA tarjeta.** En `/recurrencia`, la tercera tarjeta activa —la recién creada— tiene su fila de botones (Editar / Pausar / Archivar / Borrar) justo debajo del pliegue: el árbol sólo traía los Borrar de las tarjetas 1 y 2 y el `tapOn` moría con "not found". La sutileza tiene tres capas: (a) el ancla natural que uno elegiría —el toggle "Ver archivadas"— vive ARRIBA de la lista, así que scrollear "hasta" ella deja la tarjeta al fondo, fuera de la vista; (b) el único nodo anclable que queda DEBAJO del objetivo es el link "Volver al panel", que cierra la lista — se scrollea hasta él SIN `centerElement` (a esa altura el centro es inalcanzable; trampa 12, corolario); (c) el objetivo en sí no tiene texto único (es `rec-delete-N`), así que se lo elige por RELACIÓN con el dato que sí es único: `id: "rec-delete-.*"` con `below: '.*28 de feb de 2027.*'`. El patrón completo vive en `flows/15-proyeccion-y-borrado.yaml`.
 
 ---
 
@@ -568,6 +589,14 @@ satisface ahí, con las tarjetas de arriba fuera de la vista. Las dos cosas junt
 rompieron los flows 02, 03, 04, 08, 09 y 10 en la ronda de la reconciliación; el
 patrón corregido vive en `flows/02-panel.yaml` y el porqué completo, también.
 
+**El corolario del fondo de la página** es la simetría del anterior. El link
+"Volver al panel" de `/recurrencia` es de los últimos contenidos de la página:
+está tan cerca del borde inferior que la página ya no da scroll para llevarlo al
+centro, así que pedirle `centerElement` muere por timeout igual que el selector
+de mes pegado al techo. Para bajar hasta el final se ancla en él SIN
+`centerElement` — no se lo toca, sólo marca hasta dónde bajar (el patrón de
+borrado del flow 15).
+
 ---
 
 ### 13. Las `<option>` de un `<select>` se tocan por ÍNDICE — y otro select puede robarse el tap
@@ -601,6 +630,41 @@ se ancla con `scrollUntilVisible` al **texto del resultado** (patrón del flow 1
 
 ---
 
+### 14. Un `type="date"` borrado con backspace queda en `badInput` — y el submit no vuelve a dispararse
+
+Este no salió de un flow de la app: salió de un banco de pruebas, y costó
+entender que **el formulario estaba bien y el input no**.
+
+**Qué pasa.** Un `<input type="date">` no es un campo de texto: Chrome lo maneja
+por segmentos (`dd/mm/aaaa`). Sus segmentos son independientes y el backspace
+limpia sólo el que está seleccionado — al enfocar con un clic, el primero.
+Después de borrar, el campo queda mostrando pedazos (`mm/31/2027`), con dos
+consecuencias feas: (1) el navegador reporta `""` como valor (React ya cree que
+no hay fecha), pero los segmentos siguen ahí y la validación nativa marca
+`validity.badInput`; (2) al guardar, el navegador FRENA el submit y muestra su
+burbuja en inglés — `Please enter a valid value...`, sigue el idioma del
+navegador, no el de la app. El usuario toca "Guardar" y no pasa NADA: ni POST,
+ni flash, ni error. Y sin teclado no hay recuperación: el backspace sobre un
+segmento ya vacío no avanza al siguiente.
+
+**Cómo se diagnostica.** Misma familia de siempre — el síntoma está a dos pasos
+de la causa. Si un submit dice COMPLETED y no pasa nada, mirá el screenshot del
+paso y buscá la burbuja del navegador; si el form tiene un `type="date"` y el
+flujo lo tocó con `eraseText`, es esto.
+
+**El arreglo es de la app**, en `lib/date-input.ts`:
+`clearDateInputIfEmptied` actúa sólo cuando el valor reportado quedó en `""` y
+el navegador marcó `badInput` —la transición de borrado, inequívoca— y reasigna
+`value = ""`, con lo que el setter descarta los segmentos y el campo vuelve a
+ser válido. No puede dispararse TIPEando: cada dígito suelto de una fecha en
+construcción también deja `""` + `badInput`, y ahí vaciar sería romper el campo
+debajo de los dedos. Se usa en los tres componentes con fecha
+(`RecurrenceRuleForm`, `TransactionForm` y `AccountForm` — cuatro inputs), y la
+regresión vive en `flows/15-proyeccion-y-borrado.yaml`: edita una regla, borra
+la fecha de fin con `eraseText: 20` y guarda con ENTER.
+
+---
+
 ## Convenciones
 
 - **Textos sin emoji en las aserciones.** El emoji se renderiza distinto según la
@@ -611,6 +675,11 @@ se ancla con `scrollUntilVisible` al **texto del resultado** (patrón del flow 1
   no.
 - **Cada flow corre con estado de navegador limpio al inicio del run.** Si un flow
   depende de estar logueado, hacé el login dentro del flow.
+- **El saldo de una cuenta es apertura + los movimientos firmados con fecha ≤ HOY.**
+  Los movimientos con fecha FUTURA que haya en la base no cuentan para el saldo
+  mostrado (verificado contra la base al calcular a mano los números de los flujos
+  de recurrencia). Si un saldo no cierra, revisá primero si estás sumando
+  movimientos futuros.
 - **Los flows son documentación viva.** Si encontrás un bug, escribí el flow que
   lo reproduce ANTES de arreglarlo. Después queda como test de regresión.
 
@@ -630,8 +699,12 @@ se ancla con `scrollUntilVisible` al **texto del resultado** (patrón del flow 1
 | `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 56s) |
 | `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 26s) |
 | `11-burn-mensualizado.yaml` | La elección COMPLETA del burn sobre el estado del final de la suite: el centavo de $ 0,01 repartido (`0,01 ÷ 12 = $ 0,00`), las dos vistas exactas (caja 10.900.000,00 / −10.100.000,00 contra burn 10.899.999,99 / −10.099.999,99), los dos pies del resultado, y que la selección sea EFÍMERA: volver por el encabezado deja el selector limpio y las vistas negadas con el select centrado | ✅ Pasa (1m 38s) |
+| `12-bandeja-y-archivo.yaml` | Las validaciones del alta que dicen QUÉ falta (nombre → monto → categoría), la vista previa de los extremos (0,01 y 9.999.999,99), la ocurrencia de HOY que **no es plata** hasta aceptarla (el panel sigue en 10.900.000,00), el doble toque que no duplica (10.905.000,00 · −10.105.000,00 · −10.186.412,71 · banco −9.636.412,71) y que archivar no borra: la tarjeta archivada sólo ofrece Reactivar y Borrar | ✅ Pasa (3m 6s) |
+| `13-auto-y-409.yaml` | El posteo AUTOMÁTICO: una regla mensual ancla 31 desde enero materializa y postea 9 fechas sola, el clamp de febrero (28) y el regreso al 31 en marzo, septiembre con el asiento exacto (−1.234,56 y flujo 498.765,44 con 1 transferencia) y octubre intacto; más el 409: una regla con historia no se borra (el aviso manda a archivarla) y archivarla no toca la historia | ✅ Pasa (4m 11s) |
+| `14-pausa-saltos-y-transfer.yaml` | El ciclo de vida completo: una regla futura nace sin ocurrencias; pausada no materializa aunque haya vencidas; reactivarla materializa las 4 de golpe y saltarlas una por una no las revive; INCOME no ofrece préstamos ni tarjetas y TRANSFER no pide categoría y sí destino; aceptar la transferencia mueve la caja (flujo −10.186.712,71, banco −9.647.823,75, Visa a favor 50.300,00, 4 transferencias) sin tocar gastos ni "Te quedó" | ✅ Pasa (4m 10s) |
+| `15-proyeccion-y-borrado.yaml` | La proyección de una regla futura: ancla 31 con clamp (31 ene → 28 feb → 31 mar), corte por fin y tope, y el descargo de que no es plata — el panel no se mueve; la edición mensual→semanal que limpia el ancla (B1), borra fin y tope con `eraseText` (**regresión del arreglo de `lib/date-input.ts`**, el bug U1 de la ronda del tester) y guarda con ENTER; y el borrado SIN historial (sin 409: flash "borrada." y la tarjeta se va con sus marcadores únicos negados) — flujo neto cero | ✅ Pasa (3m 8s) |
 
-**Suite completa: 12/12 en 18m 19s.** Los tiempos no son decorativos: cuando había
+**Suite completa: 16/16 en 33m 18s.** Los tiempos no son decorativos: cuando había
 servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
 tardaba **5m51s en fallar** y los demás corrían entre 10 y 18 segundos más
 lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una
