@@ -17,7 +17,7 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 
 - `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las catorce trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
 - `README.md` — arquitectura, capas de test y cómo correr todo.
-- `agents/ui-tester.md` y `agents/security-auditor.md` — prompts de los subagentes autónomos (tester de UI con Maestro y auditor de seguridad).
+- `agents/dev.md`, `agents/ui-tester.md` y `agents/security-auditor.md` — prompts de los subagentes autónomos (dev de ronda, tester de UI con Maestro y auditor de seguridad).
 - `flows/README.md` — las **catorce trampas** de Maestro. Leer antes de tocar los flows.
 - Memoria persistente **Engram** (si está disponible en la máquina): buscar por proyecto; hay observaciones de arquitectura, bugs y decisiones.
 
