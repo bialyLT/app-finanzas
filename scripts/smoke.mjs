@@ -659,6 +659,117 @@ async function main() {
     check("y su neto coincide con el patrimonio de hoy", ultimo?.net, hoy?.netWorth?.net);
   }
 
+  // ── La reconciliación visible (ΔPatrimonio = Ahorro) ───────────────────────
+  //
+  // La red de seguridad del modelo, ahora con su propia ruta: compara la
+  // variación del patrimonio (los SALDOS) contra el ahorro del mes (los
+  // MOVIMIENTOS) y muestra la diferencia cuando no cuadra. Acá se verifica
+  // contra números armados A MANO sobre el seed, igual que todo lo demás.
+  //
+  //   Septiembre   net(31/08) 100.000 → net(30/09) 100.000
+  //                (el desembolso de 500.000 sube banco y deuda por igual)
+  //                Δ 0,00 = ahorro 0,00 (la transferencia no es ingreso)
+  //
+  //   Octubre      net(30/09) 100.000 → net(31/10) 410.000 → Δ +310.000,00
+  //                ahorro 800.000 − 490.000 = +310.000,00 → diferencia 0,00
+  section("La reconciliación visible (ΔPatrimonio = Ahorro)");
+  {
+    const { status: recStatus, body: rec } = await api(
+      `/api/reconciliation?month=${MES}&asOf=${MES}-31`,
+    );
+    const oct = rec?.reconciliation;
+
+    check("/api/reconciliation responde 200", recStatus, 200);
+    check(
+      "octubre · netStart = 100.000,00 (cierre de septiembre)",
+      oct?.netStart,
+      "100000.00",
+    );
+    check(
+      "octubre · netEnd = 410.000,00 (cierre de octubre)",
+      oct?.netEnd,
+      "410000.00",
+    );
+    check("octubre · ΔPatrimonio = +310.000,00", oct?.netDelta, "310000.00");
+    check(
+      "octubre · ahorro = +310.000,00 (800.000 − 490.000)",
+      oct?.saving,
+      "310000.00",
+    );
+    check("octubre · la diferencia es 0,00", oct?.difference, "0.00");
+    checkTrue("octubre · cuadra al centavo", oct?.balanced === true);
+    checkTrue(
+      "octubre · con el asOf de fin de mes no es parcial",
+      oct?.partial === false,
+    );
+    check("octubre · el corte es el 31/10", oct?.cutAt, `${MES}-31`);
+
+    // Septiembre: el préstamo mueve activos y pasivos por el mismo monto, así
+    // que el patrimonio NO se mueve — y el ahorro es cero porque el desembolso
+    // es una transferencia. Los dos caminos dicen lo mismo: no ganaste nada.
+    const { body: recSep } = await api(
+      `/api/reconciliation?month=2026-09&asOf=${MES}-31`,
+    );
+    const sepRec = recSep?.reconciliation;
+
+    check(
+      "septiembre · netStart = 100.000,00 (cierre de agosto)",
+      sepRec?.netStart,
+      "100000.00",
+    );
+    check(
+      "septiembre · netEnd = 100.000,00 (el desembolso no mueve el neto)",
+      sepRec?.netEnd,
+      "100000.00",
+    );
+    check("septiembre · ahorro 0,00 = Δ 0,00", sepRec?.difference, "0.00");
+    check(
+      "septiembre · ahorro = 0,00 (la transferencia no es ingreso)",
+      sepRec?.saving,
+      "0.00",
+    );
+    checkTrue("septiembre · cuadra en cero", sepRec?.balanced === true);
+
+    // Agosto: un mes sin movimientos no es un caso especial — es la misma
+    // identidad con todo en cero y las dos fotos iguales.
+    const { body: recAgo } = await api(
+      `/api/reconciliation?month=2026-08&asOf=${MES}-31`,
+    );
+    const agoRec = recAgo?.reconciliation;
+
+    check("agosto · Δ 0,00 = ahorro 0,00 (mes sin movimientos)", agoRec?.difference, "0.00");
+    check("agosto · netStart = 100.000,00 (saldo inicial)", agoRec?.netStart, "100000.00");
+    check("agosto · netEnd = 100.000,00 (las dos fotos son la misma)", agoRec?.netEnd, "100000.00");
+    checkTrue("agosto · cuadra", agoRec?.balanced === true);
+
+    // El mes en curso se corta a la fecha del ancla en LOS DOS lados: al 02/10
+    // entró el sueldo (800.000) y los gastos del 03/10 todavía no. Si cada lado
+    // cortara distinto (por ejemplo, el ahorro a fin de mes), el control daría
+    // una falsa alarma — y una alarma falsa es peor que ninguna.
+    const { body: recCorto } = await api(
+      `/api/reconciliation?month=${MES}&asOf=${MES}-02`,
+    );
+    const corto = recCorto?.reconciliation;
+
+    check("al 02/10 · Δ = +800.000,00 (el sueldo)", corto?.netDelta, "800000.00");
+    check("al 02/10 · ahorro = +800.000,00", corto?.saving, "800000.00");
+    check("al 02/10 · el corte es el 02/10", corto?.cutAt, `${MES}-02`);
+    checkTrue("al 02/10 · marcado en curso (parcial)", corto?.partial === true);
+
+    // Con datos consistentes, CUALQUIER corte cuadra. Sin `asOf` la ruta usa el
+    // reloj: el mes del panel tiene que dar `balanced` siempre — parcial o no.
+    const { body: recHoy } = await api(`/api/reconciliation?month=${MES}`);
+    checkTrue(
+      "sin asOf, el mes del reloj también cuadra (datos consistentes)",
+      recHoy?.reconciliation?.balanced === true,
+    );
+
+    // Un mes que no existe es una entrada inválida: 400, no un 500 ni una
+    // reconciliación inventada de ceros.
+    const { status: mesMalo } = await api("/api/reconciliation?month=2026-13");
+    check("month=2026-13 responde 400", mesMalo, 400);
+  }
+
   // ── Los reportes de /analisis, agregados en el SERVIDOR ────────────────────
   //
   // /analisis ya no suma la lista topeada: pide sus tres agregados —totales,

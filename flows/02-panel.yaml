@@ -179,6 +179,53 @@ env:
 - assertVisible: '.*debe.*50\.000,00.*'
 - assertVisible: '.*debe.*468\.587,29.*'
 
+# ── La reconciliación visible: ΔPatrimonio = Ahorro ──────────────────────────
+#
+# El control de integridad del mes: la variación del patrimonio (los saldos)
+# contra el ahorro del mes (los movimientos). En octubre los dos caminos dan el
+# MISMO número — 100.000 de cierre de septiembre a 410.000 de cierre de octubre
+# son +310.000,00, y el sueldo menos los gastos son 800.000 − 490.000 — así que
+# la diferencia tiene que mostrarse en $ 0,00 y la frase "cuadra al centavo".
+#
+# El bloque vive DEBAJO del pliegue (después de la serie mensual), así que hay
+# que scrollear hasta su ÚLTIMA línea: la explicación de los dos caminos. Es el
+# corolario de la trampa 10 — anclar en el último dato deja visibles todos los
+# de arriba.
+- scrollUntilVisible:
+    element:
+      text: ".*Dos caminos independientes.*"
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: ".*Reconciliación.*octubre de 2026.*"
+
+# Las dos fotos de la comparación: el cierre de septiembre y el de octubre.
+# La frase completa "de $ 100.000,00 a $ 410.000,00" sólo existe en este
+# bloque; los montos sueltos también aparecen en las celdas de la serie.
+- assertVisible: '.*de.*100\.000,00.*a.*410\.000,00.*'
+
+- assertVisible: ".*Ahorro del mes.*"
+
+# El veredicto del mes: $ 0,00 de diferencia. La FRASE es el ancla fuerte y no
+# el monto: "$ 0,00" también lo muestra el saldo del efectivo, así que por sí
+# solo la aserción pasaría por el motivo equivocado. Si la reconciliación
+# dejara de cuadrar, esta frase desaparece y el test lo dice.
+- assertVisible: ".*cuadra al centavo.*"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VOLVER ARRIBA PARA SEGUIR CON LA NAVEGACIÓN
+# ─────────────────────────────────────────────────────────────────────────────
+# El scroll de arriba bajó la vista; `tapOn` no scrollea nunca (trampa 9), así
+# que el botón de mes anterior —arriba de todo— hay que volver a alcanzarlo
+# scrolleando hacia arriba, anclando en un id y no en un texto: el título de la
+# reconciliación también dice "octubre de 2026" y satisfaría el patrón antes de
+# llegar al encabezado.
+- scrollUntilVisible:
+    element:
+      id: "btn-next-month"
+    direction: UP
+    timeout: 30000
+
 # ── El desembolso NO es un ingreso: la prueba de fuego ───────────────────────
 #
 # Se navega al mes anterior, donde ocurrió el desembolso del préstamo. Si el
@@ -379,14 +426,42 @@ env:
 # todo. `scrollUntilVisible` hacia arriba frena apenas el elemento entra al
 # viewport, y si entra pegado al borde superior queda DETRÁS del header sticky:
 # Maestro lo da por visible, el tap se lo come el header y el error aparece en
-# el paso siguiente. Anclando en la etiqueta del mes con `centerElement: true`,
-# el selector queda centrado, lejos del header, y el tap llega.
+# el paso siguiente. Por eso `centerElement: true`: el selector queda centrado,
+# lejos del header, y el tap llega.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# EL ANCLA ES EL ID, NO LA ETIQUETA DEL MES — Y SIN `centerElement`
+# ─────────────────────────────────────────────────────────────────────────────
+# Dos trampas en un solo paso:
+#
+# 1. La etiqueta del mes quedó AMBIGUA. Antes se anclaba en
+#    `.*octubre de 2026.*` y alcanzaba. Desde que existe el bloque de
+#    reconciliación, su título —"Reconciliación · octubre de 2026"— también
+#    satisface ese patrón, y vive MÁS ABAJO en la página: el scroll hacia
+#    arriba se detiene apenas ese título entra al viewport, con los botones
+#    todavía fuera de la vista, y el `tapOn` de abajo fallaba con
+#
+#        Element not found: Id matching regex: btn-prev-month
+#
+#    el mismo síntoma engañoso de la trampa 9, pero por un ancla ambigua.
+#    `btn-next-month` es un id que SÓLO tiene el selector del mes: el scroll no
+#    se puede satisfacer en ningún otro lado.
+#
+# 2. Centrarlo es IMPOSIBLE: el selector es la PRIMERA fila de la página, así
+#    que en `scrollTop = 0` su techo es `y ≈ 97`. `centerElement: true` exige
+#    el centro del viewport (~278), que nunca alcanza: Maestro reintenta hasta
+#    el timeout y FALLA con
+#
+#        No visible element found: id: btn-next-month
+#
+#    que miente — el botón está visible al 100%. Sin `centerElement` la
+#    condición es la correcta (100% visible) y el scroll termina en el tope
+#    real de la página, con el selector despejado debajo del header.
 - scrollUntilVisible:
     element:
-      text: ".*octubre de 2026.*"
+      id: "btn-next-month"
     direction: UP
     timeout: 30000
-    centerElement: true
 
 - tapOn:
     id: "btn-prev-month"

@@ -132,6 +132,61 @@ export interface NetWorthPointDTO {
   partial: boolean;
 }
 
+/**
+ * La reconciliación de un mes: la variación del patrimonio contra el ahorro.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ ESTE NÚMERO EXISTE (y por qué se muestra aunque no cuadre)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `ΔPatrimonio = Ahorro` es la red de seguridad del modelo de dinero, y es el
+ * ÚNICO control que detecta un error que no se ve en ningún número por separado:
+ * compara dos caminos independientes al mismo resultado.
+ *
+ *   · Camino A — los SALDOS: la variación del patrimonio entre el cierre del
+ *     mes anterior y el cierre del mes (o el día del corte, si está en curso).
+ *   · Camino B — los MOVIMIENTOS: el ahorro del §5.2 del ROADMAP, que es
+ *     "ingreso ganado − gasto consumido" y deja afuera, por construcción, todo
+ *     lo que no es ninguna de las dos cosas: los desembolsos de préstamos y las
+ *     transferencias entre cuentas propias mueven saldos sin ser ahorro, pero se
+ *     cancelan solos (una transferencia sube una cuenta y baja la otra; el
+ *     capital de la cuota baja el banco y la deuda por el mismo monto).
+ *
+ * Con datos consistentes los dos caminos dan EXACTAMENTE el mismo número — la
+ * identidad es un teorema del modelo, no una coincidencia. Cuando no da, hay
+ * algo que revisar (un error en una consulta, una escritura por afuera de la
+ * app, un cambio de esquema que dejó un camino atrás). Y la regla es UNA: se
+ * muestra la diferencia, no se esconde. Un control de integridad que redondea
+ * para que cierre no controla nada.
+ *
+ * Por eso este DTO viaja con los tres números y la comparación ya hecha por el
+ * servidor: la pantalla no deriva nada.
+ */
+export interface ReconciliationDTO {
+  /** Mes calendario `"YYYY-MM"`. */
+  month: string;
+  /** Patrimonio neto al cierre del mes ANTERIOR. */
+  netStart: string;
+  /** Patrimonio neto al cierre del mes (o al día del corte, si está en curso). */
+  netEnd: string;
+  /** `netEnd − netStart`. La variación del patrimonio del mes. */
+  netDelta: string;
+  /** Ingreso ganado − gasto consumido del mes (§5.2 del ROADMAP). */
+  saving: string;
+  /** `netDelta − saving`. Exactamente `"0.00"` cuando cuadra al centavo. */
+  difference: string;
+  /** `true` si `difference` es exactamente cero. */
+  balanced: boolean;
+  /**
+   * `true` si la foto del mes se cortó ANTES de su último día: el mes está en
+   * curso y las DOS puntas de la comparación usan el mismo corte. Comparar una
+   * variación parcial contra un ahorro de mes completo sería comparar ventanas
+   * distintas — y ese control mentiría.
+   */
+  partial: boolean;
+  /** El día hasta el que se contaron los movimientos del mes (`YYYY-MM-DD`). */
+  cutAt: string;
+}
+
 export interface AccountsResponse {
   accounts: AccountBalanceDTO[];
   netWorth: NetWorthDTO;

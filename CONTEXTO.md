@@ -1,15 +1,15 @@
 # Contexto del proyecto
 
-Documento de traspaso para continuar el trabajo desde otro agente o desde otra máquina. Última actualización: 2026-10-16.
+Documento de traspaso para continuar el trabajo desde otro agente o desde otra máquina. Última actualización: 2026-10-17.
 
 ## Qué es
 
 App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Next.js 16 (App Router), Prisma y PostgreSQL. La regla central del modelo: **la plata que se mueve entre bolsillos propios no es ingreso ni gasto**. De esa regla salen los tres tipos de movimiento (`INCOME`, `EXPENSE`, `TRANSFER`) y el tratamiento de préstamos y tarjetas como cuentas de pasivo.
 
-## Estado verificado (2026-10-16)
+## Estado verificado (2026-10-17)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: 107 tests de vitest (72 unitarios + 35 de integración), 95 aserciones de smoke, 11 flows de Maestro en ~15m, build de producción limpio.
+- Batería verde: 113 tests de vitest (72 unitarios + 41 de integración), 119 aserciones de smoke, 11 flows de Maestro en ~14m, build de producción limpio.
 - Fases 0, 1 y 2 cerradas; fases 4, 5, 6, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
@@ -47,9 +47,9 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 107 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 95 aserciones end-to-end (servidor arriba)
-npm run flows             # 11 flows de Maestro: siembra la base y corre; ~15m
+npm test                  # 113 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 119 aserciones end-to-end (servidor arriba)
+npm run flows             # 11 flows de Maestro: siembra la base y corre; ~14m
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -63,7 +63,7 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 6 sigue** (detalle en `ROADMAP.md`): ya quedaron cerradas la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja** del panel y la **serie mensual de patrimonio** (12 fotos mensuales server-side con la misma función del panel cortada por `asOf`, bloque «Evolución» en la tarjeta de patrimonio; la ronda del tester endureció los flows que el bloque empujaba debajo del pliegue). Lo más valioso que queda, en orden: la **reconciliación visible** (`ΔPatrimonio = Ahorro`), los reportes de deuda (progreso, interés acumulado, meses restantes, DTI) y el **burn mensualizado**.
+**Fase 6 sigue** (detalle en `ROADMAP.md`): ya quedaron cerradas la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja** del panel, la **serie mensual de patrimonio** (12 fotos mensuales con la misma función del panel cortada por `asOf`) y la **reconciliación visible** (`ΔPatrimonio = Ahorro` en `/api/reconciliation`, con su bloque en el panel y alerta si no cuadra). Lo más valioso que queda, en orden: los reportes de deuda (progreso, interés acumulado, meses restantes, DTI) y el **burn mensualizado**.
 
 Alternativas, en orden de costo/beneficio: Fase 5 (cuotas y resumen de tarjeta), Fase 3 (recurrencia), Fase 9 (endurecimiento si va a producción).
 

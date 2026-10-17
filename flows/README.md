@@ -253,6 +253,36 @@ El flow `00-diagnostico.yaml` es la sonda que verifica esto: si algún día esa
 sonda falla, el comportamiento cambió y hay que sacar los comodines de todos los
 flows.
 
+**Corolario: un elemento con hijos es VARIOS nodos, no uno.** El título de la
+reconciliación se arma así: `Reconciliación · octubre de 2026` más un `<span>`
+con ` · en curso` cuando el mes está en curso. En el árbol hay DOS nodos: el
+título (texto hasta "…de 2026") y el badge como su HIJO. Consecuencia directa:
+un patrón que cruce los dos textos —`.*Reconciliación.*octubre de 2026.*en curso.*`—
+**no matchea nada, jamás**, y un `assertNotVisible` con ese patrón pasa por el
+motivo equivocado (vacío). Comprobado en los diagnósticos del 17/10: la captura
+mostraba "EN CURSO" y la aserción que lo afirmaba fallaba igual; el dump de
+jerarquía (`screen-hierarchy/*.json`) probó el desdoblamiento.
+
+Para afirmar o negar la relación padre-hijo existe el selector relacional
+`containsChild` (también `childOf`, `below`, `above`, `leftOf`, `rightOf`):
+
+```yaml
+# el badge está: el título CONTIENE un hijo "en curso"
+- assertVisible:
+    text: ".*Reconciliación.*octubre de 2026.*"
+    containsChild: ".*en curso.*"
+
+# el badge no está (mes cerrado): negación precisa, sin falsos vacíos
+- assertNotVisible:
+    text: ".*Reconciliación.*septiembre de 2026.*"
+    containsChild: ".*en curso.*"
+```
+
+Ojo con el texto pelado: `" · en curso"` también vive en la celda de la serie
+(`oct 2026 · en curso`, siempre la del mes de HOY), así que un
+`assertNotVisible: ".*en curso.*"` o falla siempre o —peor— depende de qué haya
+en pantalla. La relación padre-hijo es la única negación honesta.
+
 ### 7. `assertNotVisible` también aprueba lo que quedó fuera de la pantalla
 
 Es la trampa más silenciosa de todas, porque **no falla: da confianza**.
@@ -513,6 +543,29 @@ La regla general: después de un scroll hacia arriba, un `tapOn` que dice
 "no existe" el efecto de lo que tocaste, sospechá del header antes que del
 elemento.
 
+**El corolario de la reconciliación visible (Fase 6)**: `centerElement` sólo se
+puede cumplir si el elemento PUEDE llegar al centro del viewport. La PRIMERA
+fila de la página —el selector de mes del panel— tiene su techo en `y ≈ 97` con
+la página en `scrollTop = 0`, así que pedirle el centro (~278) es imposible:
+Maestro reintenta hasta el timeout y FALLA con
+
+```
+No visible element found: id: btn-next-month
+```
+
+que miente: el botón está visible al 100%. Peor todavía, la carrera según dónde
+caiga el reloj respecto del timeout hace que a veces "complete" tras unos
+reintentos y a veces falle — el mismo comando, distinto resultado.
+
+Por eso, para volver ARRIBA de todo se ancla en el `id` del selector
+(`btn-next-month`) y se lo deja **sin** `centerElement`: el scroll termina en el
+tope real de la página y el selector queda despejado debajo del header. Y el
+ancla por TEXTO de esa fila quedó además **ambigua** cuando la reconciliación
+agregó su título —"Reconciliación · octubre de 2026"— más abajo: el scroll se
+satisface ahí, con las tarjetas de arriba fuera de la vista. Las dos cosas juntas
+rompieron los flows 02, 03, 04, 08, 09 y 10 en la ronda de la reconciliación; el
+patrón corregido vive en `flows/02-panel.yaml` y el porqué completo, también.
+
 ---
 
 ## Convenciones
@@ -532,19 +585,19 @@ elemento.
 
 | Flow | Qué verifica | Estado |
 |---|---|---|
-| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (44s) |
-| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (31s) |
-| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (2m 1s) |
-| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 20s) |
-| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 24s) |
-| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (41s) |
-| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 31s) |
-| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 16s) |
-| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 10s) |
-| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (2m 2s) |
-| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 25s) |
+| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (48s) |
+| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (32s) |
+| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, la **reconciliación visible** (ΔPatrimonio +310.000 = Ahorro del mes +310.000, "cuadra al centavo"), y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (2m 11s) |
+| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 5s) |
+| `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 14s) |
+| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (39s) |
+| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 27s) |
+| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado | ✅ Pasa (1m 15s) |
+| `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 5s) |
+| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 38s) |
+| `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 15s) |
 
-**Suite completa: 11/11 en 15m 6s.** Los tiempos no son decorativos: cuando había
+**Suite completa: 11/11 en 14m 9s.** Los tiempos no son decorativos: cuando había
 servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
 tardaba **5m51s en fallar** y los demás corrían entre 10 y 18 segundos más
 lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una

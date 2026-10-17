@@ -33,6 +33,7 @@ import { amortizationSchedule } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
 import {
   categoriesInPeriod,
+  getMonthReconciliation,
   getNetWorthSeries,
   movementCashFlow,
   movementCategoryBreakdown,
@@ -1704,5 +1705,400 @@ describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
     // (Un saldo inicial de cero en una cuenta que existe SÍ es un cero real:
     // eso lo cubren los otros dos tests.)
     expect(await getNetWorthSeries(db, { anchor: "2026-10-16" })).toEqual([]);
+  });
+});
+
+/**
+ * La reconciliación visible: `ΔPatrimonio = Ahorro`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUÉ SE VERIFICA Y POR QUÉ ASÍ
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Es la red de seguridad del modelo: compara dos caminos INDEPENDIENTES al
+ * mismo número —la variación de los saldos y el ahorro de los movimientos— y su
+ * contrato es mostrar la diferencia cuando no cuadra, nunca esconderla.
+ *
+ * Los números de estos tests se calculan A MANO sobre el escenario sembrado (el
+ * mismo del §3.2 del ROADMAP y de `scripts/smoke.mjs`):
+ *
+ *   · Agosto:  neto 100.000,00 (sólo el saldo inicial del banco).
+ *   · Septiembre: el desembolso de 500.000 mueve el banco a 600.000 y la deuda
+ *     a 500.000 — el neto NO se mueve. Δ 0,00 = ahorro 0,00.
+ *   · Octubre: sueldo 800.000, gastos 490.000 (incluido el interés de la cuota)
+ *     y capital 31.412,71 de la cuota. Δ = 410.000 − 100.000 = 310.000,00 =
+ *     ahorro 800.000 − 490.000.
+ *
+ * El caso que NO cuadra se fuerza interviniendo UNA de las dos mitades: con las
+ * restricciones de la base (CHECKs + trigger) es IMPOSIBLE escribir movimientos
+ * que rompan la identidad —es un teorema del modelo— y exactamente por eso el
+ * control existe: para el día que una consulta o una escritura por afuera de la
+ * app rompa una de las suposiciones. El test simula esa falla en el lugar donde
+ * este control tiene que verla: una de las dos mitades devolviendo otro número.
+ */
+describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  /**
+   * El escenario del §3.2, idéntico al que siembran los tests de la serie:
+   * banco con 100.000 de saldo inicial, tarjeta, préstamo de 500.000 al 60% en
+   * 12 cuotas desembolsado el 30/09, el mes de octubre completo y la cuota 1
+   * partida en capital (transferencia) e interés (gasto).
+   */
+  async function seedScenario() {
+    const { gastos, sueldo } = await seedCategories();
+
+    const [bank, card] = await Promise.all([
+      db.account.create({
+        data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+      }),
+      db.account.create({ data: { name: "Visa", kind: "CREDIT_CARD" } }),
+    ]);
+
+    const loan = await db.account.create({
+      data: {
+        name: "Préstamo",
+        kind: "LOAN",
+        principal: "500000",
+        tnaPercent: "60",
+        installmentCount: 12,
+      },
+    });
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "500000",
+        date: calendarToDb("2026-09-30"),
+        accountId: loan.id,
+        toAccountId: bank.id,
+        description: "Desembolso del préstamo",
+      },
+    });
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "INCOME",
+          amount: "800000",
+          date: calendarToDb("2026-10-01"),
+          accountId: bank.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "250000",
+          date: calendarToDb("2026-10-03"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "120000",
+          date: calendarToDb("2026-10-05"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "45000",
+          date: calendarToDb("2026-10-08"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "50000",
+          date: calendarToDb("2026-10-12"),
+          accountId: card.id,
+          categoryId: gastos.id,
+        },
+      ],
+    });
+
+    const first = amortizationSchedule("500000", "60", 12)[0];
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "TRANSFER",
+          amount: first.principal.toFixed(2),
+          date: calendarToDb("2026-10-15"),
+          accountId: bank.id,
+          toAccountId: loan.id,
+          description: "Cuota 1 · capital",
+        },
+        {
+          kind: "EXPENSE",
+          amount: first.interest.toFixed(2),
+          date: calendarToDb("2026-10-15"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+          description: "Cuota 1 · interés",
+        },
+      ],
+    });
+
+    return { bank, card, loan };
+  }
+
+  it("octubre cierra cuadrando al centavo: Δ +310.000,00 = ahorro +310.000,00", async () => {
+    await seedScenario();
+
+    //   net(30/09): banco 100.000 + 500.000 (desembolso) − 500.000 (deuda) = 100.000,00
+    //   net(31/10): 928.587,29 de activos − 518.587,29 de deudas         = 410.000,00
+    //   Δ: 410.000 − 100.000                                             = +310.000,00
+    //   ahorro: 800.000 (sueldo) − 490.000 (gastos reales)               = +310.000,00
+    const rec = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    expect(rec).toEqual({
+      month: "2026-10",
+      netStart: "100000.00",
+      netEnd: "410000.00",
+      netDelta: "310000.00",
+      saving: "310000.00",
+      difference: "0.00",
+      balanced: true,
+      partial: false,
+      cutAt: "2026-10-31",
+    });
+  });
+
+  it("septiembre cuadra en cero: el préstamo mueve activos y pasivos, no el patrimonio", async () => {
+    await seedScenario();
+
+    // El caso que el modelo viejo contaba como "+500.000 de ingresos": el
+    // desembolso entra al banco Y sube la deuda por el mismo monto. La
+    // composición prueba que pasó algo; el neto prueba que no ganaste nada.
+    const sep = await getNetWorth(db, { asOf: "2026-09-30" });
+    expect(sep.assets.toFixed(2)).toBe("600000.00");
+    expect(sep.liabilities.toFixed(2)).toBe("500000.00");
+
+    const rec = await getMonthReconciliation(db, {
+      month: "2026-09",
+      anchor: "2026-10-31",
+    });
+
+    expect(rec).toEqual({
+      month: "2026-09",
+      netStart: "100000.00",
+      netEnd: "100000.00",
+      netDelta: "0.00",
+      saving: "0.00",
+      difference: "0.00",
+      balanced: true,
+      partial: false,
+      cutAt: "2026-09-30",
+    });
+  });
+
+  it("un mes sin movimientos cuadra en cero y muestra las dos fotos intactas", async () => {
+    await seedScenario();
+
+    // Agosto no tuvo ni un movimiento: las dos fotos son el saldo inicial del
+    // banco, y el ahorro es 0,00. No es un hueco ni un caso especial — es la
+    // misma identidad.
+    const rec = await getMonthReconciliation(db, {
+      month: "2026-08",
+      anchor: "2026-10-31",
+    });
+
+    expect(rec).toEqual({
+      month: "2026-08",
+      netStart: "100000.00",
+      netEnd: "100000.00",
+      netDelta: "0.00",
+      saving: "0.00",
+      difference: "0.00",
+      balanced: true,
+      partial: false,
+      cutAt: "2026-08-31",
+    });
+  });
+
+  it("el mes en curso se corta a hoy en los DOS lados (lo posterior no entra)", async () => {
+    // Un escenario con movimientos que caen a los dos lados del corte:
+    // el 16/10 (incluido, `<=`) y el 17/10 (excluido mientras el ancla sea el 16).
+    const { gastos, sueldo } = await seedCategories();
+
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+    const cash = await db.account.create({
+      data: { name: "Efectivo", kind: "CASH" },
+    });
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "EXPENSE",
+          amount: "5000",
+          date: calendarToDb("2026-07-31"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "20000",
+          date: calendarToDb("2026-08-31"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "INCOME",
+          amount: "50000",
+          date: calendarToDb("2026-09-01"),
+          accountId: bank.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "TRANSFER",
+          amount: "30000",
+          date: calendarToDb("2026-10-05"),
+          accountId: bank.id,
+          toAccountId: cash.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "10000",
+          date: calendarToDb("2026-10-16"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "999.99",
+          date: calendarToDb("2026-10-17"),
+          accountId: bank.id,
+          categoryId: gastos.id,
+        },
+      ],
+    });
+
+    // Con el ancla del 16: net(30/09) = 125.000 (100.000 − 5.000 − 20.000 +
+    // 50.000) y net(16/10) = 115.000 (125.000 + 30.000 − 30.000 − 10.000). El
+    // gasto del 17 NO puede entrar: si entrara en un solo lado (por ejemplo,
+    // sólo en el ahorro), la reconciliación daría una falsa alarma.
+    const al16 = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-16",
+    });
+
+    expect(al16).toEqual({
+      month: "2026-10",
+      netStart: "125000.00",
+      netEnd: "115000.00",
+      netDelta: "-10000.00",
+      saving: "-10000.00",
+      difference: "0.00",
+      balanced: true,
+      partial: true,
+      cutAt: "2026-10-16",
+    });
+
+    // Y con el ancla a fin de mes —el mes cerró— el 17/10 entra en los DOS
+    // lados: Δ y ahorro bajan juntos 10.000 + 999,99 y la identidad se mantiene.
+    const al31 = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    expect(al31.netDelta).toBe("-10999.99");
+    expect(al31.saving).toBe("-10999.99");
+    expect(al31.difference).toBe("0.00");
+    expect(al31.balanced).toBe(true);
+    expect(al31.partial).toBe(false);
+    expect(al31.cutAt).toBe("2026-10-31");
+  });
+
+  it("un mes futuro con datos precargados reconcilia entre ellos", async () => {
+    await seedScenario();
+
+    // Un gasto cargado con fecha de noviembre, mirando noviembre desde octubre.
+    const fecha = await db.category.findFirstOrThrow({
+      where: { kind: "EXPENSE" },
+    });
+    const banco = await db.account.findFirstOrThrow({ where: { kind: "BANK" } });
+
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "7000",
+        date: calendarToDb("2026-11-03"),
+        accountId: banco.id,
+        categoryId: fecha.id,
+      },
+    });
+
+    // El mes futuro se corta a su fin de mes (no "a hoy"): los precargados
+    // entran en los dos caminos y el resultado es honesto — 0,00 de diferencia.
+    const rec = await getMonthReconciliation(db, {
+      month: "2026-11",
+      anchor: "2026-10-31",
+    });
+
+    expect(rec.netStart).toBe("410000.00");
+    expect(rec.netEnd).toBe("403000.00");
+    expect(rec.netDelta).toBe("-7000.00");
+    expect(rec.saving).toBe("-7000.00");
+    expect(rec.difference).toBe("0.00");
+    expect(rec.balanced).toBe(true);
+    expect(rec.partial).toBe(false);
+    expect(rec.cutAt).toBe("2026-11-30");
+  });
+
+  it("cuando los dos caminos no coinciden, la diferencia se muestra tal cual", async () => {
+    await seedScenario();
+
+    // ── CÓMO SE FUERZA LA FALLA ────────────────────────────────────────────
+    // Con las restricciones de la base puestas, NINGUNA secuencia de escrituras
+    // puede romper la identidad: es un teorema del modelo. La falla que este
+    // control existe para atrapar es otra —una de las dos mitades contando
+    // distinto— así que acá se simula exactamente eso: un cliente que infla el
+    // INCOME del camino de los movimientos en $ 500,00. La mitad de los saldos
+    // queda real; la de los movimientos, mentirosa. La diferencia tiene que
+    // asomar con su signo exacto, y `balanced` tiene que decir que no.
+    const inflado = db.$extends({
+      query: {
+        movement: {
+          async groupBy({ args, query }) {
+            const rows = await query(args);
+            const byKind = Array.isArray(args.by)
+              ? args.by.includes("kind")
+              : args.by === "kind";
+            if (!byKind) return rows;
+            return rows.map((row) => {
+              const amount = row._sum?.amount;
+              if (row.kind !== "INCOME" || amount === null || amount === undefined) {
+                return row;
+              }
+              return { ...row, _sum: { ...row._sum, amount: amount.plus("500") } };
+            });
+          },
+        },
+      },
+    });
+
+    const rec = await getMonthReconciliation(inflado as unknown as PrismaClient, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    // El camino saboteado devuelve 800.500 de ingresos → ahorro 310.500,00.
+    expect(rec.saving).toBe("310500.00");
+    // El camino de los saldos no se tocó.
+    expect(rec.netDelta).toBe("310000.00");
+    // Y la diferencia viaja TAL CUAL: −500,00, sin redondear a cero.
+    expect(rec.difference).toBe("-500.00");
+    expect(rec.balanced).toBe(false);
   });
 });

@@ -129,7 +129,7 @@ env:
 # El panel recarga sin navegar: la página queda scrolleada sobre los botones y
 # las tarjetas fuera de la vista (los assertNotVisible de más abajo aprobarían
 # sin verificar —trampa 7—). Se espera el cierre del modal y se vuelve arriba
-# con el ancla del mes, igual que el flujo 03.
+# anclando en el ID del selector de mes, igual que el flujo 03.
 - extendedWaitUntil:
     notVisible:
       id: "tx-submit"
@@ -137,10 +137,9 @@ env:
 
 - scrollUntilVisible:
     element:
-      text: ".*octubre de 2026.*"
+      id: "btn-next-month"
     direction: UP
     timeout: 30000
-    centerElement: true
 
 # ── Los totales, con el mes en rojo ──────────────────────────────────────────
 # Se espera al número nuevo y no al cierre del modal: el modal se cierra antes

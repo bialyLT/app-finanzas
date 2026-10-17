@@ -132,8 +132,10 @@ env:
 # estaba —scrolleada sobre los botones—, con las tarjetas fuera de la vista.
 # Con las tarjetas afuera, `assertVisible` daría falso y `assertNotVisible`
 # aprobaría sin verificar nada (trampa 7), así que primero se espera el cierre
-# del modal y después se vuelve arriba, anclando en la etiqueta del mes (el
-# mismo patrón que el flujo 02).
+# del modal y después se vuelve arriba, anclando en el ID del selector de mes
+# y SIN `centerElement`: la etiqueta del mes quedó ambigua con el título de la
+# reconciliación, y centrar la primera fila de la página es imposible (el
+# porqué completo está en flows/02-panel.yaml).
 - extendedWaitUntil:
     notVisible:
       id: "tx-submit"
@@ -141,10 +143,9 @@ env:
 
 - scrollUntilVisible:
     element:
-      text: ".*octubre de 2026.*"
+      id: "btn-next-month"
     direction: UP
     timeout: 30000
-    centerElement: true
 
 # ── Verificar que los totales se movieron ────────────────────────────────────
 # Se espera al número nuevo y no al cierre del modal: el modal se cierra antes

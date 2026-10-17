@@ -22,6 +22,7 @@ import {
   type NetWorthDTO,
   type NetWorthPointDTO,
   type PeriodTotalsDTO,
+  type ReconciliationDTO,
 } from "@/lib/finance";
 import {
   LOCALE,
@@ -93,6 +94,13 @@ export default function Home() {
    * la foto de hoy — es su serie, no otra cosa.
    */
   const [netWorthSeries, setNetWorthSeries] = useState<NetWorthPointDTO[]>([]);
+  /**
+   * La reconciliación del mes MOSTRADO (no del mes de hoy): compara la
+   * variación del patrimonio contra el ahorro del mes. Llega del servidor con
+   * la comparación ya hecha — acá no se resta nada para decidir si cuadra. Ver
+   * `ReconciliationDTO` y `getMonthReconciliation`.
+   */
+  const [reconciliation, setReconciliation] = useState<ReconciliationDTO | null>(null);
   const [categories, setCategories] = useState<CategoryDTO[]>([]);
   const [truncated, setTruncated] = useState(false);
 
@@ -132,13 +140,24 @@ export default function Home() {
     setLoading(true);
     setLoadError("");
     try {
-      const [movementsRes, categoriesRes, accountsRes] = await Promise.all([
-        fetch(`/api/transactions?from=${range.from}&to=${range.to}`),
-        fetch("/api/categories"),
-        fetch("/api/accounts?includeArchived=false"),
-      ]);
+      // El mes de la reconciliación sale del rango que se está pidiendo y no
+      // del estado `month` directo, así la URL siempre describe el MISMO mes
+      // que la lista y los totales de esta carga.
+      const shownMonth = range.from.slice(0, 7);
+      const [movementsRes, categoriesRes, accountsRes, reconciliationRes] =
+        await Promise.all([
+          fetch(`/api/transactions?from=${range.from}&to=${range.to}`),
+          fetch("/api/categories"),
+          fetch("/api/accounts?includeArchived=false"),
+          fetch(`/api/reconciliation?month=${shownMonth}`),
+        ]);
 
-      if (!movementsRes.ok || !categoriesRes.ok || !accountsRes.ok) {
+      if (
+        !movementsRes.ok ||
+        !categoriesRes.ok ||
+        !accountsRes.ok ||
+        !reconciliationRes.ok
+      ) {
         throw new Error("Alguno de los pedidos falló.");
       }
 
@@ -151,6 +170,9 @@ export default function Home() {
         netWorth: NetWorthDTO;
         netWorthSeries: NetWorthPointDTO[];
       };
+      const reconciliationData = (await reconciliationRes.json()) as {
+        reconciliation: ReconciliationDTO;
+      };
 
       setMovements(movementsData.movements);
       setTruncated(movementsData.truncated);
@@ -159,6 +181,7 @@ export default function Home() {
       setAccounts(accountsData.accounts);
       setNetWorth(accountsData.netWorth);
       setNetWorthSeries(accountsData.netWorthSeries);
+      setReconciliation(reconciliationData.reconciliation);
     } catch {
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
@@ -526,6 +549,121 @@ export default function Home() {
               <p className="mt-2 text-[11px] text-zinc-400">
                 Fotos al cierre de cada mes; el mes en curso, a hoy. La
                 variación es contra el mes anterior.
+              </p>
+            </div>
+          )}
+
+          {/*
+            ── Reconciliación del mes: ΔPatrimonio = Ahorro ──────────────────
+            El control de integridad del mes MOSTRADO (no del mes de hoy): la
+            variación del patrimonio contra el ahorro del mes, los dos caminos
+            al mismo número.
+
+            Los tres valores llegan calculados del servidor; acá sólo se
+            eligen las palabras y el color. Cuando NO cuadra, la diferencia se
+            muestra igual de visible que cuando cuadra —es un control, no un
+            adorno—: el sub de la celda dice "cuadra al centavo" o "no cuadra"
+            sin matices, y hay un aviso aparte con el número exacto.
+
+            La ventana que se compara es la misma de los dos lados (si el mes
+            está en curso, las dos fotos se cortan a hoy), y el texto lo dice:
+            comparar una variación parcial contra un ahorro de mes completo
+            daría una falsa alarma.
+          */}
+          {reconciliation && (
+            <div
+              id="reconciliation"
+              className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800"
+            >
+              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+                Reconciliación ·{" "}
+                {formatCalendar(`${reconciliation.month}-01`, LOCALE, {
+                  month: "long",
+                  year: "numeric",
+                })}
+                {reconciliation.partial && (
+                  <span className="text-zinc-400"> · en curso</span>
+                )}
+              </p>
+
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
+                  <p className="text-[11px] text-zinc-500">Δ Patrimonio</p>
+                  <p
+                    id="reconciliation-delta"
+                    className={`text-sm font-bold ${
+                      toCents(reconciliation.netDelta) < 0 ? "text-amber-600" : ""
+                    }`}
+                  >
+                    {formatMoney(reconciliation.netDelta, { withSign: true })}
+                  </p>
+                  <p className="text-[11px] text-zinc-400">
+                    de {formatMoney(reconciliation.netStart)} a{" "}
+                    {formatMoney(reconciliation.netEnd)}
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
+                  <p className="text-[11px] text-zinc-500">Ahorro del mes</p>
+                  <p
+                    id="reconciliation-saving"
+                    className={`text-sm font-bold ${
+                      toCents(reconciliation.saving) < 0 ? "text-amber-600" : ""
+                    }`}
+                  >
+                    {formatMoney(reconciliation.saving, { withSign: true })}
+                  </p>
+                  <p className="text-[11px] text-zinc-400">
+                    ingresos ganados − gastos consumidos
+                  </p>
+                </div>
+
+                <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
+                  <p className="text-[11px] text-zinc-500">Diferencia</p>
+                  <p
+                    id="reconciliation-difference"
+                    className={`text-sm font-bold ${
+                      reconciliation.balanced ? "text-emerald-600" : "text-rose-600"
+                    }`}
+                  >
+                    {/* Con signo sólo cuando NO cuadra: "+$ 0,00" en un cero
+                        que cuadra es ruido, y en cambio el signo de una
+                        diferencia real es parte de lo que hay que ver. */}
+                    {formatMoney(reconciliation.difference, {
+                      withSign: !reconciliation.balanced,
+                    })}
+                  </p>
+                  <p
+                    className={`text-[11px] ${
+                      reconciliation.balanced ? "text-emerald-600" : "text-rose-600"
+                    }`}
+                  >
+                    {reconciliation.balanced ? "cuadra al centavo" : "no cuadra"}
+                  </p>
+                </div>
+              </div>
+
+              {!reconciliation.balanced && (
+                <p
+                  role="alert"
+                  className="mt-2 text-xs rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-800 dark:text-rose-200 px-3 py-2"
+                >
+                  <b>No cuadra</b>: los dos caminos difieren en{" "}
+                  {formatMoney(reconciliation.difference, { withSign: true })}. Algo
+                  movió los saldos sin pasar por los movimientos, o los movimientos
+                  sin mover los saldos. Revisalo: este control existe para que un
+                  error no pase en silencio.
+                </p>
+              )}
+
+              <p className="mt-2 text-[11px] text-zinc-400">
+                Dos caminos independientes al mismo número: los saldos y los
+                movimientos.
+                {reconciliation.partial
+                  ? ` El mes está en curso: las dos fotos se cortan al ${formatCalendar(
+                      reconciliation.cutAt,
+                    )}, no a fin de mes.`
+                  : ""}
               </p>
             </div>
           )}

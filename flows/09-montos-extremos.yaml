@@ -124,8 +124,8 @@ env:
     id: "tx-submit"
 
 # Sin navegación al guardar, la página queda scrolleada sobre los botones: se
-# espera el cierre del modal y se vuelve arriba con el ancla del mes antes de
-# leer las tarjetas, igual que el flujo 03.
+# espera el cierre del modal y se vuelve arriba anclando en el ID del selector
+# de mes antes de leer las tarjetas, igual que el flujo 03.
 - extendedWaitUntil:
     notVisible:
       id: "tx-submit"
@@ -133,10 +133,9 @@ env:
 
 - scrollUntilVisible:
     element:
-      text: ".*octubre de 2026.*"
+      id: "btn-next-month"
     direction: UP
     timeout: 30000
-    centerElement: true
 
 # ── Un centavo MUEVE los tres números del panel ──────────────────────────────
 - extendedWaitUntil:
@@ -188,10 +187,9 @@ env:
 
 - scrollUntilVisible:
     element:
-      text: ".*octubre de 2026.*"
+      id: "btn-next-month"
     direction: UP
     timeout: 30000
-    centerElement: true
 
 # ── Los totales, exactos al centavo ──────────────────────────────────────────
 # 900.000,01 + 9.999.999,99 = 10.900.000,00 exactos. Un error de redondeo de

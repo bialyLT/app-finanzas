@@ -33,6 +33,7 @@ import { getNetWorth, type Db } from "./balance";
 import {
   calendarToDb,
   dbToCalendar,
+  addMonths,
   endOfMonth,
   recentMonthStarts,
   todayCalendar,
@@ -46,8 +47,9 @@ import type {
   MovementDTO,
   NetWorthPointDTO,
   PeriodTotalsDTO,
+  ReconciliationDTO,
 } from "./finance";
-import { sum, zero } from "./money";
+import { isZero, money, sum, zero } from "./money";
 
 /**
  * Relaciones que hay que traer siempre para armar un MovementDTO.
@@ -435,6 +437,118 @@ export async function getNetWorthSeries(
       };
     }),
   );
+}
+
+/**
+ * La reconciliación de UN mes: `ΔPatrimonio = Ahorro`, comparado al centavo.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ EXISTE (la red de seguridad del modelo)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Es el único control de la app que compara DOS CAMINOS INDEPENDIENTES al mismo
+ * resultado, y por eso detecta errores que ningún número muestra por separado:
+ *
+ *   · Camino A — la variación del patrimonio entre las dos fotos de saldos
+ *     (`getNetWorth` al cierre del mes anterior y al cierre del mes).
+ *   · Camino B — el ahorro del §5.2: `Σ INCOME − Σ EXPENSE` del mes
+ *     (`movementTotals`), que por construcción deja afuera desembolsos de
+ *     préstamos y transferencias entre cuentas propias.
+ *
+ * No hay una tercera fórmula: los dos lados salen de las mismas funciones que
+ * ya usan el panel y la serie, y por eso no pueden divergir en silencio.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ CON DATOS CONSISTENTES SIEMPRE CUADRA (y para qué sirve entonces)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Cada movimiento del mes mueve los saldos en exactamente la misma medida en
+ * que entra en el ahorro: un INCOME suma en los dos lados, un EXPENSE resta en
+ * los dos, una TRANSFER mueve una cuenta para abajo y otra para arriba —su
+ * efecto neto en el patrimonio es CERO, igual que su lugar en el ahorro— y el
+ * capital de una cuota es una transferencia al préstamo, que baja el activo y
+ * la deuda por igual. Los saldos iniciales son constantes y se cancelan entre
+ * las dos fotos. O sea: la identidad es un TEOREMA del modelo, no una
+ * coincidencia que a veces falla.
+ *
+ * Precisamente por eso vale la pena medirla: el día que NO cuadre, alguna de
+ * las suposiciones se rompió —una consulta que cuenta de más, una escritura por
+ * afuera de la app, un cambio de esquema que dejó un camino atrás— y este
+ * número es el único lugar donde eso se ve. Su contrato es mostrar la
+ * diferencia, nunca esconderla.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL MES EN CURSO (y qué ventana se compara)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Las dos puntas usan la MISMA ventana: un mes cerrado se corta en su último
+ * día; el mes en curso se corta en `anchor` (hoy) para ambos lados, porque
+ * comparar una variación parcial contra el ahorro de un mes completo —o dejar
+ * que un movimiento cargado con fecha futura entre sólo en un lado— sería
+ * comparar ventanas distintas y el control daría una falsa alarma. El mes
+ * viaja marcado `partial` para que la interfaz lo diga.
+ *
+ * Un mes futuro (ancla anterior a su inicio) se corta en su fin de mes, igual
+ * que uno cerrado: si hay movimientos precargados, reconcilian entre ellos, y
+ * si no hay ninguno da 0,00 = 0,00.
+ *
+ * @param month Mes calendario `"YYYY-MM"`.
+ * @param anchor Día hasta el cual mirar (`YYYY-MM-DD`). Por defecto, hoy.
+ *               Existe para que los tests fijen una fecha y la comparación no
+ *               dependa del día en que se corran.
+ * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ */
+export async function getMonthReconciliation(
+  db: Db,
+  options: { month: string; anchor?: CalendarDate },
+): Promise<ReconciliationDTO> {
+  const monthStart = `${options.month}-01`;
+  const monthEnd = endOfMonth(monthStart);
+  const anchor = options.anchor ?? todayCalendar();
+
+  // Los tres casos, con el corte de la foto del mes ya resuelto:
+  //   · mes cerrado → fin de mes;
+  //   · mes en curso → hoy (parcial, salvo que hoy sea el último día);
+  //   · mes futuro → fin de mes (los precargados reconcilian entre ellos).
+  const closed = monthEnd < anchor;
+  const current = monthStart <= anchor && anchor <= monthEnd;
+  const asOfEnd = closed ? monthEnd : current ? anchor : monthEnd;
+
+  // El corte de la foto anterior es siempre el último día del mes anterior.
+  const asOfStart = endOfMonth(addMonths(monthStart, -1));
+
+  // Las tres consultas van en paralelo y ninguna depende de las otras. La
+  // ventana del lado del ahorro es [inicio del mes, corte]: exactamente el mismo
+  // conjunto de movimientos que separa a las dos fotos de saldos.
+  const [before, after, totals] = await Promise.all([
+    getNetWorth(db, { asOf: asOfStart }),
+    getNetWorth(db, { asOf: asOfEnd }),
+    movementTotals(db, {
+      date: {
+        gte: calendarToDb(monthStart),
+        lte: calendarToDb(asOfEnd),
+      },
+    }),
+  ]);
+
+  // La aritmética final es de `lib/money`: Decimal exacto, sin `Number` en el
+  // medio. `netDelta − saving` es el número que se muestra tal cual, y `isZero`
+  // (y no un redondeo ni un épsilon) es el único criterio de "cuadra".
+  const netDelta = after.net.minus(before.net);
+  const saving = money(totals.income).minus(totals.expenses);
+  const difference = netDelta.minus(saving);
+  const balanced = isZero(difference);
+
+  return {
+    month: options.month,
+    netStart: before.net.toFixed(2),
+    netEnd: after.net.toFixed(2),
+    netDelta: netDelta.toFixed(2),
+    saving: saving.toFixed(2),
+    // Cuando cuadra se normaliza a "0.00": un difference "-0.00" haría que la
+    // pantalla muestre un menos delante de un cero que no significa nada.
+    difference: balanced ? zero().toFixed(2) : difference.toFixed(2),
+    balanced,
+    partial: asOfEnd < monthEnd,
+    cutAt: asOfEnd,
+  };
 }
 
 /**

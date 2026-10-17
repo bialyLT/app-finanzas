@@ -130,8 +130,8 @@ env:
 
 # El panel recarga sin navegar: la página queda scrolleada sobre los botones y
 # las tarjetas fuera de la vista (assertNotVisible de más abajo aprobaría sin
-# verificar —trampa 7—). Se espera el cierre del modal y se vuelve arriba con el
-# ancla del mes, igual que el flujo 03.
+# verificar —trampa 7—). Se espera el cierre del modal y se vuelve arriba
+# anclando en el ID del selector de mes, igual que el flujo 03.
 - extendedWaitUntil:
     notVisible:
       id: "tx-submit"
@@ -139,10 +139,9 @@ env:
 
 - scrollUntilVisible:
     element:
-      text: ".*octubre de 2026.*"
+      id: "btn-next-month"
     direction: UP
     timeout: 30000
-    centerElement: true
 
 # ── La plata se movió… ───────────────────────────────────────────────────────
 # El banco bajó 50.000 y el efectivo subió 50.000. Las dos cosas son ciertas.
