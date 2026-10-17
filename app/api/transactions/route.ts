@@ -17,6 +17,7 @@ import {
   movementTotals,
   toMovementDTO,
 } from "@/lib/queries";
+import { RecurrenceError, deleteMovement } from "@/lib/recurring";
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -150,6 +151,12 @@ export async function POST(req: Request) {
     body = await req.json();
   } catch {
     return badRequest("El cuerpo de la petición no es JSON válido.");
+  }
+  // `null` es JSON válido pero no es un objeto: sin este chequeo, `body.kind`
+  // explotaba con un TypeError fuera del try de arriba y la respuesta era un
+  // 500 sin explicación. Un cuerpo rechazable es un 400, no un error del server.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return badRequest("El cuerpo de la petición tiene que ser un objeto JSON.");
   }
 
   const kind = body.kind;
@@ -311,6 +318,23 @@ export async function POST(req: Request) {
  * cargar; no hay motivo para prohibirlo. Lo que NO se permite es borrar una
  * cuenta con movimientos (ver PATCH /api/accounts), porque ahí se perdería el
  * historial de varios meses de una sola vez.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SI EL MOVIMIENTO VINO DE UNA REGLA, LA OCURRENCIA SE REABRE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * El borrado pasa por `deleteMovement` (lib/recurring.ts), que en la misma
+ * transacción devuelve la ocurrencia a PENDING antes de borrar el movimiento.
+ * Podría parecer que el `SetNull` del FK alcanza, pero no: la ocurrencia
+ * quedaría en POSTED sin movimiento, y el CHECK `occurrence_shape_by_status`
+ * exige que una POSTED TENGA uno — el delete fallaría con un error de
+ * integridad que no explica nada.
+ *
+ * Consecuencia deliberada: si la regla es AUTO, la ocurrencia reabierta NO se
+ * re-postea sola — queda esperando en la bandeja (decisión D5, documentada en
+ * `lib/recurring.ts`). Borrar el movimiento significa "esto no pasó";
+ * recrearlo solos en la próxima corrida sería pelearse con la persona (la plata
+ * "reaparecería" después de borrarla). Para que la promesa deje de regir, se
+ * pausa o se archiva la regla.
  */
 export async function DELETE(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
@@ -322,20 +346,16 @@ export async function DELETE(req: Request) {
   if (!id) return badRequest("Falta el id del movimiento.");
 
   try {
-    await prisma.movement.delete({ where: { id } });
+    await deleteMovement(prisma, id);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    // P2025 = no existe. Devuelve 404 en vez de 500: no es un fallo del
-    // servidor, es una petición sobre algo que ya no está (por ejemplo, dos
-    // pestañas abiertas y el movimiento borrado en la otra).
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      (error as { code?: string }).code === "P2025"
-    ) {
+    // El 404 llega del servicio: no es un fallo del servidor, es una petición
+    // sobre algo que ya no está (por ejemplo, dos pestañas abiertas y el
+    // movimiento borrado en la otra).
+    if (error instanceof RecurrenceError) {
       return NextResponse.json(
-        { error: "Ese movimiento ya no existe." },
-        { status: 404 },
+        { error: error.message },
+        { status: error.status },
       );
     }
 

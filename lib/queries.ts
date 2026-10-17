@@ -1214,6 +1214,55 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     message:
       "Los datos de préstamo (monto, tasa, cuotas) sólo se cargan en cuentas de tipo préstamo.",
   },
+  // ── Recurrencia (Fase 3) ───────────────────────────────────────────────────
+  // Una regla es la PROMESA de un movimiento: se le exigen las mismas reglas de
+  // forma que a `Movement`, para que el error no aparezca meses después, en el
+  // posteo, lejos de la regla que se cargó mal. Los nombres son los de la
+  // migración `20261017144659_recurrencia`.
+  {
+    marker: "recurrence_amount_positive",
+    status: 400,
+    message: "El monto de la regla tiene que ser mayor a cero.",
+  },
+  {
+    marker: "recurrence_shape_by_kind",
+    status: 400,
+    message:
+      "Los datos no corresponden a ese tipo de regla: una transferencia no lleva categoría, y un ingreso o un gasto no llevan cuenta de destino.",
+  },
+  {
+    marker: "recurrence_transfer_to_other_account",
+    status: 400,
+    message: "Una transferencia tiene que ir a una cuenta distinta.",
+  },
+  {
+    marker: "recurrence_interval_positive",
+    status: 400,
+    message:
+      "El intervalo de una regla tiene que ser al menos 1: \"cada 0 meses\" no es una recurrencia.",
+  },
+  {
+    marker: "recurrence_dayofmonth_range",
+    status: 400,
+    message:
+      "El día del mes tiene que estar entre 1 y 31, y sólo se usa en reglas mensuales o anuales.",
+  },
+  {
+    marker: "recurrence_end_after_start",
+    status: 400,
+    message: "La fecha de fin de la regla no puede ser anterior a la de inicio.",
+  },
+  {
+    marker: "recurrence_count_positive",
+    status: 400,
+    message: "La cantidad de ocurrencias de una regla tiene que ser al menos 1.",
+  },
+  {
+    marker: "occurrence_shape_by_status",
+    status: 500,
+    message:
+      "El estado de una ocurrencia y sus datos no coinciden. Es un error de integridad de la app, no de la petición.",
+  },
   {
     marker: "[finanzas:pasivo_no_recibe_ingreso]",
     status: 400,

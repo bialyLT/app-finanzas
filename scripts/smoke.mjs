@@ -137,10 +137,15 @@ async function main() {
   if (shouldReset) {
     section("Preparando la base");
     const prisma = new PrismaClient();
-    // El orden importa: primero los movimientos, después lo demás. La clave
-    // foránea de Movement → Account es `Restrict`, así que borrar las cuentas
-    // antes fallaría.
+    // El orden importa. Las OCURRENCIAS van primero: borrar un movimiento
+    // posteado dispara el `SetNull` del FK y dejaría la ocurrencia en POSTED
+    // sin movimiento, que el CHECK `occurrence_shape_by_status` rechaza (el
+    // DELETE fallaría). Después los movimientos (la FK a Account es `Restrict`:
+    // borrar las cuentas antes fallaría) y por último reglas, categorías y
+    // cuentas.
+    await prisma.recurrenceOccurrence.deleteMany();
     await prisma.movement.deleteMany();
+    await prisma.recurrenceRule.deleteMany();
     await prisma.category.deleteMany();
     await prisma.account.deleteMany();
     await prisma.$disconnect();
@@ -168,6 +173,142 @@ async function main() {
       headers: { Origin: BASE_URL },
     });
     check("sin sesión, /api/debts responde 401", deudaSinSesion.status, 401);
+
+    // Las rutas de la recurrencia también: las cuatro, una por una. Un
+    // generador que se pueda disparar sin sesión postearía movimientos para
+    // cualquiera que conozca la URL.
+    const recGetSinSesion = await fetch(`${BASE_URL}/api/recurrence`, {
+      headers: { Origin: BASE_URL },
+    });
+    check("sin sesión, GET /api/recurrence responde 401", recGetSinSesion.status, 401);
+
+    const recRunSinSesion = await fetch(`${BASE_URL}/api/recurrence/run`, {
+      method: "POST",
+      headers: { Origin: BASE_URL },
+    });
+    check("sin sesión, POST /api/recurrence/run responde 401", recRunSinSesion.status, 401);
+
+    const recReglasSinSesion = await fetch(`${BASE_URL}/api/recurrence/rules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({}),
+    });
+    check("sin sesión, POST /api/recurrence/rules responde 401", recReglasSinSesion.status, 401);
+
+    const recOcurrenciasSinSesion = await fetch(`${BASE_URL}/api/recurrence/occurrences`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({}),
+    });
+    check(
+      "sin sesión, POST /api/recurrence/occurrences responde 401",
+      recOcurrenciasSinSesion.status,
+      401,
+    );
+
+    // Y las MISMAS escrituras, ahora CON sesión pero con `Origin` ajeno: acá
+    // actúa la segunda capa anti-CSRF (`assertSameOrigin`, además de
+    // `SameSite=Lax`). Si esto no diera 403, un sitio externo podría disparar
+    // el generador o crear reglas en nombre de la persona logueada.
+    const conOrigenAjeno = (path, options = {}) =>
+      fetch(`${BASE_URL}${path}`, {
+        ...options,
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://evil.example",
+          Cookie: cookie,
+        },
+      });
+
+    const runAjeno = await conOrigenAjeno("/api/recurrence/run", {
+      method: "POST",
+      body: "{}",
+    });
+    check("con Origin ajeno, POST /api/recurrence/run responde 403", runAjeno.status, 403);
+
+    const reglasAjenas = await conOrigenAjeno("/api/recurrence/rules", {
+      method: "POST",
+      body: JSON.stringify({ title: "x" }),
+    });
+    check("con Origin ajeno, POST /api/recurrence/rules responde 403", reglasAjenas.status, 403);
+
+    const patchAjeno = await conOrigenAjeno("/api/recurrence/rules", {
+      method: "PATCH",
+      body: JSON.stringify({ id: "x" }),
+    });
+    check("con Origin ajeno, PATCH /api/recurrence/rules responde 403", patchAjeno.status, 403);
+
+    const deleteAjeno = await conOrigenAjeno("/api/recurrence/rules?id=x", {
+      method: "DELETE",
+    });
+    check("con Origin ajeno, DELETE /api/recurrence/rules responde 403", deleteAjeno.status, 403);
+
+    const ocurrenciaAjena = await conOrigenAjeno("/api/recurrence/occurrences", {
+      method: "POST",
+      body: JSON.stringify({ id: "x", action: "accept" }),
+    });
+    check(
+      "con Origin ajeno, POST /api/recurrence/occurrences responde 403",
+      ocurrenciaAjena.status,
+      403,
+    );
+  }
+
+  // ── Cuerpos hostiles ───────────────────────────────────────────────────────
+  // Un JSON VÁLIDO no es lo mismo que un objeto: `null`, `"hola"`, `42` y
+  // `[1,2]` parsean sin error, así que envolver `req.json()` en try/catch no
+  // alcanza. Si el cuerpo llega como `null` literal y la ruta lee `body.algo`,
+  // el TypeError cae FUERA del try y el cliente ve un 500 que no explica nada
+  // (así lo encontró la batería del tester: "reading 'title'", "reading
+  // 'name'"). Contrato: todo cuerpo que no sea un objeto JSON se rechaza con
+  // 400 y un mensaje que diga por qué.
+  section("Cuerpos hostiles (400, nunca 500)");
+  {
+    const conCuerpoCrudo = (path, method, raw) =>
+      fetch(`${BASE_URL}${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Origin: BASE_URL,
+          Cookie: cookie,
+        },
+        body: raw,
+      });
+
+    const casosHostiles = [
+      ["null", "null"],
+      ["texto", '"hola"'],
+      ["número", "42"],
+      ["array", "[1,2]"],
+    ];
+
+    const rutasConCuerpo = [
+      ["/api/accounts", "POST"],
+      ["/api/accounts", "PATCH"],
+      ["/api/categories", "POST"],
+      ["/api/transactions", "POST"],
+      ["/api/recurrence/rules", "POST"],
+      ["/api/recurrence/rules", "PATCH"],
+      ["/api/recurrence/occurrences", "POST"],
+    ];
+
+    for (const [path, method] of rutasConCuerpo) {
+      for (const [nombreCaso, raw] of casosHostiles) {
+        const respuesta = await conCuerpoCrudo(path, method, raw);
+        check(`${method} ${path} · cuerpo ${nombreCaso} responde 400`, respuesta.status, 400);
+
+        // El caso `null` además tiene que EXPLICAR qué está mal: un 400 mudo
+        // obliga a adivinar (y a leer el código) al que escribe un cliente.
+        if (nombreCaso === "null") {
+          const cuerpo = await respuesta.json().catch(() => null);
+          checkTrue(
+            `${method} ${path} · cuerpo null explica el motivo`,
+            typeof cuerpo?.error === "string" && cuerpo.error.includes("objeto JSON"),
+            `body: ${JSON.stringify(cuerpo)}`,
+          );
+        }
+      }
+    }
   }
 
   if (checkOnly) {
@@ -1189,6 +1330,490 @@ async function main() {
       (m) => m.kind === "TRANSFER",
     );
     check("el desembolso del 30/09 aparece en septiembre", desembolsos.length, 1);
+  }
+
+  // ── Recurrencia: el generador "desde la última vez" ────────────────────────
+  //
+  // La recurrencia no tiene cron: el disparador es `POST /api/recurrence/run`,
+  // que materializa las fechas vencidas que todavía no existen. Se prueba
+  // contra el reloj REAL del servidor —la misma decisión que el resto del
+  // archivo— y con DELTAS: los montos de hoy se comparan contra la foto tomada
+  // al empezar este bloque, no contra constantes, porque puede correr en
+  // cualquier día del mes.
+  //
+  // El bloque va DESPUÉS de todas las verificaciones de octubre (los movimientos
+  // que postea se fechan HOY, que cae dentro del mes sembrado) y limpia todo al
+  // final: la base queda con el seed y sin ninguna regla activa.
+  section("Recurrencia · el generador \"desde la última vez\"");
+  {
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const ahora = new Date();
+    const HOY = `${ahora.getFullYear()}-${pad2(ahora.getMonth() + 1)}-${pad2(ahora.getDate())}`;
+    const mesDeHoy = HOY.slice(0, 7);
+    const finDeMesDeHoy = `${mesDeHoy}-${pad2(new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0).getDate())}`;
+    const enDias = (dias) => {
+      const d = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate() + dias);
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    };
+
+    // Los totales del mes de HOY, en centavos, para comparar por diferencia.
+    const totalesDeHoy = async () =>
+      (await api(`/api/transactions?from=${mesDeHoy}-01&to=${finDeMesDeHoy}`)).body?.totals;
+    const centavos = (valor) => Math.round(Number(valor) * 100);
+    const desdeCentavos = (valor) => (valor / 100).toFixed(2);
+
+    // ── Punto de partida: sin reglas y con la bandeja vacía ──────────────────
+    const { body: vacia } = await api("/api/recurrence");
+    check("la vista de recurrencia arranca sin reglas", vacia?.rules?.length, 0);
+    check("y con la bandeja vacía", vacia?.pending?.length, 0);
+
+    const base = await totalesDeHoy();
+
+    const corridaVacia = await post("/api/recurrence/run", {});
+    check("una corrida sin reglas responde 200", corridaVacia.status, 200);
+    check("y no materializa nada", corridaVacia.body?.materialized, 0);
+    check(
+      "el \"hoy\" de la corrida es el reloj local del servidor",
+      corridaVacia.body?.today,
+      HOY,
+    );
+    checkTrue(
+      "y no avisa trabajo recortado (capped)",
+      corridaVacia.body?.capped === false,
+    );
+
+    // ── Una regla NOTIFY: la ocurrencia espera en la bandeja ─────────────────
+    // El ancla del día del mes es el día de HOY a propósito: la primera
+    // ocurrencia cae HOY, que es la fecha que el generador tiene que materializar.
+    const diaDeHoy = ahora.getDate();
+    const reglaAviso = await post("/api/recurrence/rules", {
+      title: "Alquiler del estudio",
+      kind: "EXPENSE",
+      amount: "5000",
+      accountId: banco.body?.id,
+      categoryName: "Comida",
+      freq: "MONTHLY",
+      dayOfMonth: diaDeHoy,
+      startDate: HOY,
+    });
+    const idAviso = reglaAviso.body?.id;
+    check("crea la regla NOTIFY (201)", reglaAviso.status, 201);
+    check(
+      "nace ACTIVE y en modo NOTIFY (el default)",
+      `${reglaAviso.body?.status}/${reglaAviso.body?.postingMode}`,
+      "ACTIVE/NOTIFY",
+    );
+    checkTrue(
+      "la proyección de \"lo que viene\" arranca después de hoy",
+      String(reglaAviso.body?.upcoming?.[0] ?? "") > HOY,
+      JSON.stringify(reglaAviso.body?.upcoming),
+    );
+
+    const { body: sinCorrer } = await api("/api/recurrence");
+    check("la regla ya se ve en la vista", sinCorrer?.rules?.length, 1);
+    check("pero el GET no materializó nada (no escribe)", sinCorrer?.pending?.length, 0);
+
+    const corridaAviso = await post("/api/recurrence/run", {});
+    check("la corrida materializa la ocurrencia de HOY", corridaAviso.body?.materialized, 1);
+    check("en modo NOTIFY queda pendiente (no postea sola)", corridaAviso.body?.pending, 1);
+    check(
+      "y una pendiente NO es plata: los gastos no se movieron",
+      (await totalesDeHoy())?.expenses,
+      base?.expenses,
+    );
+
+    const { body: conPendiente } = await api("/api/recurrence");
+    const pendiente = conPendiente?.pending?.[0];
+    check("la bandeja la muestra con la fecha de HOY", pendiente?.dueDate, HOY);
+    check("con el título de la regla", pendiente?.title, "Alquiler del estudio");
+    check("y el monto de la regla", pendiente?.amount, "5000.00");
+
+    const corridaRepetida = await post("/api/recurrence/run", {});
+    check("correr dos veces no materializa de nuevo", corridaRepetida.body?.materialized, 0);
+    check("ni duplica la pendiente", (await api("/api/recurrence")).body?.pending?.length, 1);
+
+    // ── Aceptar: nace el movimiento con la fecha de la OCURRENCIA ────────────
+    const aceptada = await post("/api/recurrence/occurrences", {
+      id: pendiente?.id,
+      action: "accept",
+    });
+    check("aceptar responde 201", aceptada.status, 201);
+    checkTrue("y avisa que creó el movimiento", aceptada.body?.created === true);
+    check("la ocurrencia queda POSTED", aceptada.body?.occurrence?.status, "POSTED");
+    check(
+      "el movimiento se fecha HOY (la fecha de la ocurrencia)",
+      aceptada.body?.occurrence?.movement?.date,
+      HOY,
+    );
+    check(
+      "con la descripción de la regla",
+      aceptada.body?.occurrence?.movement?.description,
+      "Alquiler del estudio",
+    );
+    check(
+      "y el monto exacto",
+      aceptada.body?.occurrence?.movement?.amount,
+      "5000.00",
+    );
+    check(
+      "recién ahí el gasto de hoy sube 5.000,00",
+      (await totalesDeHoy())?.expenses,
+      desdeCentavos(centavos(base?.expenses) + 500_000),
+    );
+
+    // Aceptar es idempotente: la misma ocurrencia devuelve el MISMO movimiento.
+    const reAceptada = await post("/api/recurrence/occurrences", {
+      id: pendiente?.id,
+      action: "accept",
+    });
+    check("aceptar de nuevo responde 200 (ya estaba posteada)", reAceptada.status, 200);
+    checkTrue("y no crea un duplicado (created: false)", reAceptada.body?.created === false);
+    check(
+      "sino que devuelve el mismo movimiento",
+      reAceptada.body?.occurrence?.movement?.id,
+      aceptada.body?.occurrence?.movement?.id,
+    );
+    check(
+      "los totales no se movieron de nuevo",
+      (await totalesDeHoy())?.expenses,
+      desdeCentavos(centavos(base?.expenses) + 500_000),
+    );
+
+    // ── Saltar: la fecha queda marcada y NO se vuelve a generar ──────────────
+    const reglaSaltada = await post("/api/recurrence/rules", {
+      title: "Gimnasio",
+      kind: "EXPENSE",
+      amount: "3000",
+      accountId: banco.body?.id,
+      categoryName: "Comida",
+      freq: "MONTHLY",
+      dayOfMonth: diaDeHoy,
+      startDate: HOY,
+    });
+    const idSaltada = reglaSaltada.body?.id;
+    check("crea la segunda regla (201)", reglaSaltada.status, 201);
+
+    await post("/api/recurrence/run", {});
+    const { body: conDos } = await api("/api/recurrence");
+    const gimnasio = (conDos?.pending ?? []).find((p) => p.title === "Gimnasio");
+    checkTrue("su ocurrencia también espera en la bandeja", Boolean(gimnasio?.id));
+
+    const saltada = await post("/api/recurrence/occurrences", {
+      id: gimnasio?.id,
+      action: "skip",
+    });
+    check("saltar responde 200", saltada.status, 200);
+    check("y la ocurrencia queda SKIPPED", saltada.body?.occurrence?.status, "SKIPPED");
+
+    const corridaPosterior = await post("/api/recurrence/run", {});
+    check(
+      "la corrida siguiente NO la vuelve a generar",
+      corridaPosterior.body?.materialized,
+      0,
+    );
+    const { body: sinGimnasio } = await api("/api/recurrence");
+    checkTrue(
+      "y no reaparece en la bandeja",
+      !(sinGimnasio?.pending ?? []).some((p) => p.title === "Gimnasio"),
+    );
+    check(
+      "los totales siguen sin la saltada",
+      (await totalesDeHoy())?.expenses,
+      desdeCentavos(centavos(base?.expenses) + 500_000),
+    );
+
+    // ── Una regla AUTO: postea sola en la corrida ────────────────────────────
+    const reglaAuto = await post("/api/recurrence/rules", {
+      title: "Sueldo de prueba",
+      kind: "INCOME",
+      amount: "2000",
+      accountId: banco.body?.id,
+      categoryName: "Sueldo",
+      freq: "MONTHLY",
+      dayOfMonth: diaDeHoy,
+      startDate: HOY,
+      postingMode: "AUTO",
+    });
+    const idAuto = reglaAuto.body?.id;
+    check("crea la regla AUTO (201)", reglaAuto.status, 201);
+
+    const corridaAuto = await post("/api/recurrence/run", {});
+    check("la corrida la postea sola", corridaAuto.body?.posted, 1);
+    check("y no la deja pendiente", corridaAuto.body?.pending, 0);
+    check(
+      "el ingreso de hoy sube 2.000,00",
+      (await totalesDeHoy())?.income,
+      desdeCentavos(centavos(base?.income) + 200_000),
+    );
+
+    const { body: movsRec } = await api(
+      `/api/transactions?from=${mesDeHoy}-01&to=${finDeMesDeHoy}`,
+    );
+    const autoMov = (movsRec?.movements ?? []).find(
+      (m) => m.description === "Sueldo de prueba",
+    );
+    check("el movimiento existe, fechado HOY", autoMov?.date, HOY);
+    check("y es un INCOME", autoMov?.kind, "INCOME");
+
+    // ── Borrar el movimiento reabre la ocurrencia (y NO se re-postea sola) ───
+    const borrado = await api(`/api/transactions?id=${autoMov?.id}`, {
+      method: "DELETE",
+    });
+    check("borrar el movimiento responde 204", borrado.status, 204);
+    check(
+      "y el ingreso de hoy vuelve al punto de partida",
+      (await totalesDeHoy())?.income,
+      base?.income,
+    );
+
+    const corridaReabierta = await post("/api/recurrence/run", {});
+    check(
+      "la corrida siguiente NO la re-postea (no se pelea con la persona)",
+      corridaReabierta.body?.posted,
+      0,
+    );
+    check("ni materializa nada nuevo", corridaReabierta.body?.materialized, 0);
+
+    const { body: reabierta } = await api("/api/recurrence");
+    const pendienteReabierta = (reabierta?.pending ?? []).find(
+      (p) => p.title === "Sueldo de prueba",
+    );
+    check("la ocurrencia reabierta espera en la bandeja", pendienteReabierta?.dueDate, HOY);
+
+    const reAceptar = await post("/api/recurrence/occurrences", {
+      id: pendienteReabierta?.id,
+      action: "accept",
+    });
+    check("aceptarla a mano la vuelve a postear (201)", reAceptar.status, 201);
+    check(
+      "y el ingreso queda como antes de borrarlo",
+      (await totalesDeHoy())?.income,
+      desdeCentavos(centavos(base?.income) + 200_000),
+    );
+
+    // ── Una regla futura: HOY no materializa, y se ve en "lo que viene" ──────
+    const futuro = enDias(5);
+    const reglaFutura = await post("/api/recurrence/rules", {
+      title: "Curso de inglés",
+      kind: "EXPENSE",
+      amount: "1000",
+      accountId: banco.body?.id,
+      categoryName: "Comida",
+      freq: "DAILY",
+      startDate: futuro,
+    });
+    check("crea la regla futura (201)", reglaFutura.status, 201);
+    check("su próxima fecha es HOY + 5 días", reglaFutura.body?.upcoming?.[0], futuro);
+
+    const corridaFutura = await post("/api/recurrence/run", {});
+    check(
+      "la corrida no materializa nada de la regla futura",
+      corridaFutura.body?.materialized,
+      0,
+    );
+
+    const { body: conFutura } = await api("/api/recurrence");
+    const futura = (conFutura?.rules ?? []).find((r) => r.title === "Curso de inglés");
+    check("la proyección tampoco es plata: es una fecha", futura?.upcoming?.[0], futuro);
+    checkTrue(
+      "y HOY no hay nada suyo en la bandeja",
+      !(conFutura?.pending ?? []).some((p) => p.title === "Curso de inglés"),
+    );
+
+    const borrarFutura = await api(`/api/recurrence/rules?id=${futura?.id}`, {
+      method: "DELETE",
+    });
+    check("una regla vacía se borra (204)", borrarFutura.status, 204);
+    const { body: sinFutura } = await api("/api/recurrence");
+    checkTrue(
+      "y desaparece de la vista",
+      !(sinFutura?.rules ?? []).some((r) => r.title === "Curso de inglés"),
+    );
+
+    // ── Lo que la API rechaza antes de crear nada ────────────────────────────
+    const reglaBase = {
+      title: "Regla de prueba",
+      kind: "EXPENSE",
+      amount: "1000",
+      accountId: banco.body?.id,
+      categoryName: "Comida",
+      freq: "MONTHLY",
+      startDate: HOY,
+    };
+
+    const freqMala = await post("/api/recurrence/rules", {
+      ...reglaBase,
+      freq: "A_VECES",
+    });
+    check("una frecuencia inválida → 400", freqMala.status, 400);
+
+    const domEnDiaria = await post("/api/recurrence/rules", {
+      ...reglaBase,
+      freq: "DAILY",
+      dayOfMonth: 15,
+    });
+    check("un día del mes en una regla diaria → 400", domEnDiaria.status, 400);
+
+    const sinDestino = await post("/api/recurrence/rules", {
+      title: "Transferencia de prueba",
+      kind: "TRANSFER",
+      amount: "1000",
+      accountId: banco.body?.id,
+      freq: "MONTHLY",
+      startDate: HOY,
+    });
+    check("una transferencia sin destino → 400", sinDestino.status, 400);
+    checkTrue(
+      "y lo explica",
+      typeof sinDestino.body?.error === "string" &&
+        sinDestino.body.error.includes("destino"),
+      JSON.stringify(sinDestino.body),
+    );
+
+    const ingresoAPrestamo = await post("/api/recurrence/rules", {
+      title: "Ingreso imposible",
+      kind: "INCOME",
+      amount: "1000",
+      accountId: prestamo.body?.id,
+      categoryName: "Sueldo",
+      freq: "MONTHLY",
+      startDate: HOY,
+    });
+    check("un ingreso hacia un préstamo → 400 (el trigger de la base)", ingresoAPrestamo.status, 400);
+    checkTrue(
+      "y sugiere la transferencia, igual que un movimiento",
+      typeof ingresoAPrestamo.body?.error === "string" &&
+        ingresoAPrestamo.body.error.includes("transferencia"),
+      JSON.stringify(ingresoAPrestamo.body),
+    );
+
+    const montoCero = await post("/api/recurrence/rules", {
+      ...reglaBase,
+      amount: "0",
+    });
+    check("un monto de cero → 400", montoCero.status, 400);
+
+    const { body: trasRechazos } = await api("/api/recurrence");
+    check("ningún rechazo dejó una regla creada", trasRechazos?.rules?.length, 3);
+
+    // ── PATCH: parcial, pero validado sobre la regla ENTERA ──────────────────
+    const auto = (trasRechazos?.rules ?? []).find((r) => r.title === "Sueldo de prueba");
+
+    const patchInvalido = await api("/api/recurrence/rules", {
+      method: "PATCH",
+      body: JSON.stringify({ id: auto?.id, kind: "TRANSFER" }),
+    });
+    check(
+      "cambiar a TRANSFER sin destino → 400 (se valida lo mezclado)",
+      patchInvalido.status,
+      400,
+    );
+
+    const patchMonto = await api("/api/recurrence/rules", {
+      method: "PATCH",
+      body: JSON.stringify({ id: auto?.id, amount: "2500" }),
+    });
+    check("el PATCH del monto responde 200", patchMonto.status, 200);
+    check("y el monto nuevo queda", patchMonto.body?.amount, "2500.00");
+    check("sin tocar lo que no vino (la frecuencia sigue mensual)", patchMonto.body?.freq, "MONTHLY");
+
+    const patchArchivar = await api("/api/recurrence/rules", {
+      method: "PATCH",
+      body: JSON.stringify({ id: auto?.id, status: "ARCHIVED" }),
+    });
+    check("archivar por PATCH responde 200", patchArchivar.status, 200);
+    const { body: conArchivada } = await api("/api/recurrence");
+    check("archivar es salir de la vista, no borrar", conArchivada?.rules?.length, 2);
+    checkTrue(
+      "la archivada ya no aparece",
+      !(conArchivada?.rules ?? []).some((r) => r.title === "Sueldo de prueba"),
+    );
+
+    // ── Una regla con historia NO se borra: se archiva ───────────────────────
+    const borrarConHistoria = await api(`/api/recurrence/rules?id=${idSaltada}`, {
+      method: "DELETE",
+    });
+    check("borrar una regla con ocurrencias → 409", borrarConHistoria.status, 409);
+    checkTrue(
+      "y el mensaje manda a archivarla",
+      typeof borrarConHistoria.body?.error === "string" &&
+        borrarConHistoria.body.error.includes("Archivala"),
+      JSON.stringify(borrarConHistoria.body),
+    );
+
+    // ── Una categoría que usa una regla NO se borra (409, no 500) ────────────
+    // Borrarla dejaría la regla sin categoría y el CHECK `recurrence_shape_by_kind`
+    // prohíbe esa forma: sin el chequeo previo, el rechazo de Postgres salía como
+    // un 500 genérico que no decía nada. La salida es cambiarle la categoría a la
+    // regla (o borrar la regla si todavía no generó nada).
+    const crearCategoriaDeRegla = await post("/api/categories", {
+      name: "Categoría de regla de prueba",
+      kind: "EXPENSE",
+    });
+    const reglaConCategoria = await post("/api/recurrence/rules", {
+      title: "Regla de categoría de prueba",
+      kind: "EXPENSE",
+      amount: "1000",
+      accountId: banco.body?.id,
+      categoryName: "Categoría de regla de prueba",
+      freq: "MONTHLY",
+      startDate: enDias(30),
+    });
+
+    const borrarCategoriaUsada = await api(
+      `/api/categories?id=${crearCategoriaDeRegla.body?.id}`,
+      { method: "DELETE" },
+    );
+    check("borrar una categoría usada por una regla → 409", borrarCategoriaUsada.status, 409);
+    checkTrue(
+      "y el mensaje manda a cambiarle la categoría a la regla",
+      typeof borrarCategoriaUsada.body?.error === "string" &&
+        borrarCategoriaUsada.body.error.includes("regla de recurrencia"),
+      JSON.stringify(borrarCategoriaUsada.body),
+    );
+
+    // Se deshace: la regla (vacía, nunca corrió) se borra por la API y recién
+    // ahí la categoría queda libre.
+    const borrarReglaConCategoria = await api(
+      `/api/recurrence/rules?id=${reglaConCategoria.body?.id}`,
+      { method: "DELETE" },
+    );
+    check("la regla que la usaba se borra (vacía, 204)", borrarReglaConCategoria.status, 204);
+    const borrarCategoriaLibre = await api(
+      `/api/categories?id=${crearCategoriaDeRegla.body?.id}`,
+      { method: "DELETE" },
+    );
+    check("y la categoría, ya sin regla, se borra (200)", borrarCategoriaLibre.status, 200);
+
+    // ── Limpieza: la base queda como estaba ──────────────────────────────────
+    // Por Prisma directo porque las reglas con historia NO se borran por la API
+    // (eso es lo que acaba de verificar el 409). Las ocurrencias van PRIMERO:
+    // borrar un movimiento posteado dispararía el `SetNull` del FK y el CHECK
+    // `occurrence_shape_by_status` rechazaría el DELETE.
+    const prisma = new PrismaClient();
+    const idsDeEstaCorrida = [idAviso, idSaltada, idAuto].filter(Boolean);
+    await prisma.recurrenceOccurrence.deleteMany({
+      where: { ruleId: { in: idsDeEstaCorrida } },
+    });
+    await prisma.movement.deleteMany({
+      where: { recurrenceRuleId: { in: idsDeEstaCorrida } },
+    });
+    await prisma.recurrenceRule.deleteMany({ where: { id: { in: idsDeEstaCorrida } } });
+    await prisma.$disconnect();
+
+    const { body: final } = await api("/api/recurrence");
+    check("no quedan reglas", final?.rules?.length, 0);
+    check("ni pendientes", final?.pending?.length, 0);
+    const finDeLosTotales = await totalesDeHoy();
+    check(
+      "los gastos del mes volvieron al punto de partida",
+      finDeLosTotales?.expenses,
+      base?.expenses,
+    );
+    check("y también los ingresos", finDeLosTotales?.income, base?.income);
+
+    const corridaFinal = await post("/api/recurrence/run", {});
+    check("la corrida final no materializa nada", corridaFinal.body?.materialized, 0);
   }
 
   // ── Logout: CSRF y atributos de la cookie ──────────────────────────────────

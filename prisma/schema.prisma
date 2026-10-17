@@ -125,6 +125,62 @@ enum CategoryKind {
   EXPENSE
 }
 
+/// Cada cuánto se repite una regla de recurrencia.
+///
+/// Sólo cuatro frecuencias, y a propósito: son las que la persona realmente
+/// usa para las cuentas fijas (todos los días, todas las semanas, todos los
+/// meses, todos los años) y las cuatro se pueden expresar sobre fechas de
+/// CALENDARIO sin ambigüedad. "Cada 15 días" ya se escribe como `WEEKLY` con
+/// `interval = 2`, y "cada 2 meses" como `MONTHLY` con `interval = 2`.
+enum RecurFreq {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+/// Qué hace el sistema cuando una ocurrencia VENCE.
+///
+/// La distinción no es de comodidad: es la diferencia entre un hecho y una
+/// promesa. El sueldo que ya se acreditó es un hecho (AUTO). El alquiler que
+/// todavía no pagaste es una promesa (NOTIFY): la app te lo recuerda, pero no
+/// lo da por pagado sin que lo confirmes.
+enum PostingMode {
+  /// Postea el movimiento solo. La plata ya se movió: no hay nada que confirmar.
+  AUTO
+  /// Encola la ocurrencia en la bandeja para que la persona acepte o salte.
+  NOTIFY
+}
+
+/// Estado de una regla.
+///
+/// Es UN enum con tres valores mutuamente excluyentes y no dos booleanos
+/// (`active` + `archived`) por el mismo motivo por el que `MovementKind` define
+/// el signo: dos booleanos representan estados imposibles ("activa Y
+/// archivada") que después hay que defender en cada consulta.
+enum RecurrenceRuleStatus {
+  /// Genera ocurrencias.
+  ACTIVE
+  /// No genera nada, pero sigue a la vista para poder reactivarla.
+  PAUSED
+  /// Fuera de la vista. Las ocurrencias y movimientos que ya generó quedan.
+  ARCHIVED
+}
+
+/// Estado de UNA ocurrencia de una regla (una fila = una fecha del calendario).
+///
+/// La ocurrencia es el registro de "qué pasó con esta fecha": sin ella, saltar
+/// una ocurrencia sería un borrado —la próxima corrida del generador la
+/// volvería a crear— y el pasado se reescribiría solo.
+enum RecurrenceOccurrenceStatus {
+  /// Vencida y sin resolver: espera en la bandeja.
+  PENDING
+  /// Posteada: existe un movimiento con esta fecha. `movementId` lo apunta.
+  POSTED
+  /// Saltada a propósito. La marca QUEDA: esta fecha no se vuelve a generar.
+  SKIPPED
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Account — los bolsillos
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,18 +202,18 @@ model Account {
   /// Existe para que puedas empezar a usar la app HOY sin cargar tres años de
   /// movimientos viejos. En un préstamo ya desembolsado, acá va lo que todavía
   /// debés (en negativo).
-  openingBalance Decimal @db.Decimal(18,2) @default(0)
+  openingBalance Decimal @default(0) @db.Decimal(18, 2)
 
   // ── Parámetros del préstamo. Sólo se usan si kind = LOAN ──────────────────
 
   /// Monto original que te prestaron.
-  principal Decimal? @db.Decimal(18,2)
+  principal Decimal? @db.Decimal(18, 2)
 
   /// Tasa Nominal Anual en PORCENTAJE (60 significa 60% TNA, no 0,60).
   ///
   /// Se guarda el porcentaje y no la fracción porque es como lo dice el banco:
   /// "TNA 60%". Si guardásemos 0,60, alguien iba a asumir que 60 es 60.
-  tnaPercent Decimal? @db.Decimal(7,4)
+  tnaPercent Decimal? @db.Decimal(7, 4)
 
   /// Cuántas cuotas pactaste en total.
   installmentCount Int?
@@ -177,6 +233,12 @@ model Account {
 
   /// Transferencias que LLEGAN a esta cuenta.
   incomingTransfers Movement[] @relation("MovementToAccount")
+
+  /// Reglas de recurrencia que salen de esta cuenta (o donde entra el ingreso).
+  recurrenceRules RecurrenceRule[] @relation("RecurrenceRuleAccount")
+
+  /// Reglas de recurrencia cuyo destino es esta cuenta (sólo en TRANSFER).
+  incomingRecurrenceRules RecurrenceRule[] @relation("RecurrenceRuleToAccount")
 
   /// El nombre tiene que ser único: dos cuentas llamadas "Efectivo" harían
   /// que el usuario no sepa cuál está eligiendo.
@@ -213,6 +275,10 @@ model Category {
 
   movements Movement[]
 
+  /// Reglas de recurrencia que categorizan así sus ocurrencias. Se crean con la
+  /// misma deduplicación por nombre normalizado que los movimientos.
+  recurrenceRules RecurrenceRule[]
+
   @@unique([normalizedName])
   @@index([kind])
 }
@@ -233,7 +299,7 @@ model Movement {
   /// −500 sería un gasto que suma plata. Manteniendo el signo en el tipo, el
   /// dato no puede contradecirse a sí mismo. Hay un CHECK en la base que lo
   /// hace cumplir (ver la migración).
-  amount Decimal @db.Decimal(18,2)
+  amount Decimal @db.Decimal(18, 2)
 
   /// Fecha de CALENDARIO: sin hora, sin zona horaria. Ver la nota de arriba.
   date DateTime @db.Date
@@ -263,8 +329,31 @@ model Movement {
   toAccountId String?
   toAccount   Account? @relation("MovementToAccount", fields: [toAccountId], references: [id], onDelete: Restrict)
 
+  /// La regla de recurrencia que POSTEÓ este movimiento. NULL en los manuales.
+  ///
+  /// ───────────────────────────────────────────────────────────────────────────
+  /// POR QUÉ ES UNA RELACIÓN Y NO UN CAMPO `origin` CON VALORES
+  /// ───────────────────────────────────────────────────────────────────────────
+  /// "Este movimiento vino de una regla" ya está dicho por este id: un enum
+  /// `origin { MANUAL, RECURRENCE, LOAN_INSTALLMENT, CARD_STATEMENT, IMPORT }`
+  /// repetiría esa información en un segundo campo que puede contradecirla
+  /// (`origin = MANUAL` con `recurrenceRuleId` cargado) y prometería cuatro
+  /// orígenes que ningún camino de la app escribe todavía.
+  ///
+  /// La equivalencia es exacta: `recurrenceRuleId != null` ⇔ el movimiento lo
+  /// posteó una regla.
+  ///
+  /// `onDelete: Restrict`: una regla con movimientos NO se borra. Borrarla
+  /// dejaría movimientos huérfanos —plata que existe sin la regla que la
+  /// explica— y el historial es el producto (mismo criterio que `Account`).
+  recurrenceRuleId String?
+  recurrenceRule   RecurrenceRule? @relation("MovementRecurrence", fields: [recurrenceRuleId], references: [id], onDelete: Restrict)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  /// La ocurrencia que este movimiento cumplió, si vino de una regla.
+  recurrenceOccurrence RecurrenceOccurrence?
 
   // Índices pensados para las consultas reales de la app:
   // ordenar por fecha, filtrar por tipo+mes, y calcular el saldo de una cuenta.
@@ -273,4 +362,184 @@ model Movement {
   @@index([accountId, date])
   @@index([toAccountId, date])
   @@index([categoryId, date])
+  /// "Los movimientos de esta regla": lo que muestra la ficha de una regla.
+  @@index([recurrenceRuleId, date])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RecurrenceRule — "todos los meses, el día 1"
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Una regla de recurrencia: la promesa de que algo pasa cada tanto.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// REGLA + INSTANCIAS (la decisión central de la Fase 3)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// La regla describe el CALENDARIO (qué días vence, con qué frecuencia, hasta
+/// cuándo) y NO contiene plata. La plata aparece recién cuando una ocurrencia
+/// se postea, y queda en `Movement` como cualquier otro movimiento.
+///
+/// Esa separación es lo que hace posible el criterio de aceptación 4: una
+/// ocurrencia futura o pendiente no es un movimiento, así que no entra en
+/// ningún reporte de plata real (totales, patrimonio, reconciliación) porque
+/// esos reportes leen `Movement` y nada más.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// POR QUÉ NO HAY `nextOccurrence` (el boceto del ROADMAP lo tenía)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Un cursor guardado es un segundo origen de verdad frente a las ocurrencias
+/// ya materializadas, y el día que difieran (un borrado, una edición, un bug)
+/// el generador saltearía fechas o las repetiría en silencio. El "desde dónde
+/// sigo" se DERIVA del último `dueDate` de `RecurrenceOccurrence`, que es el
+/// registro que ya existe. Mismo criterio que el saldo de una cuenta, que se
+/// calcula y no se guarda (ver `GET /api/accounts`).
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// LA SEMÁNTICA DE `dayOfMonth` (el ancla)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// El día del mes se guarda como ANCLA (1..31) y se clampea contra el mes
+/// concreto cada vez: día 31 → 30 de abril, 28/29 de febrero y **de vuelta a
+/// 31** en marzo. Clampear el resultado anterior en vez del ancla dejaría la
+/// regla pegada al 28 para siempre después del primer febrero.
+///
+/// `dayOfMonth` nulo significa "el día de `startDate`". Sólo tiene sentido en
+/// MONTHLY y YEARLY; en DAILY y WEEKLY la API lo rechaza porque un parámetro
+/// que no hace nada es una mentira de la interfaz.
+model RecurrenceRule {
+  id String @id @default(cuid())
+
+  /// Nombre que ve la persona: "Alquiler", "Sueldo". Es también la
+  /// descripción que llevan los movimientos que postea la regla.
+  title String
+
+  kind MovementKind
+
+  /// Monto SIEMPRE POSITIVO, igual que en `Movement`. El signo lo da `kind`.
+  /// Un CHECK en la base lo hace cumplir.
+  amount Decimal @db.Decimal(18, 2)
+
+  /// Cuenta de origen (o donde entra el ingreso). Igual que en `Movement`.
+  accountId String
+  account   Account @relation("RecurrenceRuleAccount", fields: [accountId], references: [id], onDelete: Restrict)
+
+  /// Sólo TRANSFER: cuenta de destino. Un CHECK lo exige, como en `Movement`.
+  toAccountId String?
+  toAccount   Account? @relation("RecurrenceRuleToAccount", fields: [toAccountId], references: [id], onDelete: Restrict)
+
+  /// Obligatoria en INCOME y EXPENSE, prohibida en TRANSFER (CHECK).
+  ///
+  /// Es obligatoria por una razón concreta: el movimiento posteado tiene que
+  /// pasar el CHECK de `Movement` y esa regla es la misma. Si la regla pudiera
+  /// no tener categoría, el generador explotaría recién al postear.
+  ///
+  /// El FK es `SetNull`, pero una categoría usada por una regla NO se puede
+  /// borrar: el borrado intenta dejar `categoryId` en NULL, la fila resultante
+  /// viola `recurrence_shape_by_kind` y Postgres rechaza el DELETE entero. El
+  /// estado "regla sin categoría" no llega a existir (verificado en los tests
+  /// de integración de la Fase 3).
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  freq RecurFreq
+
+  /// Cada cuántas unidades de `freq`. Debe ser >= 1 (CHECK).
+  interval Int @default(1)
+
+  /// Ancla del día del mes (1..31). NULL = el día de `startDate`.
+  /// Sólo MONTHLY y YEARLY; un CHECK lo exige.
+  dayOfMonth Int?
+
+  /// Primer día en que la regla puede tener una ocurrencia. Ninguna fecha
+  /// anterior existe: una regla no tiene pasado antes de empezar.
+  startDate DateTime @db.Date
+
+  /// Última fecha inclusive. NULL = sin fin.
+  endDate DateTime? @db.Date
+
+  /// Cuántas ocurrencias produce la regla EN TOTAL, contando las saltadas
+  /// (saltar no deshace la ocurrencia: la marca). NULL = sin límite.
+  ///
+  /// El tope se aplica contra las ocurrencias YA MATERIALIZADAS, no contra una
+  /// cuenta que lleve el generador: la tabla de ocurrencias es el registro.
+  count Int?
+
+  postingMode PostingMode @default(NOTIFY)
+
+  status RecurrenceRuleStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// El calendario ya materializado: una fila por fecha.
+  occurrences RecurrenceOccurrence[]
+
+  /// Los movimientos que esta regla posteó.
+  movements Movement[] @relation("MovementRecurrence")
+
+  /// El generador busca por estado; la bandeja, por (estado, fecha) abajo.
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RecurrenceOccurrence — el registro de "qué pasó con esta fecha"
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Una fecha del calendario de una regla, con su estado.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// POR QUÉ LAS OCURRENCIAS SE PERSISTEN (y no se calculan al vuelo)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Tres cosas necesitan memoria propia, y ninguna se puede deducir del
+/// calendario:
+///
+///   1. SALTAR una ocurrencia. Si no hubiera fila, saltar sería "no hacer
+///      nada" y la próxima corrida la volvería a crear: el pasado se
+///      reescribiría solo. La marca es la fila con `status = SKIPPED`.
+///   2. El POSTEO. `movementId` dice cuál movimiento la cumplió, y el vínculo
+///      es único en los dos sentidos (ver los índices).
+///   3. El "desde dónde sigo" del generador: el último `dueDate` materializado.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// EL DOBLE POSTEO ES IMPOSIBLE POR CONSTRUCCIÓN
+/// ─────────────────────────────────────────────────────────────────────────────
+///   · `@@unique([ruleId, dueDate])` → una fecha de una regla existe UNA vez.
+///     Dos corridas simultáneas del generador insertan lo mismo y la segunda no
+///     puede duplicarlo (`createMany ... skipDuplicates` no es la única
+///     defensa: la base lo rechaza).
+///   · `movementId @unique` → un movimiento no puede ser la respuesta de dos
+///     ocurrencias.
+///   · El posteo pasa por un `updateMany` condicionado a `status = PENDING`,
+///     así que dos pedidos simultáneos de "aceptar" se serializan en la fila y
+///     sólo uno crea el movimiento.
+model RecurrenceOccurrence {
+  id String @id @default(cuid())
+
+  ruleId String
+  rule   RecurrenceRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  /// La fecha del calendario a la que corresponde esta ocurrencia.
+  dueDate DateTime @db.Date
+
+  status RecurrenceOccurrenceStatus @default(PENDING)
+
+  /// Cuándo se posteó / se saltó. Queda el cuándo, no sólo el qué.
+  postedAt  DateTime?
+  skippedAt DateTime?
+
+  /// El movimiento que la cumplió. Único: un movimiento responde a una sola
+  /// ocurrencia. `onDelete: SetNull` porque borrar un movimiento (que la app
+  /// permite: un movimiento mal cargado se puede volver a cargar) reabre la
+  /// ocurrencia — el handler la devuelve a PENDING en la misma transacción, y
+  /// si algo fallara, un `NULL` es más honesto que un id que ya no existe.
+  movementId String?   @unique
+  movement   Movement? @relation(fields: [movementId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// La fecha de una regla es única. Ver arriba: es la mitad de la garantía
+  /// de que un doble posteo no puede existir.
+  @@unique([ruleId, dueDate])
+  /// La bandeja de pendientes: "las próximas sin resolver".
+  @@index([status, dueDate])
 }

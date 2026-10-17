@@ -27,10 +27,18 @@
 
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { calendarToDb } from "./dates";
+import { addDays, calendarToDb } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
+import {
+  RECURRENCE_RUN_MAX_PER_RULE,
+  acceptOccurrence,
+  deleteMovement,
+  getRecurrenceOverview,
+  runDueOccurrences,
+  skipOccurrence,
+} from "./recurring";
 import {
   categoriesInPeriod,
   getDebtReport,
@@ -53,9 +61,21 @@ const db = new PrismaClient({
   datasourceUrl: TEST_DATABASE_URL,
 });
 
-/** Vacía las tablas respetando el orden de las claves foráneas. */
+/**
+ * Vacía las tablas respetando el orden de las claves foráneas.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LAS OCURRENCIAS VAN PRIMERO
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `RecurrenceOccurrence.movementId` es `SetNull`: borrar un movimiento POSTEADO
+ * dispara el `SetNull`, deja la ocurrencia en POSTED sin movimiento y el CHECK
+ * `occurrence_shape_by_status` RECHAZA el borrado. Borrando primero las
+ * ocurrencias, el `SetNull` no tiene a quién aplicar.
+ */
 async function resetDatabase() {
+  await db.recurrenceOccurrence.deleteMany();
   await db.movement.deleteMany();
+  await db.recurrenceRule.deleteMany();
   await db.category.deleteMany();
   await db.account.deleteMany();
 }
@@ -2570,5 +2590,774 @@ describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
     expect(burn?.expenses).toBe("790000.00");
     expect(burn?.burnExpenses).toBe("570000.00");
     expect(burn?.burnResult).toBe("30000.00");
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * RECURRENCIA · FASE 3
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  /**
+   * El "hoy" fijo de todos los tests de recurrencia.
+   *
+   * El generador recibe `today` como parámetro a propósito (ver
+   * `lib/recurrence.ts`): así estos tests prueban cualquier cumpleaños de mes,
+   * incluido el 31, sin depender del día en que se corran.
+   */
+  const TODAY = "2026-10-17";
+
+  /** La cuenta de banco y las dos categorías de siempre. */
+  async function seedBase() {
+    const { gastos, sueldo } = await seedCategories();
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+    return { bank, gastos, sueldo };
+  }
+
+  it("materializa desde startDate hasta hoy, exactamente una vez", async () => {
+    const { bank, gastos } = await seedBase();
+
+    const rule = await db.recurrenceRule.create({
+      data: {
+        title: "Café diario",
+        kind: "EXPENSE",
+        amount: "1500",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "DAILY",
+        startDate: calendarToDb(addDays(TODAY, -5)),
+        postingMode: "NOTIFY",
+      },
+    });
+
+    const first = await runDueOccurrences(db, { today: TODAY });
+
+    // Cinco días atrás + hoy: el día de hoy ENTRA (vencida es `<= today`).
+    expect(first.materialized).toBe(6);
+    expect(first.posted).toBe(0);
+    expect(first.pending).toBe(6);
+    expect(first.capped).toBe(false);
+    expect(first.rules).toEqual([
+      { ruleId: rule.id, title: "Café diario", materialized: 6, posted: 0, pending: 6 },
+    ]);
+
+    // Segunda corrida: no hay nada nuevo, y no duplica lo anterior.
+    const second = await runDueOccurrences(db, { today: TODAY });
+    expect(second.materialized).toBe(0);
+    expect(await db.recurrenceOccurrence.count({ where: { ruleId: rule.id } })).toBe(6);
+
+    const dates = await db.recurrenceOccurrence.findMany({
+      where: { ruleId: rule.id },
+      orderBy: { dueDate: "asc" },
+      select: { dueDate: true },
+    });
+    expect(dates.map((row) => row.dueDate.toISOString().slice(0, 10))).toEqual([
+      addDays(TODAY, -5),
+      addDays(TODAY, -4),
+      addDays(TODAY, -3),
+      addDays(TODAY, -2),
+      addDays(TODAY, -1),
+      TODAY,
+    ]);
+  });
+
+  it("AUTO postea al vuelo, con la fecha de la OCURRENCIA y no la de la corrida", async () => {
+    const { bank, gastos } = await seedBase();
+
+    // Se corrió tarde a propósito: hoy es 17/10 y las ocurrencias son de
+    // agosto, septiembre y octubre. Ponerse al día no puede fechar todo hoy.
+    const rule = await db.recurrenceRule.create({
+      data: {
+        title: "Alquiler",
+        kind: "EXPENSE",
+        amount: "5000",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        dayOfMonth: 1,
+        startDate: calendarToDb("2026-08-01"),
+        postingMode: "AUTO",
+      },
+    });
+
+    const run = await runDueOccurrences(db, { today: TODAY });
+    expect(run.materialized).toBe(3);
+    expect(run.posted).toBe(3);
+    expect(run.pending).toBe(0);
+
+    const movements = await db.movement.findMany({
+      orderBy: { date: "asc" },
+      select: { date: true, amount: true, recurrenceRuleId: true },
+    });
+    expect(movements.map((m) => m.date.toISOString().slice(0, 10))).toEqual([
+      "2026-08-01",
+      "2026-09-01",
+      "2026-10-01",
+    ]);
+    expect(movements.every((m) => m.recurrenceRuleId === rule.id)).toBe(true);
+
+    // Y la plata posteada SÍ entra en los números reales.
+    const totals = await movementTotals(db, {});
+    expect(totals.expenses).toBe("15000.00");
+    expect(totals.expenseCount).toBe(3);
+  });
+
+  it("una pendiente no toca ningún número hasta que se acepta (criterio 4)", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Internet",
+        kind: "EXPENSE",
+        amount: "1000",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        dayOfMonth: 20,
+        startDate: calendarToDb("2026-08-20"),
+        postingMode: "NOTIFY",
+      },
+    });
+
+    const run = await runDueOccurrences(db, { today: TODAY });
+    expect(run.materialized).toBe(2); // 20/08 y 20/09; el 20/10 todavía no venció
+
+    // La bandeja las ve...
+    const overview = await getRecurrenceOverview(db, { today: TODAY });
+    expect(overview.pending.map((p) => p.dueDate)).toEqual(["2026-08-20", "2026-09-20"]);
+
+    // ...pero NINGÚN total las cuenta: una ocurrencia no es un movimiento.
+    expect((await movementTotals(db, {})).expenses).toBe("0.00");
+    const balances = await getAccountBalances(db, {});
+    expect(balances[0]?.balance.toFixed(2)).toBe("100000.00");
+
+    // Aceptar la primera SÍ mueve la plata...
+    const accepted = await acceptOccurrence(db, overview.pending[0].id);
+    expect(accepted.created).toBe(true);
+    expect((await movementTotals(db, {})).expenses).toBe("1000.00");
+
+    // ...y la segunda sigue sin mover nada hasta su propio "aceptar".
+    expect((await movementTotals(db, {})).expenseCount).toBe(1);
+  });
+
+  it("una regla con startDate futuro no materializa nada", async () => {
+    const { bank, gastos } = await seedBase();
+    const future = addDays(TODAY, 5);
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Gimnasio",
+        kind: "EXPENSE",
+        amount: "900",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb(future),
+        postingMode: "AUTO",
+      },
+    });
+
+    const run = await runDueOccurrences(db, { today: TODAY });
+    expect(run.materialized).toBe(0);
+    expect(await db.movement.count()).toBe(0);
+    expect(await db.recurrenceOccurrence.count()).toBe(0);
+
+    // Se VE en la proyección de la regla, que es la vista correcta para algo
+    // que todavía no pasó.
+    const overview = await getRecurrenceOverview(db, { today: TODAY });
+    expect(overview.rules[0]?.upcoming[0]).toBe(future);
+  });
+
+  it("aceptar es idempotente: el doble clic devuelve el mismo movimiento", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Luz",
+        kind: "EXPENSE",
+        amount: "3000",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb(TODAY),
+        postingMode: "NOTIFY",
+      },
+    });
+    await runDueOccurrences(db, { today: TODAY });
+
+    const pending = (await getRecurrenceOverview(db, { today: TODAY })).pending[0];
+    const first = await acceptOccurrence(db, pending.id);
+    const second = await acceptOccurrence(db, pending.id);
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(second.occurrence.movementId).toBe(first.occurrence.movementId);
+    expect(await db.movement.count()).toBe(1);
+  });
+
+  it("dos \"aceptar\" simultáneos: uno solo crea el movimiento", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Agua",
+        kind: "EXPENSE",
+        amount: "2000",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb(TODAY),
+        postingMode: "NOTIFY",
+      },
+    });
+    await runDueOccurrences(db, { today: TODAY });
+    const pending = (await getRecurrenceOverview(db, { today: TODAY })).pending[0];
+
+    const [a, b] = await Promise.all([
+      acceptOccurrence(db, pending.id),
+      acceptOccurrence(db, pending.id),
+    ]);
+
+    // Exactamente uno creó el movimiento; el otro devolvió ESE movimiento.
+    expect([a.created, b.created].filter(Boolean)).toHaveLength(1);
+    expect(a.occurrence.movementId).toBe(b.occurrence.movementId);
+    expect(await db.movement.count()).toBe(1);
+  });
+
+  it("el doble posteo también es imposible en la base", async () => {
+    const { bank, gastos } = await seedBase();
+
+    const rule = await db.recurrenceRule.create({
+      data: {
+        title: "Seguro",
+        kind: "EXPENSE",
+        amount: "700",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb(TODAY),
+        postingMode: "NOTIFY",
+      },
+    });
+    await runDueOccurrences(db, { today: TODAY });
+    const pending = (await getRecurrenceOverview(db, { today: TODAY })).pending[0];
+    await acceptOccurrence(db, pending.id);
+
+    // Dos ocurrencias de la misma regla en la misma fecha: no.
+    await expect(
+      db.recurrenceOccurrence.create({
+        data: { ruleId: rule.id, dueDate: calendarToDb(TODAY) },
+      }),
+    ).rejects.toThrow();
+
+    // Dos movimientos de la misma regla en la misma fecha: tampoco. Éste es el
+    // índice parcial `Movement_recurrence_rule_date_key`, la defensa final.
+    await expect(
+      db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "700",
+          date: calendarToDb(TODAY),
+          accountId: bank.id,
+          categoryId: gastos.id,
+          recurrenceRuleId: rule.id,
+        },
+      }),
+    ).rejects.toThrow();
+
+    // Un movimiento manual de la MISMA fecha sigue permitido: el índice es
+    // parcial justamente para no meterse con la vida manual.
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "100",
+        date: calendarToDb(TODAY),
+        accountId: bank.id,
+        categoryId: gastos.id,
+      },
+    });
+  });
+
+  it("saltar deja la marca: el pasado no se reescribe solo", async () => {
+    const { bank, gastos } = await seedBase();
+
+    const rule = await db.recurrenceRule.create({
+      data: {
+        title: "Diario",
+        kind: "EXPENSE",
+        amount: "500",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "DAILY",
+        startDate: calendarToDb(addDays(TODAY, -2)),
+        postingMode: "NOTIFY",
+      },
+    });
+
+    // Primera corrida: sólo la ocurrencia vencida de hace dos días.
+    const run1 = await runDueOccurrences(db, { today: addDays(TODAY, -2) });
+    expect(run1.materialized).toBe(1);
+    const first = (await getRecurrenceOverview(db, { today: TODAY })).pending[0];
+    await skipOccurrence(db, first.id);
+
+    // Segunda corrida: materializa las dos fechas nuevas y NI TOCA la saltada.
+    const run2 = await runDueOccurrences(db, { today: TODAY });
+    expect(run2.materialized).toBe(2);
+
+    const occurrences = await db.recurrenceOccurrence.findMany({
+      where: { ruleId: rule.id },
+      orderBy: { dueDate: "asc" },
+      select: { dueDate: true, status: true },
+    });
+    expect(occurrences).toHaveLength(3);
+    expect(occurrences.map((o) => [o.dueDate.toISOString().slice(0, 10), o.status])).toEqual([
+      [addDays(TODAY, -2), "SKIPPED"],
+      [addDays(TODAY, -1), "PENDING"],
+      [TODAY, "PENDING"],
+    ]);
+
+    // Saltar de nuevo es idempotente; postear primero y saltar después es 409.
+    const skippedAgain = await skipOccurrence(db, first.id);
+    expect(skippedAgain.status).toBe("SKIPPED");
+
+    const stillPending = (await getRecurrenceOverview(db, { today: TODAY })).pending;
+    const posted = await acceptOccurrence(db, stillPending[0].id);
+    await expect(skipOccurrence(db, posted.occurrence.id)).rejects.toThrow(
+      /posteada/,
+    );
+  });
+
+  it("editar la regla no toca lo posteado y rige desde la última materializada", async () => {
+    const { bank, gastos } = await seedBase();
+
+    const rule = await db.recurrenceRule.create({
+      data: {
+        title: "Alquiler",
+        kind: "EXPENSE",
+        amount: "1000",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        dayOfMonth: 1,
+        startDate: calendarToDb("2026-08-01"),
+        postingMode: "AUTO",
+      },
+    });
+
+    await runDueOccurrences(db, { today: TODAY });
+    expect(await db.movement.count()).toBe(3);
+
+    // La edición cambia monto y fecha de inicio (retrocederla sería un intento
+    // de "agregar meses": el generador NO debe rellenar el pasado).
+    await db.recurrenceRule.update({
+      where: { id: rule.id },
+      data: { amount: "2500", startDate: calendarToDb("2026-01-01") },
+    });
+
+    const laterRun = await runDueOccurrences(db, { today: "2026-11-17" });
+    expect(laterRun.materialized).toBe(1); // sólo 01/11, la próxima después de 01/10
+    expect(laterRun.posted).toBe(1);
+
+    const movements = await db.movement.findMany({
+      orderBy: { date: "asc" },
+      select: { date: true, amount: true },
+    });
+    expect(movements.map((m) => [m.date.toISOString().slice(0, 10), m.amount.toFixed(2)])).toEqual([
+      // Lo ya posteado quedó congelado con su monto original...
+      ["2026-08-01", "1000.00"],
+      ["2026-09-01", "1000.00"],
+      ["2026-10-01", "1000.00"],
+      // ...y lo nuevo sale con el monto vigente.
+      ["2026-11-01", "2500.00"],
+    ]);
+    expect(await db.recurrenceOccurrence.count({ where: { ruleId: rule.id } })).toBe(4);
+  });
+
+  it("count y endDate cortan el calendario", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Tres días",
+        kind: "EXPENSE",
+        amount: "100",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "DAILY",
+        startDate: calendarToDb(addDays(TODAY, -5)),
+        count: 3,
+        postingMode: "NOTIFY",
+      },
+    });
+    await db.recurrenceRule.create({
+      data: {
+        title: "Hasta el martes",
+        kind: "EXPENSE",
+        amount: "200",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "DAILY",
+        startDate: calendarToDb(addDays(TODAY, -5)),
+        endDate: calendarToDb(addDays(TODAY, -3)),
+        postingMode: "NOTIFY",
+      },
+    });
+
+    const run = await runDueOccurrences(db, { today: TODAY });
+    // Tres por count + tres por endDate. Nada más, y nada menos.
+    expect(run.materialized).toBe(6);
+
+    const second = await runDueOccurrences(db, { today: TODAY });
+    expect(second.materialized).toBe(0);
+  });
+
+  it("el tope por corrida se avisa (capped) y la corrida siguiente sigue", async () => {
+    const { bank, gastos } = await seedBase();
+
+    // 601 días vencidos: más que el tope de una corrida.
+    await db.recurrenceRule.create({
+      data: {
+        title: "Diario viejo",
+        kind: "EXPENSE",
+        amount: "10",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "DAILY",
+        startDate: calendarToDb(addDays(TODAY, -600)),
+        postingMode: "NOTIFY",
+      },
+    });
+
+    const first = await runDueOccurrences(db, { today: TODAY });
+    expect(first.materialized).toBe(RECURRENCE_RUN_MAX_PER_RULE);
+    expect(first.capped).toBe(true);
+
+    // La segunda corrida termina el trabajo: 601 − 500 = 101, sin duplicar
+    // ninguna de las 500 anteriores.
+    const second = await runDueOccurrences(db, { today: TODAY });
+    expect(second.materialized).toBe(101);
+    expect(second.capped).toBe(false);
+    expect(await db.recurrenceOccurrence.count()).toBe(601);
+  });
+
+  it("pausar y archivar detienen la generación", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Pausada",
+        kind: "EXPENSE",
+        amount: "100",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "DAILY",
+        startDate: calendarToDb(TODAY),
+        status: "PAUSED",
+      },
+    });
+    await db.recurrenceRule.create({
+      data: {
+        title: "Archivada",
+        kind: "EXPENSE",
+        amount: "100",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "DAILY",
+        startDate: calendarToDb(TODAY),
+        status: "ARCHIVED",
+      },
+    });
+
+    const run = await runDueOccurrences(db, { today: TODAY });
+    expect(run.materialized).toBe(0);
+
+    // Y la vista de reglas no lista las archivadas (sí las pausadas: se pueden
+    // reactivar).
+    const overview = await getRecurrenceOverview(db, { today: TODAY });
+    expect(overview.rules.map((r) => r.title)).toEqual(["Pausada"]);
+  });
+
+  it("borrar un movimiento posteado reabre su ocurrencia en la bandeja", async () => {
+    const { bank, gastos } = await seedBase();
+
+    const rule = await db.recurrenceRule.create({
+      data: {
+        title: "Suscripción",
+        kind: "EXPENSE",
+        amount: "800",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb(TODAY),
+        postingMode: "AUTO",
+      },
+    });
+
+    await runDueOccurrences(db, { today: TODAY });
+    const movement = await db.movement.findFirstOrThrow();
+    expect((await movementTotals(db, {})).expenses).toBe("800.00");
+
+    // Borrar el movimiento reabre la ocurrencia en la MISMA transacción.
+    await deleteMovement(db, movement.id);
+    expect(await db.movement.count()).toBe(0);
+    const reopened = await db.recurrenceOccurrence.findFirstOrThrow({
+      where: { ruleId: rule.id },
+    });
+    expect(reopened.status).toBe("PENDING");
+    expect(reopened.movementId).toBeNull();
+    expect((await movementTotals(db, {})).expenses).toBe("0.00");
+
+    // El generador NO la recrea: la fecha ya está materializada. Y una regla
+    // AUTO tampoco la re-postea sola: la ocurrencia reabierta espera en la
+    // bandeja (borrar un movimiento es un acto explícito, no se deshace en la
+    // próxima recarga).
+    const reRun = await runDueOccurrences(db, { today: TODAY });
+    expect(reRun.materialized).toBe(0);
+    expect(reRun.posted).toBe(0);
+    const inInbox = await getRecurrenceOverview(db, { today: TODAY });
+    expect(inInbox.pending.map((p) => p.id)).toEqual([reopened.id]);
+
+    // Aceptarla a mano la vuelve a postear: la plata que había borrado vuelve
+    // porque la persona lo pidió.
+    const accepted = await acceptOccurrence(db, reopened.id);
+    expect(accepted.created).toBe(true);
+    expect((await movementTotals(db, {})).expenses).toBe("800.00");
+
+    // Un id inexistente da el error de dominio de "no existe".
+    await expect(deleteMovement(db, "no-existe")).rejects.toThrow(/no existe/);
+  });
+
+  it("la vista de recurrencia: bandeja ordenada y proyección después de hoy", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Mensual",
+        kind: "EXPENSE",
+        amount: "100",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb("2026-10-12"),
+        postingMode: "NOTIFY",
+      },
+    });
+
+    await runDueOccurrences(db, { today: TODAY });
+
+    const overview = await getRecurrenceOverview(db, { today: TODAY });
+
+    // Una pendiente (la del 12/10) y la proyección arranca después de hoy: la
+    // fecha que ya está en la bandeja no se duplica en "lo que viene".
+    expect(overview.pending.map((p) => p.dueDate)).toEqual(["2026-10-12"]);
+    expect(overview.pending[0]).toMatchObject({
+      title: "Mensual",
+      kind: "EXPENSE",
+      amount: "100.00",
+      account: { name: "Banco" },
+      category: { name: "Gastos" },
+    });
+    expect(overview.rules[0]?.upcoming).toEqual([
+      "2026-11-12",
+      "2026-12-12",
+      "2027-01-12",
+      "2027-02-12",
+      "2027-03-12",
+    ]);
+    expect(overview.truncated).toBe(false);
+  });
+
+  it("la base no deja que una regla quede sin categoría (borrar la categoría se rechaza)", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await db.recurrenceRule.create({
+      data: {
+        title: "Ex categoría",
+        kind: "EXPENSE",
+        amount: "400",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb(TODAY),
+        postingMode: "AUTO",
+      },
+    });
+
+    // ── El hallazgo que este test documenta ──────────────────────────────────
+    // El FK de `RecurrenceRule.categoryId` es `SetNull`, así que borrar la
+    // categoría intentaría dejar la regla sin categoría... y la fila resultante
+    // viola `recurrence_shape_by_kind` (un EXPENSE sin categoría no es una
+    // forma válida). El borrado queda RECHAZADO por la base.
+    //
+    // Es mejor de lo que cualquier defensa en código podría hacer: el estado
+    // "regla a medio armar" no llega a existir nunca. La guarda `blocked` de la
+    // corrida (AUTO sin categoría → se encola) queda como defensa en
+    // profundidad para una base ya corrupta, no como camino alcanzable.
+    await expect(
+      db.category.delete({ where: { id: gastos.id } }),
+    ).rejects.toThrow(/recurrence_shape_by_kind/);
+
+    // La regla sigue intacta y postea normalmente.
+    const run = await runDueOccurrences(db, { today: TODAY });
+    expect(run.posted).toBe(1);
+    expect(run.blocked).toHaveLength(0);
+    expect((await movementTotals(db, {})).expenses).toBe("400.00");
+  });
+
+  it("rechaza una regla con monto cero", async () => {
+    const { bank, gastos } = await seedBase();
+
+    await expect(
+      db.recurrenceRule.create({
+        data: {
+          title: "Cero",
+          kind: "EXPENSE",
+          amount: "0",
+          accountId: bank.id,
+          categoryId: gastos.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb(TODAY),
+        },
+      }),
+    ).rejects.toThrow(/recurrence_amount_positive/);
+  });
+
+  it("rechaza una regla cuya forma no corresponde a su tipo", async () => {
+    const { bank, gastos } = await seedBase();
+
+    // TRANSFER sin destino.
+    await expect(
+      db.recurrenceRule.create({
+        data: {
+          title: "Sin destino",
+          kind: "TRANSFER",
+          amount: "100",
+          accountId: bank.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb(TODAY),
+        },
+      }),
+    ).rejects.toThrow(/recurrence_shape_by_kind/);
+
+    // EXPENSE CON cuenta de destino (y con categoría: la forma la define el tipo).
+    await expect(
+      db.recurrenceRule.create({
+        data: {
+          title: "Gasto con destino",
+          kind: "EXPENSE",
+          amount: "100",
+          accountId: bank.id,
+          toAccountId: bank.id,
+          categoryId: gastos.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb(TODAY),
+        },
+      }),
+    ).rejects.toThrow(/recurrence_shape_by_kind|recurrence_transfer_to_other_account/);
+  });
+
+  it("rechaza dayOfMonth fuera de lugar y endDate anterior al inicio", async () => {
+    const { bank, gastos } = await seedBase();
+
+    // El ancla del día del mes no existe en una regla diaria.
+    await expect(
+      db.recurrenceRule.create({
+        data: {
+          title: "Diaria con ancla",
+          kind: "EXPENSE",
+          amount: "100",
+          accountId: bank.id,
+          categoryId: gastos.id,
+          freq: "DAILY",
+          dayOfMonth: 15,
+          startDate: calendarToDb(TODAY),
+        },
+      }),
+    ).rejects.toThrow(/recurrence_dayofmonth_range/);
+
+    // Una regla que termina antes de empezar no tiene ninguna ocurrencia.
+    await expect(
+      db.recurrenceRule.create({
+        data: {
+          title: "Al revés",
+          kind: "EXPENSE",
+          amount: "100",
+          accountId: bank.id,
+          categoryId: gastos.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb(TODAY),
+          endDate: calendarToDb(addDays(TODAY, -1)),
+        },
+      }),
+    ).rejects.toThrow(/recurrence_end_after_start/);
+  });
+
+  it("una regla de ingreso hacia un pasivo tampoco existe (trigger)", async () => {
+    const loan = await db.account.create({
+      data: {
+        name: "Préstamo",
+        kind: "LOAN",
+        principal: "500000",
+        tnaPercent: "60",
+        installmentCount: 12,
+      },
+    });
+    const sueldo = await db.category.create({
+      data: { name: "Sueldo", normalizedName: "sueldo", kind: "INCOME" },
+    });
+
+    await expect(
+      db.recurrenceRule.create({
+        data: {
+          title: "Sueldo al préstamo",
+          kind: "INCOME",
+          amount: "100",
+          accountId: loan.id,
+          categoryId: sueldo.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb(TODAY),
+        },
+      }),
+    ).rejects.toThrow(/pasivo_no_recibe_ingreso/);
+  });
+
+  it("rechaza una ocurrencia POSTED sin movimiento", async () => {
+    const { bank, gastos } = await seedBase();
+
+    const rule = await db.recurrenceRule.create({
+      data: {
+        title: "Regla",
+        kind: "EXPENSE",
+        amount: "100",
+        accountId: bank.id,
+        categoryId: gastos.id,
+        freq: "MONTHLY",
+        startDate: calendarToDb(TODAY),
+      },
+    });
+
+    // "Posteada" sin el movimiento que la cumple es una afirmación de plata que
+    // no existe: el CHECK la rechaza.
+    await expect(
+      db.recurrenceOccurrence.create({
+        data: {
+          ruleId: rule.id,
+          dueDate: calendarToDb(TODAY),
+          status: "POSTED",
+          postedAt: new Date(),
+        },
+      }),
+    ).rejects.toThrow(/occurrence_shape_by_status/);
   });
 });

@@ -9,8 +9,8 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-17)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: 141 tests de vitest (90 unitarios + 51 de integración), 203 aserciones de smoke, 12 flows de Maestro en ~18m, build de producción limpio.
-- Fases 0, 1, 2 y 6 cerradas (la 6 cerró con la auditoría de seguridad pasada: sin hallazgos altos ni críticos); fases 4, 5, 7 y 9 parciales (con desvíos documentados); fases 3 (recurrencia) y 8 (migración de datos viejos) sin empezar.
+- Batería verde: **202 tests** de vitest (131 unitarios + 71 de integración), **330 aserciones** de smoke, 12 flows de Maestro en ~18m, build de producción limpio.
+- Fases 0, 1, 2 y 6 cerradas (la 6 cerró con la auditoría de seguridad pasada: sin hallazgos altos ni críticos); **fase 3 (recurrencia) en curso: la ronda 1 (núcleo server-side) quedó completa y verificada — falta la UI (ronda 2)**; fases 4, 5, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
@@ -47,8 +47,8 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 141 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 203 aserciones end-to-end (servidor arriba)
+npm test                  # 202 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 330 aserciones end-to-end (servidor arriba)
 npm run flows             # 12 flows de Maestro: siembra la base y corre; ~18m
 ```
 
@@ -65,7 +65,7 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 **Fase 6 completa y auditada** (detalle en `ROADMAP.md`): la capa de reportes server-side de `/analisis`, la tarjeta **Flujo de caja**, la **serie mensual de patrimonio**, la **reconciliación visible** (`ΔPatrimonio = Ahorro`), los **reportes de deuda** (`/api/debts` con progreso, interés y DTI), el **burn mensualizado** (`/analisis`, §5.3 #9: las dos vistas del gasto anual con selección efímera) y la **auditoría de seguridad** (sin hallazgos altos ni críticos; 4 correcciones con test y 1 recomendación pendiente de decisión: revocación de sesión con estado en servidor).
 
-Próxima fase — candidatas en orden de costo/beneficio: Fase 5 (cuotas y resumen de tarjeta), Fase 3 (recurrencia), Fase 9 (endurecimiento si va a producción).
+**Fase 3 (recurrencia) en curso — ronda 1/2 hecha.** La ronda 1 (**núcleo server-side**: `RecurrenceRule` + `RecurrenceOccurrence`, motor `nextOccurrence` con clamp de fin de mes, generador *Since Last Run* `AUTO`/`NOTIFY`, API de reglas y bandeja, sin UI) quedó completa y verificada: typecheck 0 · 202/202 tests · 330/330 smoke · build limpio de 18 rutas. **Sigue la ronda 2: la UI** (bandeja de pendientes + gestión de reglas, con flows de Maestro y los criterios de aceptación end-to-end). Después: Fase 5 (cuotas y resumen de tarjeta). La Fase 9 (endurecimiento) queda para cuando vaya a producción.
 
 ## Bloqueos que necesitan a la persona
 

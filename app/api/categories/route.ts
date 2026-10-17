@@ -57,6 +57,12 @@ export async function POST(req: Request) {
   } catch {
     return badRequest("El cuerpo de la petición no es JSON válido.");
   }
+  // `null` es JSON válido pero no es un objeto: sin este chequeo, `body.kind`
+  // explotaba con un TypeError fuera del try de arriba y la respuesta era un
+  // 500 sin explicación. Un cuerpo rechazable es un 400, no un error del server.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return badRequest("El cuerpo de la petición tiene que ser un objeto JSON.");
+  }
 
   const kind = body.kind;
   if (kind !== "INCOME" && kind !== "EXPENSE") {
@@ -143,6 +149,31 @@ export async function DELETE(req: Request) {
   if (!id) return badRequest("Falta el id de la categoría.");
 
   try {
+    // ────────────────────────────────────────────────────────────────────────
+    // LAS REGLAS DE RECURRENCIA BLOQUEAN EL BORRADO, Y SE AVISA ANTES
+    // ────────────────────────────────────────────────────────────────────────
+    // `RecurrenceRule.categoryId` es `ON DELETE SET NULL`, pero una regla de
+    // INCOME/EXPENSE SIN categoría viola su CHECK (`recurrence_shape_by_kind`):
+    // Postgres aborta el borrado entero con un error de integridad que, sin este
+    // chequeo, salía como un 500 genérico que no decía nada.
+    //
+    // Archivar la regla NO alcanza (el FK no mira el status): la salida real es
+    // cambiarle la categoría a la regla, o borrarla si todavía no generó nada.
+    const reglasQueLaUsan = await prisma.recurrenceRule.count({
+      where: { categoryId: id },
+    });
+    if (reglasQueLaUsan > 0) {
+      return NextResponse.json(
+        {
+          error:
+            reglasQueLaUsan === 1
+              ? "Esa categoría la usa una regla de recurrencia. Cambiale la categoría a esa regla (o borrala, si todavía no generó nada) antes de borrar la categoría."
+              : `Esa categoría la usan ${reglasQueLaUsan} reglas de recurrencia. Cambiales la categoría (o borralas, si todavía no generaron nada) antes de borrar la categoría.`,
+        },
+        { status: 409 },
+      );
+    }
+
     const affected = await prisma.movement.count({ where: { categoryId: id } });
     await prisma.category.delete({ where: { id } });
 
@@ -156,6 +187,25 @@ export async function DELETE(req: Request) {
       return NextResponse.json(
         { error: "Esa categoría no existe." },
         { status: 404 },
+      );
+    }
+
+    // Red de seguridad: si una regla se creó entre el chequeo de arriba y el
+    // borrado, el error sigue siendo el mismo conflicto de dominio y merece la
+    // misma respuesta (409 explicativo), no un 500.
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      String((error as { message?: unknown }).message ?? "").includes(
+        "recurrence_shape_by_kind",
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Esa categoría la usa una regla de recurrencia. Cambiale la categoría a esa regla (o borrala, si todavía no generó nada) antes de borrar la categoría.",
+        },
+        { status: 409 },
       );
     }
 

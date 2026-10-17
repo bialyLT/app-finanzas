@@ -596,6 +596,152 @@ export interface LoanPreviewDTO {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
+ * Recurrencia
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export type RecurFreqDTO = "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY";
+export type PostingModeDTO = "AUTO" | "NOTIFY";
+export type RecurrenceRuleStatusDTO = "ACTIVE" | "PAUSED" | "ARCHIVED";
+export type RecurrenceOccurrenceStatusDTO = "PENDING" | "POSTED" | "SKIPPED";
+
+/**
+ * Una regla de recurrencia tal como viaja al cliente.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ `upcoming` NO ES PLATA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `upcoming` son fechas del calendario de la regla, calculadas por el motor
+ * puro (`lib/recurrence.ts`). No son ocurrencias materializadas y —sobre todo—
+ * NO son movimientos: no entran en totales, patrimonio ni reconciliación. Se
+ * llaman "proyección" y no "pendientes" a propósito: una pendiente es una fila
+ * que existe en la base y espera resolución; esto es lo que el calendario dice
+ * que va a pasar si nada cambia.
+ *
+ * La distinción es el criterio de aceptación 4 de la Fase 3: lo que todavía no
+ * ocurrió puede mostrarse, pero jamás puede contarse como plata real.
+ */
+export interface RecurrenceRuleDTO {
+  id: string;
+  /** Nombre visible. Es también la descripción de los movimientos que postea. */
+  title: string;
+  kind: MovementKindDTO;
+  /** Monto SIEMPRE positivo, string decimal exacto. El signo lo da `kind`. */
+  amount: string;
+  freq: RecurFreqDTO;
+  /** Cada cuántas unidades de `freq`. Siempre >= 1. */
+  interval: number;
+  /** Ancla del día del mes (1..31). `null` = el día de `startDate`. */
+  dayOfMonth: number | null;
+  /** Primera fecha posible, `YYYY-MM-DD`. */
+  startDate: string;
+  /** Última fecha inclusive, o `null` si no termina nunca. */
+  endDate: string | null;
+  /** Cantidad máxima de ocurrencias, o `null` si no hay tope. */
+  count: number | null;
+  postingMode: PostingModeDTO;
+  status: RecurrenceRuleStatusDTO;
+  account: AccountDTO;
+  toAccount: AccountDTO | null;
+  category: CategoryDTO | null;
+  /**
+   * Las próximas `RECURRENCE_UPCOMING_LIMIT` fechas ESTRICTAMENTE posteriores a
+   * hoy, como `YYYY-MM-DD`. Proyección: no son movimientos ni suman en ningún
+   * lado. Ver la nota de arriba.
+   */
+  upcoming: string[];
+}
+
+/**
+ * Una ocurrencia vencida esperando en la bandeja.
+ *
+ * Trae los datos de su regla ya resueltos (título, monto, cuentas, categoría)
+ * para que la bandeja se pueda mostrar sin una consulta por fila. El monto es
+ * el de la REGLA, no una copia: aceptar postea con los valores vigentes de la
+ * regla (editar la promesa cambia lo que todavía no pasó; lo ya posteado son
+ * movimientos y no se toca).
+ */
+export interface PendingOccurrenceDTO {
+  id: string;
+  ruleId: string;
+  /** La fecha que vence, `YYYY-MM-DD`. */
+  dueDate: string;
+  /** El nombre de la regla, para mostrar. */
+  title: string;
+  kind: MovementKindDTO;
+  amount: string;
+  account: AccountDTO;
+  toAccount: AccountDTO | null;
+  category: CategoryDTO | null;
+}
+
+/** Una ocurrencia con su estado y, si se posteó, el movimiento que la cumplió. */
+export interface OccurrenceDTO extends PendingOccurrenceDTO {
+  status: RecurrenceOccurrenceStatusDTO;
+  movementId: string | null;
+  movement: MovementDTO | null;
+}
+
+/** Respuesta de aceptar o saltar una ocurrencia. */
+export interface OccurrenceActionResponse {
+  occurrence: OccurrenceDTO;
+  /**
+   * `true` sólo si ESTA petición creó el movimiento. Es `false` cuando la
+   * ocurrencia ya estaba posteada (aceptar es idempotente) y siempre en un
+   * salto.
+   */
+  created: boolean;
+}
+
+/** Lo que generó la corrida del generador, por regla. */
+export interface RecurrenceRunRuleDTO {
+  ruleId: string;
+  title: string;
+  /** Ocurrencias nuevas materializadas en esta corrida (posteadas o pendientes). */
+  materialized: number;
+  /** De esas, cuántas se postearon solas (AUTO). */
+  posted: number;
+  /** De esas, cuántas quedaron en la bandeja (NOTIFY, o AUTO sin categoría). */
+  pending: number;
+}
+
+/**
+ * El resultado de una corrida de "desde la última vez".
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ REPORTA LO QUE REPORTA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `materialized === 0` es una respuesta normal, no un error: significa que no
+ * había nada vencido desde la última corrida. `capped` dice que el tope por
+ * corrida (`RECURRENCE_RUN_MAX_PER_RULE`) cortó la lista y que queda trabajo
+ * para la próxima: preferimos decirlo antes que devolver un éxito que miente.
+ * `blocked` nombra las reglas AUTO que no pudieron postear y cuyas ocurrencias
+ * quedaron en la bandeja en vez de bloquear la corrida entera. Hoy es defensa
+ * en profundidad —la base impide que una regla quede sin categoría—, pero el
+ * generador no depende de eso para no romperse.
+ */
+export interface RecurrenceRunDTO {
+  /** El "hoy" que usó la corrida, `YYYY-MM-DD`. */
+  today: string;
+  materialized: number;
+  posted: number;
+  pending: number;
+  /** `true` si alguna regla quedó con fechas vencidas sin materializar. */
+  capped: boolean;
+  rules: RecurrenceRunRuleDTO[];
+  blocked: { ruleId: string; title: string; reason: string }[];
+}
+
+/** Respuesta de `GET /api/recurrence`: las reglas y la bandeja de pendientes. */
+export interface RecurrenceResponse {
+  /** Reglas ACTIVE y PAUSED, activas primero. Las archivadas no se listan. */
+  rules: RecurrenceRuleDTO[];
+  /** Ocurrencias PENDING, de la más vieja a la más nueva. */
+  pending: PendingOccurrenceDTO[];
+  /** `true` si la bandeja quedó cortada por `MOVEMENTS_MAX_ROWS`. */
+  truncated: boolean;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
  * Etiquetas para la interfaz
  * ──────────────────────────────────────────────────────────────────────────── */
 
@@ -610,6 +756,24 @@ export const ACCOUNT_KIND_LABEL: Record<AccountKindDTO, string> = {
   BANK: "Cuenta bancaria",
   CREDIT_CARD: "Tarjeta de crédito",
   LOAN: "Préstamo",
+};
+
+export const RECUR_FREQ_LABEL: Record<RecurFreqDTO, string> = {
+  DAILY: "Todos los días",
+  WEEKLY: "Todas las semanas",
+  MONTHLY: "Todos los meses",
+  YEARLY: "Todos los años",
+};
+
+export const POSTING_MODE_LABEL: Record<PostingModeDTO, string> = {
+  AUTO: "Automático",
+  NOTIFY: "Avisar y confirmar",
+};
+
+export const RECURRENCE_STATUS_LABEL: Record<RecurrenceRuleStatusDTO, string> = {
+  ACTIVE: "Activa",
+  PAUSED: "Pausada",
+  ARCHIVED: "Archivada",
 };
 
 /**

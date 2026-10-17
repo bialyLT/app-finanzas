@@ -141,6 +141,12 @@ export async function POST(req: Request) {
   } catch {
     return badRequest("El cuerpo de la petición no es JSON válido.");
   }
+  // `null` es JSON válido pero no es un objeto: sin este chequeo, `body.name`
+  // explotaba con un TypeError fuera del try de arriba y la respuesta era un
+  // 500 sin explicación. Un cuerpo rechazable es un 400, no un error del server.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return badRequest("El cuerpo de la petición tiene que ser un objeto JSON.");
+  }
 
   const name = cleanName(typeof body.name === "string" ? body.name : "");
   if (!name) return badRequest("La cuenta necesita un nombre.");
@@ -305,6 +311,12 @@ export async function PATCH(req: Request) {
     body = await req.json();
   } catch {
     return badRequest("El cuerpo de la petición no es JSON válido.");
+  }
+  // `null` es JSON válido pero no es un objeto: sin este chequeo, `body.id`
+  // explotaba con un TypeError fuera del try de arriba y la respuesta era un
+  // 500 sin explicación. Un cuerpo rechazable es un 400, no un error del server.
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return badRequest("El cuerpo de la petición tiene que ser un objeto JSON.");
   }
 
   const id = typeof body.id === "string" ? body.id : "";
