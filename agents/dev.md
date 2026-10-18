@@ -98,6 +98,12 @@ acá va solo lo generalizable.
   dominio impida la operación, 4xx con mensaje accionable — y esa misma regla en
   TODAS las variantes de la operación (colección y por id), no solo donde
   apareció.
+- **Error de infraestructura en una LECTURA** (pool agotado, timeout de
+  transacción) → mismo tratamiento que una escritura: traducilo a 4xx/503 con
+  mensaje accionable, nunca un 500 genérico que culpa a los datos. La clase vale
+  para TODO acceso a la base, no solo mutaciones; la espera efectiva es el
+  mínimo de las capas (`pool_timeout` ~10 s manda sobre el `maxWait` de
+  `TRANSACTION_OPTIONS`). (BUG-2 de la Fase 4 r2.)
 - **Cuerpo JSON en el servidor** → guard de objeto (`typeof body === 'object'`)
   antes de leer cualquier propiedad. Sin guard, aparece el 500.
 - **Coerción estricta y bytes NUL** → `Number([1]) === 1` y `Number(true) === 1`,
@@ -129,6 +135,11 @@ acá va solo lo generalizable.
   flow en `flows/README.md`).
 - **Plata** → Decimal en todo el camino; una transferencia entre cuentas no
   infla ingresos ni gastos; probá montos de un centavo y montos enormes.
+- **Dos caminos que calculan el mismo número** (vista previa vs alta,
+  simulación vs registro) → normalizá y validá en el MISMO orden y forma en
+  ambos, y probá la paridad con el string CRUDO del input: la UI puede mentir
+  por centavos invisibles (`toFixed(2)` vs `toFixed(4)`) o romper una invariante
+  interna. (BUG-1 de la Fase 4 r2.)
 - **UI nueva** → estados vacíos y de error que expliquen qué hacer; y un flow de
   Maestro propio del camino feliz (el tester después hace lo adversarial).
 - **Diálogo nativo del navegador** (`window.confirm` / `alert` / `prompt`) → no:
@@ -140,6 +151,10 @@ acá va solo lo generalizable.
   una invariante, agregá su candado (CHECK/índice) en la misma migración.
 - **Zona compartida** (seed, navegación, ids de flows, números de smoke) → corré
   la batería completa: romper un flujo viejo también es un bug de tu ronda.
+- **Aserción sobre movimientos de una base sembrada** → filtrá por cuenta/id,
+  nunca por descripción: el seed repite descripciones genéricas («Cuota 1 ·
+  capital») y una aserción por texto compara contra movimientos ajenos. (O-5 de
+  la Fase 4 r2: 5 de 6 «fallas» iniciales eran del test, no del producto.)
 - **Documento persistido + proyección/agregado** (resúmenes, liquidaciones,
   cierres) → la misma unidad no se cuenta dos veces: definí la exclusión
   explícita entre documento y agregado —sobre todo para el período en curso— y
