@@ -100,9 +100,23 @@ acá va solo lo generalizable.
   apareció.
 - **Cuerpo JSON en el servidor** → guard de objeto (`typeof body === 'object'`)
   antes de leer cualquier propiedad. Sin guard, aparece el 500.
+- **Coerción estricta y bytes NUL** → `Number([1]) === 1` y `Number(true) === 1`,
+  y `String(["2029-01-01"])` es una fecha válida: la coerción laxa convierte
+  cuerpos hostiles en pagos REALES. Validá `typeof` estricto (number entero o
+  string `/^\d+$/`; string + validador de fecha), nunca `Number(...)`/
+  `String(...)` sueltos sobre input. Un `\u0000` en cualquier string es una
+  secuencia UTF-8 inválida para Postgres (22021) que muere ANTES de buscar: id
+  con NUL → 404 «no existe»; texto con NUL → 400 (la regla genérica `invalid
+  byte sequence` de `DOMAIN_RULES` ya lo traduce). (Clase H1-H3 de la Fase 4 r1:
+  estaba listada acá y aun así pasó.)
 - **Operación que puede correr dos veces** (generadores, doble clic, reintentos)
   → probá el doble toque; si duplicar rompe algo, blindalo (idempotencia, índice
   único parcial, transacción).
+- **Estado derivado de un prefijo** (cobertura de cuotas, pagos acumulados) →
+  probá los degenerados: cuotas de capital 0 (el bullet americano marcaba
+  cubierto sin pagar) y el reintento sin parámetro (el doble toque sin número
+  pagaba la cuota SIGUIENTE). Si el estado se deriva, sus bordes son parte de
+  la feature. (B1/B2 de la Fase 4 r1.)
 - **Invariante crítica del dominio** → reflejala en la base (CHECK, índice
   único) cuando el estado lo permita; no la dejes solo en la app.
 - **Fechas** → día calendario, nunca UTC corrido; los inputs de fecha de la UI
