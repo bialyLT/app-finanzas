@@ -2317,6 +2317,9 @@ async function main() {
     check("interés pagado 25.000,00 (el de la cuota cubierta)", seedLoan?.interestPaid, "25000.00");
     check("deuda viva 468.587,29 (500.000 − capital)", seedLoan?.debt, "468587.29");
     check("un LOAN no tiene lado «a cobrar»", seedLoan?.receivable, null);
+    // El desembolso del seed consta (la transferencia de septiembre): la
+    // tarjeta no debe avisar nada, y `disbursed` lo prueba de punta a punta.
+    check("el seed tiene el desembolso registrado", seedLoan?.disbursed, true);
 
     // Compromisos desde octubre: las 11 cuotas impagas caen en los 12 meses. La
     // última cuota cierra el capital al centavo (su pago es 56.412,63), así que
@@ -2347,6 +2350,14 @@ async function main() {
     check("crea el préstamo de prueba (201)", prestamoPrueba.status, 201);
     check("el sistema por defecto es FRENCH", prestamoPrueba.body?.amortizationSystem, "FRENCH");
 
+    // `disbursed` es DERIVADO (la transferencia real, no una columna): recién
+    // creado, sin desembolso, la UI debe avisar que falta.
+    const { body: vistaSinDesembolso } = await api("/api/loans?asOf=2026-10-31");
+    const sinDesembolso = (vistaSinDesembolso?.loans ?? []).find(
+      (l) => l.id === prestamoPrueba.body?.id,
+    );
+    check("creado sin desembolso: disbursed false", sinDesembolso?.disbursed, false);
+
     // El desembolso: la plata sale del préstamo y entra al banco (igual que el
     // seed). La deuda viva del préstamo sale del SALDO de la cuenta, no del
     // cronograma: sin este movimiento los pagos dejarían la cuenta con saldo
@@ -2360,6 +2371,20 @@ async function main() {
       description: "Desembolso del préstamo de prueba (smoke)",
     });
     check("registra el desembolso del préstamo de prueba (201)", desembolsoPrueba.status, 201);
+
+    const { body: vistaConDesembolso } = await api("/api/loans?asOf=2026-10-31");
+    const conDesembolso = (vistaConDesembolso?.loans ?? []).find(
+      (l) => l.id === prestamoPrueba.body?.id,
+    );
+    check("con el desembolso registrado: disbursed true", conDesembolso?.disbursed, true);
+
+    // Acotado a `asOf` como el capital pagado: al 30/09 la transferencia del
+    // 01/10 todavía no cuenta (y la vista debe volver a avisar).
+    const { body: vistaPreviaAlPago } = await api("/api/loans?asOf=2026-09-30");
+    const previaAlDesembolso = (vistaPreviaAlPago?.loans ?? []).find(
+      (l) => l.id === prestamoPrueba.body?.id,
+    );
+    check("acotado a asOf: al 30/09 no consta el desembolso", previaAlDesembolso?.disbursed, false);
 
     // ── Pagar una cuota: capital por transferencia, interés por gasto ────────
     const cuota1 = await post("/api/loans/pay", {
@@ -2535,6 +2560,12 @@ async function main() {
     });
     check("crea el préstamo a cobrar (201)", porCobrar.status, 201);
 
+    const { body: vistaSinPrestar } = await api("/api/loans?asOf=2026-10-31");
+    const sinPrestar = (vistaSinPrestar?.loans ?? []).find(
+      (l) => l.id === porCobrar.body?.id,
+    );
+    check("la cuenta por cobrar sin desembolso: disbursed false", sinPrestar?.disbursed, false);
+
     // El desembolso: la plata sale del banco y entra a la cuenta por cobrar.
     // No es un gasto: el patrimonio no cambia, cambia de forma.
     const lePresto = await post("/api/transactions", {
@@ -2575,6 +2606,7 @@ async function main() {
     const { body: vistaDados } = await api("/api/loans?asOf=2026-10-31");
     const dado = (vistaDados?.loans ?? []).find((l) => l.id === porCobrar.body?.id);
     check("dirección: OWED_TO_ME", dado?.direction, "OWED_TO_ME");
+    check("con la plata prestada: disbursed true", dado?.disbursed, true);
     check("no tiene «deuda» (es un activo)", dado?.debt, null);
     check("lo que te deben: 85.298,25", dado?.receivable, "85298.25");
     check("capital recuperado: 14.701,75", dado?.capitalPaid, "14701.75");

@@ -727,6 +727,26 @@ export interface LoanViewDTO extends AccountBalanceDTO {
   system: AmortizationSystemDTO;
   /** Lo que te deben, en positivo. `null` si el préstamo es tuyo (LOAN). */
   receivable: string | null;
+  /**
+   * `true` si el desembolso consta como plata registrada.
+   *
+   * ────────────────────────────────────────────────────────────────────────────
+   * QUÉ SIGNIFICA "CONSTAR" (y por qué el saldo solo no alcanza)
+   * ────────────────────────────────────────────────────────────────────────────
+   * La plata consta cuando:
+   *   · el saldo de APERTURA ya la declara — LOAN con `opening < 0` (la deuda
+   *     venía de antes) o RECEIVABLE con `opening > 0` (prestado antes) —, o
+   *   · hay una TRANSFERENCIA registrada en el sentido del desembolso:
+   *     LOAN: salió de la cuenta del préstamo (y entró a tu cuenta);
+   *     RECEIVABLE: entró a la cuenta por cobrar. Acotada a `date <= hoy`,
+   *     igual que el capital pagado.
+   *
+   * Es DERIVADO, como la cobertura: borrar la transferencia del desembolso
+   * vuelve a `false`. Un alta guiada sin desembolso no es un error —puede ser
+   * un saldo migrado a mano— pero la pantalla lo avisa y ofrece registrarlo
+   * en un toque.
+   */
+  disbursed: boolean;
 
   // ── El contrato y su progreso (los mismos campos que el reporte de deudas) ─
 

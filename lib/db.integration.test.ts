@@ -27,6 +27,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { TRANSACTION_OPTIONS } from "./prisma";
 import { addDays, calendarToDb, dbToCalendar } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule, money } from "./money";
@@ -74,6 +75,10 @@ const describeDb = describe.skipIf(!TEST_DATABASE_URL);
 
 const db = new PrismaClient({
   datasourceUrl: TEST_DATABASE_URL,
+  // La MISMA configuración de transacciones que usa el server (lib/prisma.ts):
+  // los tests del pool (más abajo) verifican la configuración que la app
+  // realmente despliega, no una parecida.
+  transactionOptions: TRANSACTION_OPTIONS,
 });
 
 /**
@@ -4011,6 +4016,90 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     expect(rows[11].remainingBalance.toFixed(2)).toBe("0.00");
   });
 
+  it("el alta sobrevive un pool de conexiones ocupado (no muere con P2028)", async () => {
+    // ── EL REPRO DEL HALLAZGO ────────────────────────────────────────────────
+    // Un pico real de pedidos dejó el alta en un 500 genérico («No se pudo
+    // crear la cuenta») con el P2028 de Prisma escondido en el log del
+    // servidor: su transacción interactiva no consiguió una conexión del pool
+    // dentro del maxWait DEFAULT (2 s) y nunca llegó a arrancar.
+    //
+    // Las transacciones que duermen 2 s simulan ese pico: ocupan todas las
+    // conexiones. El alta pide lugar DESPUÉS y tiene que ESPERAR su turno
+    // —con el maxWait configurado del cliente— en vez de morir a los 2 s.
+    // La cantidad supera cualquier pool razonable (el default de Prisma es
+    // 2×núcleos+1: acá, 9).
+    const sleepers = Array.from({ length: 30 }, () =>
+      db.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe("SELECT pg_sleep(2)");
+        },
+        // Los que esperan en la cola también tienen que sobrevivir su turno:
+        // sin esto, el default de 2 s los mata a mitad de camino y la cola se
+        // desarma sola.
+        { maxWait: 30_000 },
+      ),
+    );
+
+    try {
+      const loan = await createLoanAccount(db, {
+        name: "Préstamo bajo pico",
+        kind: "LOAN",
+        openingBalance: "0",
+        system: "FRENCH",
+        principal: money("500000"),
+        tnaPercent: money("60"),
+        installmentCount: 12,
+        firstInstallmentDate: FIRST,
+        imported: null,
+      });
+
+      // El alta salió completa A PESAR del pico: cuenta y cronograma entero.
+      const rows = await db.installment.findMany({
+        where: { accountId: loan.id },
+      });
+      expect(rows).toHaveLength(12);
+    } finally {
+      await Promise.all(sleepers);
+    }
+  }, 30_000);
+
+  it("una transacción que no alcanza a arrancar se responde como 503 «volvé a intentar», no como 500 genérico", async () => {
+    // El P2028 REAL, no uno inventado: con el pool ocupado, una transacción
+    // con un maxWait diminuto falla de verdad. Así la traducción del error se
+    // prueba contra el error que Prisma tira en la vida real.
+    const sleepers = Array.from({ length: 30 }, () =>
+      db.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe("SELECT pg_sleep(2)");
+        },
+        // Los que esperan en la cola también tienen que sobrevivir su turno:
+        // sin esto, el default de 2 s los mata a mitad de camino y la cola se
+        // desarma sola.
+        { maxWait: 30_000 },
+      ),
+    );
+
+    try {
+      let caught: unknown = null;
+      try {
+        await db.$transaction(async () => undefined, { maxWait: 150 });
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).not.toBeNull();
+      expect((caught as { code?: string }).code).toBe("P2028");
+
+      // Lo que ve la persona es que el servidor estaba ocupado y puede
+      // reintentar — no un 500 que la manda a revisar datos que están bien.
+      const described = describeDatabaseError(caught);
+      expect(described?.status).toBe(503);
+      expect(described?.message).toMatch(/volvé a intentar/i);
+    } finally {
+      await Promise.all(sleepers);
+    }
+  }, 30_000);
+
   it("el alta importada guarda el cronograma del banco tal cual y exige coherencia", async () => {
     const loan = await createLoanAccount(db, {
       name: "Préstamo importado",
@@ -4170,6 +4259,160 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     expect(view.commitments?.next12Months).toBe("620539.73");
     expect(view.commitments?.overdue).toBe("0.00");
     expect(view.commitments?.overdueCount).toBe(0);
+  });
+
+  it("el desembolso se deriva de la plata, no del saldo: apertura 0 sin transferencia lo delata", async () => {
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+
+    // El caso que la pantalla tiene que avisar: un alta guiada que se saltea el
+    // desembolso deja el préstamo con deuda "aparecida de la nada".
+    const loan = await createLoanAccount(db, {
+      name: "Préstamo",
+      kind: "LOAN",
+      openingBalance: "0",
+      system: "FRENCH",
+      principal: money("500000"),
+      tnaPercent: money("60"),
+      installmentCount: 12,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    const antes = await getLoansView(db, { today: TODAY });
+    expect(antes.loans).toHaveLength(1);
+    expect(antes.loans[0].disbursed).toBe(false);
+
+    // Una transferencia HACIA el préstamo (un pago suelto) no declara el
+    // desembolso: el sentido importa.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "1000",
+        date: calendarToDb("2026-11-20"),
+        accountId: bank.id,
+        toAccountId: loan.id,
+        description: "Pago suelto",
+      },
+    });
+    const conPago = await getLoansView(db, { today: TODAY });
+    expect(conPago.loans[0].disbursed).toBe(false);
+
+    // La transferencia del desembolso: sale del préstamo y entra al banco.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "500000",
+        date: calendarToDb("2026-09-30"),
+        accountId: loan.id,
+        toAccountId: bank.id,
+        description: "Desembolso del préstamo",
+      },
+    });
+    const despues = await getLoansView(db, { today: TODAY });
+    expect(despues.loans[0].disbursed).toBe(true);
+
+    // Una transferencia POSTERIOR al corte no cuenta: la vista es una foto.
+    await db.movement.deleteMany({
+      where: { OR: [{ accountId: loan.id }, { toAccountId: loan.id }] },
+    });
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "500000",
+        date: calendarToDb("2026-12-15"),
+        accountId: loan.id,
+        toAccountId: bank.id,
+        description: "Desembolso del préstamo",
+      },
+    });
+    const noviembre = await getLoansView(db, { today: TODAY });
+    expect(noviembre.loans[0].disbursed).toBe(false);
+    const diciembre = await getLoansView(db, { today: "2026-12-31" });
+    expect(diciembre.loans[0].disbursed).toBe(true);
+  });
+
+  it("un préstamo dado (RECEIVABLE): declara el desembolso lo que ENTRA, no lo que vuelve", async () => {
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+    const receivable = await createLoanAccount(db, {
+      name: "Préstamo a Marce",
+      kind: "RECEIVABLE",
+      openingBalance: "0",
+      system: "FRENCH",
+      principal: money("100000"),
+      tnaPercent: money("60"),
+      installmentCount: 6,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    const antes = await getLoansView(db, { today: TODAY });
+    expect(antes.loans[0].disbursed).toBe(false);
+
+    // Una devolución (transferencia que SALE de la cuenta por cobrar) no es el
+    // desembolso: el desembolso de este lado es lo que ENTRA.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "10000",
+        date: calendarToDb("2026-11-20"),
+        accountId: receivable.id,
+        toAccountId: bank.id,
+        description: "Devolución",
+      },
+    });
+    const conDevolucion = await getLoansView(db, { today: TODAY });
+    expect(conDevolucion.loans[0].disbursed).toBe(false);
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "100000",
+        date: calendarToDb("2026-10-05"),
+        accountId: bank.id,
+        toAccountId: receivable.id,
+        description: "Le presté a Marce",
+      },
+    });
+    const despues = await getLoansView(db, { today: TODAY });
+    expect(despues.loans[0].disbursed).toBe(true);
+    expect(despues.loans[0].receivable).toBe("90000.00");
+  });
+
+  it("la apertura que ya declara la plata cuenta como desembolso (préstamos migrados)", async () => {
+    // Un préstamo migrado a mano: la deuda vive en la apertura (negativa) y la
+    // plata ya entró en su momento — no hay transferencia que la declare.
+    await createLoanAccount(db, {
+      name: "Préstamo viejo",
+      kind: "LOAN",
+      openingBalance: "-400000",
+      system: "FRENCH",
+      principal: money("400000"),
+      tnaPercent: money("48"),
+      installmentCount: 12,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    // Y del otro lado: lo prestado antes de la app es una apertura positiva.
+    await createLoanAccount(db, {
+      name: "Plata de Marce",
+      kind: "RECEIVABLE",
+      openingBalance: "150000",
+      system: "FRENCH",
+      principal: money("150000"),
+      tnaPercent: money("48"),
+      installmentCount: 6,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    const { loans } = await getLoansView(db, { today: TODAY });
+    expect(loans).toHaveLength(2);
+    for (const view of loans) expect(view.disbursed).toBe(true);
   });
 
   it("pagar la cuota parte el pago: transferencia por capital y gasto por interés", async () => {

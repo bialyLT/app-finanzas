@@ -1500,6 +1500,20 @@ export function describeDatabaseError(error: unknown): {
         message:
           "Ese cambio dejaría movimientos sin cuenta. Archivala en vez de borrarla.",
       };
+
+    case "P2024":
+    case "P2028":
+      // El pool de conexiones, no los datos: P2024 es "no conseguí una
+      // conexión dentro del tiempo de espera del pool"; P2028 es la
+      // transacción que no llegó a arrancar (o que se cerró por tardar más
+      // que su timeout). Un 500 genérico acá manda a la persona a revisar un
+      // formulario que está bien; el 503 dice lo único útil —el servidor
+      // estaba ocupado— y que reintentar alcanza.
+      return {
+        status: 503,
+        message:
+          "El servidor está atendiendo muchas operaciones a la vez y no pudo completar esta en el tiempo previsto. Esperá unos segundos y volvé a intentar.",
+      };
   }
 
   // ── Reglas del dominio, por marcador estable ───────────────────────────────

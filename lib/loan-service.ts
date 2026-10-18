@@ -415,6 +415,55 @@ async function capitalPaidByLoan(
   return map;
 }
 
+/**
+ * Los préstamos cuyo DESEMBOLSO consta como transferencia registrada.
+ *
+ * Es el espejo de `capitalPaidByLoan`: no la plata que pagó la deuda, sino la
+ * que la DECLARÓ.
+ *   · LOAN: una TRANSFERENCIA que SALIÓ de la cuenta del préstamo.
+ *   · RECEIVABLE: una TRANSFERENCIA que ENTRÓ a la cuenta por cobrar.
+ *
+ * Sin esto, un alta guiada que se saltea el desembolso deja un saldo que
+ * "aparece de la nada" (ver `disbursed` en `LoanViewDTO`). Acotado a
+ * `date <= asOf`, igual que el capital pagado: la vista es una foto a una
+ * fecha.
+ */
+async function disbursedLoanIds(
+  db: Db,
+  ids: { loans: string[]; receivables: string[] },
+  asOf: CalendarDate,
+): Promise<Set<string>> {
+  const [outOfLoans, intoReceivables] = await Promise.all([
+    ids.loans.length > 0
+      ? db.movement.groupBy({
+          by: ["accountId"],
+          where: {
+            kind: "TRANSFER",
+            accountId: { in: ids.loans },
+            date: { lte: calendarToDb(asOf) },
+          },
+        })
+      : Promise.resolve([]),
+    ids.receivables.length > 0
+      ? db.movement.groupBy({
+          by: ["toAccountId"],
+          where: {
+            kind: "TRANSFER",
+            toAccountId: { in: ids.receivables },
+            date: { lte: calendarToDb(asOf) },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const set = new Set<string>();
+  for (const row of outOfLoans) set.add(row.accountId);
+  for (const row of intoReceivables) {
+    if (row.toAccountId !== null) set.add(row.toAccountId);
+  }
+  return set;
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * La vista de préstamos
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -460,9 +509,10 @@ function assembleLoanView(args: {
   params: LoanParamsRow | undefined;
   rows: InstallmentRow[];
   capitalPaid: Money;
+  disbursed: boolean;
   today: CalendarDate;
 }): LoanViewDTO {
-  const { balance, params, rows, capitalPaid, today } = args;
+  const { balance, params, rows, capitalPaid, disbursed, today } = args;
   const system = systemOf(params?.amortizationSystem ?? null);
   const direction = loanDirectionOf(balance.kind);
 
@@ -571,6 +621,7 @@ function assembleLoanView(args: {
     debt: balance.debt === null ? null : balance.debt.toFixed(2),
     receivable:
       balance.kind === "RECEIVABLE" ? balance.balance.toFixed(2) : null,
+    disbursed,
     isLiability: balance.isLiability,
     inflow: balance.inflow.toFixed(2),
     outflow: balance.outflow.toFixed(2),
@@ -656,21 +707,19 @@ async function loadLoanViews(
   }
 
   const ids = loans.map((loan) => loan.id);
-  const [rows, capitalPaid] = await Promise.all([
+  const loanIds = loans.filter((l) => l.kind === "LOAN").map((l) => l.id);
+  const receivableIds = loans
+    .filter((l) => l.kind === "RECEIVABLE")
+    .map((l) => l.id);
+  const [rows, capitalPaid, disbursedTransfers] = await Promise.all([
     ids.length > 0
       ? db.installment.findMany({
           where: { accountId: { in: ids } },
           orderBy: [{ accountId: "asc" }, { number: "asc" }],
         })
       : Promise.resolve([]),
-    capitalPaidByLoan(
-      db,
-      {
-        loans: loans.filter((l) => l.kind === "LOAN").map((l) => l.id),
-        receivables: loans.filter((l) => l.kind === "RECEIVABLE").map((l) => l.id),
-      },
-      today,
-    ),
+    capitalPaidByLoan(db, { loans: loanIds, receivables: receivableIds }, today),
+    disbursedLoanIds(db, { loans: loanIds, receivables: receivableIds }, today),
   ]);
 
   const rowsByAccount = new Map<string, InstallmentRow[]>();
@@ -686,6 +735,13 @@ async function loadLoanViews(
       params: paramsById.get(balance.id),
       rows: rowsByAccount.get(balance.id) ?? [],
       capitalPaid: capitalPaid.get(balance.id) ?? zero(),
+      disbursed:
+        disbursedTransfers.has(balance.id) ||
+        // Apertura que YA declara la plata (un préstamo migrado a mano):
+        // LOAN negativo = deuda de antes; RECEIVABLE positivo = crédito.
+        (balance.kind === "LOAN"
+          ? balance.opening.lessThan(0)
+          : balance.opening.greaterThan(0)),
       today,
     }),
   );

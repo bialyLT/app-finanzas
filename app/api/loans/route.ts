@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { isCalendarDate } from "@/lib/dates";
 import { getLoansView } from "@/lib/loan-service";
+import { describeDatabaseError } from "@/lib/queries";
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -45,10 +46,31 @@ export async function GET(req: Request) {
     return badRequest("`asOf` tiene que ser una fecha AAAA-MM-DD válida.");
   }
 
-  const response = await getLoansView(prisma, {
-    today: asOf ?? undefined,
-    includeArchived: searchParams.get("includeArchived") !== "false",
-  });
+  // La tormenta también llega a las LECTURAS: con el pool agotado Prisma tira
+  // P2024 y sin este try/catch la respuesta era un 500 que manda a revisar algo
+  // que está bien. El mapa P2024/P2028 → 503 con copy de reintento es el mismo
+  // de las rutas de escritura (`describeDatabaseError`).
+  try {
+    const response = await getLoansView(prisma, {
+      today: asOf ?? undefined,
+      includeArchived: searchParams.get("includeArchived") !== "false",
+    });
 
-  return NextResponse.json(response);
+    return NextResponse.json(response);
+  } catch (error) {
+    console.error(error);
+
+    const described = describeDatabaseError(error);
+    if (described) {
+      return NextResponse.json(
+        { error: described.message },
+        { status: described.status },
+      );
+    }
+
+    return NextResponse.json(
+      { error: "No se pudieron cargar los préstamos." },
+      { status: 500 },
+    );
+  }
 }

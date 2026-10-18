@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { isCalendarDate } from "@/lib/dates";
 import { dueDateSeries, isAmortizationSystem, loanSummaryFor } from "@/lib/loans";
-import { parseMoneyInput } from "@/lib/money";
+import { money, parseMoneyInput } from "@/lib/money";
 
 /**
  * GET /api/loans/preview?principal=500000&tnaPercent=60&installmentCount=12
@@ -66,18 +66,18 @@ export async function GET(req: Request) {
     );
   }
 
-  const principal = parseMoneyInput(searchParams.get("principal") ?? "");
-  const tnaPercent = parseMoneyInput(searchParams.get("tnaPercent") ?? "");
+  const principalRaw = parseMoneyInput(searchParams.get("principal") ?? "");
+  const tnaPercentRaw = parseMoneyInput(searchParams.get("tnaPercent") ?? "");
   const installmentCount = Number(searchParams.get("installmentCount") ?? "");
 
-  if (principal === null || principal.lessThanOrEqualTo(0)) {
+  if (principalRaw === null || principalRaw.lessThanOrEqualTo(0)) {
     return NextResponse.json(
       { error: "El monto del préstamo tiene que ser mayor a cero." },
       { status: 400 },
     );
   }
 
-  if (tnaPercent === null || tnaPercent.isNegative()) {
+  if (tnaPercentRaw === null || tnaPercentRaw.isNegative()) {
     return NextResponse.json(
       { error: "La tasa (TNA) no puede ser negativa." },
       { status: 400 },
@@ -90,6 +90,19 @@ export async function GET(req: Request) {
       { status: 400 },
     );
   }
+
+  // ── La normalización que hace honesta a la vista previa ────────────────────
+  // El alta de préstamos redondea ANTES de guardar: el principal a centavos
+  // (`toFixed(2)`) y la TNA a 4 decimales (`toFixed(4)`) — ver `/api/accounts`.
+  // La vista previa tiene que calcular con ESOS mismos números o miente: con
+  // "60,00005" mostraba una cuota calculada con 5 decimales de tasa y se
+  // registraba otra (centavos de diferencia, imposibles de ver a ojo), y con
+  // "1234,005" en 2 cuotas rompía una invariante interna en vez de mostrar las
+  // cuotas 617,00/617,01 que el alta SÍ guarda. Los rechazos (monto no
+  // positivo, tasa negativa, préstamo demasiado chico) siguen saliendo del
+  // valor crudo, igual que en el alta: normalizar y validar en el mismo orden.
+  const principal = money(principalRaw.toFixed(2));
+  const tnaPercent = money(tnaPercentRaw.toFixed(4));
 
   const firstInstallmentDate = searchParams.get("firstInstallmentDate");
   if (

@@ -184,40 +184,61 @@ export async function GET(req: Request) {
   // MISMA fecha que el ancla de la serie: un solo corte para toda la respuesta.
   const cutoff = asOf ?? todayCalendar();
 
-  const [balances, netWorth, netWorthSeries] = await Promise.all([
-    getAccountBalances(prisma, { asOf: cutoff, includeArchived }),
-    getNetWorth(prisma, { asOf: cutoff }),
-    getNetWorthSeries(prisma, { anchor: cutoff }),
-  ]);
+  // La tormenta también llega a las LECTURAS: si el pool se agota, Prisma tira
+  // P2024 y sin este try/catch la respuesta era un 500 que manda a revisar una
+  // pantalla que está bien. El mapa P2024/P2028 → 503 con copy de reintento es
+  // el mismo de las rutas de escritura (`describeDatabaseError`).
+  try {
+    const [balances, netWorth, netWorthSeries] = await Promise.all([
+      getAccountBalances(prisma, { asOf: cutoff, includeArchived }),
+      getNetWorth(prisma, { asOf: cutoff }),
+      getNetWorthSeries(prisma, { anchor: cutoff }),
+    ]);
 
-  return NextResponse.json({
-    accounts: balances.map((balance) => ({
-      ...toAccountDTO({
-        id: balance.id,
-        name: balance.name,
-        kind: balance.kind,
-        archived: balance.archived,
-        openingBalance: balance.opening,
-        closingDay: balance.closingDay,
-        dueDay: balance.dueDay,
-        creditLimit: balance.creditLimit,
-        amortizationSystem: balance.amortizationSystem,
-      }),
-      /** Saldo contable. Negativo en las cuentas de deuda. */
-      balance: balance.balance.toFixed(2),
-      /** Deuda en positivo, SÓLO en cuentas de pasivo. `null` en el resto. */
-      debt: balance.debt ? balance.debt.toFixed(2) : null,
-      isLiability: balance.isLiability,
-      inflow: balance.inflow.toFixed(2),
-      outflow: balance.outflow.toFixed(2),
-    })),
-    netWorth: {
-      assets: netWorth.assets.toFixed(2),
-      liabilities: netWorth.liabilities.toFixed(2),
-      net: netWorth.net.toFixed(2),
-    },
-    netWorthSeries,
-  });
+    return NextResponse.json({
+      accounts: balances.map((balance) => ({
+        ...toAccountDTO({
+          id: balance.id,
+          name: balance.name,
+          kind: balance.kind,
+          archived: balance.archived,
+          openingBalance: balance.opening,
+          closingDay: balance.closingDay,
+          dueDay: balance.dueDay,
+          creditLimit: balance.creditLimit,
+          amortizationSystem: balance.amortizationSystem,
+        }),
+        /** Saldo contable. Negativo en las cuentas de deuda. */
+        balance: balance.balance.toFixed(2),
+        /** Deuda en positivo, SÓLO en cuentas de pasivo. `null` en el resto. */
+        debt: balance.debt ? balance.debt.toFixed(2) : null,
+        isLiability: balance.isLiability,
+        inflow: balance.inflow.toFixed(2),
+        outflow: balance.outflow.toFixed(2),
+      })),
+      netWorth: {
+        assets: netWorth.assets.toFixed(2),
+        liabilities: netWorth.liabilities.toFixed(2),
+        net: netWorth.net.toFixed(2),
+      },
+      netWorthSeries,
+    });
+  } catch (error) {
+    console.error(error);
+
+    const described = describeDatabaseError(error);
+    if (described) {
+      return NextResponse.json(
+        { error: described.message },
+        { status: described.status },
+      );
+    }
+
+    return NextResponse.json(
+      { error: "No se pudieron cargar las cuentas." },
+      { status: 500 },
+    );
+  }
 }
 
 /**
