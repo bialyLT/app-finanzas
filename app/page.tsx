@@ -150,6 +150,19 @@ export default function Home() {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [search, setSearch] = useState("");
 
+  /**
+   * Borrado en dos pasos: sin diálogo nativo (`window.confirm`).
+   *
+   * El navegador del web driver de Maestro no puede contestar diálogos nativos
+   * —se queda esperando una respuesta que nunca llega—, así que el borrado se
+   * confirma en la fila, igual que en /recurrencia y /tarjetas.
+   */
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleteBusyId, setDeleteBusyId] = useState<string | null>(null);
+  const [deleteNotice, setDeleteNotice] = useState<{ id: string; message: string } | null>(
+    null,
+  );
+
   // ── El rango del mes ───────────────────────────────────────────────────────
   // Se calcula con `periodRange`, que conoce los meses de 28, 29, 30 y 31 días.
   //
@@ -354,19 +367,29 @@ export default function Home() {
   const hasFilters = categoryFilter !== "" || search !== "";
 
   async function remove(id: string) {
-    if (!window.confirm("¿Eliminar este movimiento?")) return;
+    if (deleteBusyId) return;
+    setDeleteBusyId(id);
+    setDeleteNotice(null);
+    try {
+      const response = await fetch(`/api/transactions?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
 
-    const response = await fetch(`/api/transactions?id=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
+      if (response.ok || response.status === 404) {
+        setConfirmDeleteId(null);
+        load();
+        return;
+      }
 
-    if (!response.ok && response.status !== 404) {
-      const data = (await response.json()) as { error?: string };
-      window.alert(data.error ?? "No se pudo eliminar.");
-      return;
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      setConfirmDeleteId(null);
+      setDeleteNotice({ id, message: data.error ?? "No se pudo eliminar." });
+    } catch {
+      setConfirmDeleteId(null);
+      setDeleteNotice({ id, message: "No se pudo eliminar." });
+    } finally {
+      setDeleteBusyId(null);
     }
-
-    load();
   }
 
   function shiftMonth(delta: number) {
@@ -996,6 +1019,7 @@ export default function Home() {
           </select>
 
           <input
+            id="mov-search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar en notas, categorías o cuentas…"
@@ -1082,70 +1106,113 @@ export default function Home() {
           {visible.map((movement) => {
             const style = KIND_ROW_STYLE[movement.kind];
             const isTransfer = movement.kind === "TRANSFER";
+            const notice = deleteNotice?.id === movement.id ? deleteNotice : null;
 
             return (
               <div
                 key={movement.id}
-                className="flex items-start gap-3 border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
+                className="border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
               >
-                <div
-                  className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg ${style.bubble}`}
-                >
-                  {style.icon}
-                </div>
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg ${style.bubble}`}
+                  >
+                    {style.icon}
+                  </div>
 
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold truncate">
-                    {isTransfer ? (
-                      <>
-                        {movement.account.name}
-                        <span className="mx-1.5 text-sky-500">→</span>
-                        {movement.toAccount?.name ?? "?"}
-                      </>
-                    ) : (
-                      movement.category?.name ?? "Sin categoría"
-                    )}
-                    {/* Marca de origen: esto lo posteó una regla, no se cargó
-                        a mano (`recurrenceRuleId != null` ⇔ regla, la
-                        equivalencia que documenta el esquema). Es identidad,
-                        no plata: no cambia ningún número. */}
-                    {movement.recurrenceRuleId && (
-                      <span className="ml-2 align-middle text-[10px] uppercase font-bold rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-1.5 py-0.5">
-                        🔁 regla
-                      </span>
-                    )}
-                  </p>
-
-                  <p className="text-xs text-zinc-500">
-                    {/* `formatDayLabel` parsea el string de calendario con
-                        componentes locales. Usar `new Date(...)` sobre el string
-                        mostraría el día anterior. */}
-                    {formatDayLabel(movement.date)}
-                    {!isTransfer && <> · {movement.account.name}</>}
-                  </p>
-
-                  {movement.description && (
-                    <p className="mt-1 text-sm leading-snug whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2.5 py-1.5">
-                      📝 {movement.description}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold truncate">
+                      {isTransfer ? (
+                        <>
+                          {movement.account.name}
+                          <span className="mx-1.5 text-sky-500">→</span>
+                          {movement.toAccount?.name ?? "?"}
+                        </>
+                      ) : (
+                        movement.category?.name ?? "Sin categoría"
+                      )}
+                      {/* Marca de origen: esto lo posteó una regla, no se cargó
+                          a mano (`recurrenceRuleId != null` ⇔ regla, la
+                          equivalencia que documenta el esquema). Es identidad,
+                          no plata: no cambia ningún número. */}
+                      {movement.recurrenceRuleId && (
+                        <span className="ml-2 align-middle text-[10px] uppercase font-bold rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-1.5 py-0.5">
+                          🔁 regla
+                        </span>
+                      )}
                     </p>
+
+                    <p className="text-xs text-zinc-500">
+                      {/* `formatDayLabel` parsea el string de calendario con
+                          componentes locales. Usar `new Date(...)` sobre el string
+                          mostraría el día anterior. */}
+                      {formatDayLabel(movement.date)}
+                      {!isTransfer && <> · {movement.account.name}</>}
+                    </p>
+
+                    {movement.description && (
+                      <p className="mt-1 text-sm leading-snug whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2.5 py-1.5">
+                        📝 {movement.description}
+                      </p>
+                    )}
+                  </div>
+
+                  <p
+                    className={`font-extrabold whitespace-nowrap pt-1 ${style.amount}`}
+                  >
+                    {movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}
+                    {formatMoney(movement.amount)}
+                  </p>
+
+                  {confirmDeleteId === movement.id ? (
+                    <div className="flex flex-col items-end gap-1 pt-1">
+                      <span className="text-xs text-zinc-500 whitespace-nowrap">
+                        ¿Eliminar?
+                      </span>
+                      <div className="flex gap-1">
+                        <button
+                          id={`mov-delete-confirm-${movement.id}`}
+                          onClick={() => remove(movement.id)}
+                          disabled={deleteBusyId !== null}
+                          className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 text-xs font-bold disabled:opacity-50"
+                        >
+                          {deleteBusyId === movement.id ? "Eliminando…" : "Sí, borrar"}
+                        </button>
+                        <button
+                          id={`mov-delete-cancel-${movement.id}`}
+                          onClick={() => setConfirmDeleteId(null)}
+                          disabled={deleteBusyId !== null}
+                          className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-2.5 py-1 text-xs font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                        >
+                          Mejor no
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      id={`mov-delete-${movement.id}`}
+                      onClick={() => {
+                        setConfirmDeleteId(movement.id);
+                        setDeleteNotice(null);
+                      }}
+                      title="Eliminar"
+                      aria-label="Eliminar movimiento"
+                      className="text-zinc-400 hover:text-rose-600 px-1 pt-1"
+                    >
+                      🗑
+                    </button>
                   )}
                 </div>
 
-                <p
-                  className={`font-extrabold whitespace-nowrap pt-1 ${style.amount}`}
-                >
-                  {movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}
-                  {formatMoney(movement.amount)}
-                </p>
-
-                <button
-                  onClick={() => remove(movement.id)}
-                  title="Eliminar"
-                  aria-label="Eliminar movimiento"
-                  className="text-zinc-400 hover:text-rose-600 px-1 pt-1"
-                >
-                  🗑
-                </button>
+                {notice && (
+                  <p
+                    id={`mov-delete-notice-${movement.id}`}
+                    role="alert"
+                    className="mt-2 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                  >
+                    {notice.message}
+                  </p>
+                )}
               </div>
             );
           })}
