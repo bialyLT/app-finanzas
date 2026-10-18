@@ -49,6 +49,13 @@ export interface AccountBalance {
   kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN";
   archived: boolean;
 
+  /** Día de cierre del resumen (sólo tarjetas). `null` si no está cargado. */
+  closingDay: number | null;
+  /** Día de vencimiento del resumen (sólo tarjetas). `null` si no está cargado. */
+  dueDay: number | null;
+  /** Límite de compra (sólo tarjetas). `null` = no cargado, no es 0. */
+  creditLimit: Money | null;
+
   /** Lo que la cuenta tenía antes de empezar a cargar movimientos. */
   opening: Money;
   /** Todo lo que entró: ingresos + transferencias recibidas. */
@@ -111,6 +118,9 @@ export async function getAccountBalances(
         kind: true,
         archived: true,
         openingBalance: true,
+        closingDay: true,
+        dueDay: true,
+        creditLimit: true,
       },
       // Desempate por nombre: sin él, dos cuentas creadas en el mismo
       // milisegundo pueden salir en cualquier orden y el saldo total de la
@@ -184,6 +194,11 @@ export async function getAccountBalances(
       name: account.name,
       kind: account.kind,
       archived: account.archived,
+      closingDay: account.closingDay,
+      dueDay: account.dueDay,
+      // `money(...)` sólo si existe: un límite de 0 guardado no existe (CHECK),
+      // pero `null` no se puede convertir sin inventar un 0.
+      creditLimit: account.creditLimit === null ? null : money(account.creditLimit),
       opening,
       inflow,
       outflow,

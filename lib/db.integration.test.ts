@@ -29,8 +29,16 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { addDays, calendarToDb } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
-import { amortizationSchedule } from "./money";
+import { amortizationSchedule, money } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
+import { describeDatabaseError } from "./queries";
+import {
+  createCardPlan,
+  deleteCardPlan,
+  getCardsView,
+  payStatement,
+  runCardStatements,
+} from "./card-service";
 import {
   RECURRENCE_RUN_MAX_PER_RULE,
   acceptOccurrence,
@@ -73,6 +81,11 @@ const db = new PrismaClient({
  * ocurrencias, el `SetNull` no tiene a quién aplicar.
  */
 async function resetDatabase() {
+  // Orden FK: los resúmenes referencian movimientos (SetNull) y cuentas
+  // (Restrict); los planes referencian su gasto (Restrict). Van antes que los
+  // movimientos, o el delete de un movimiento con plan fallaría.
+  await db.statement.deleteMany();
+  await db.cardPlan.deleteMany();
   await db.recurrenceOccurrence.deleteMany();
   await db.movement.deleteMany();
   await db.recurrenceRule.deleteMany();
@@ -3359,5 +3372,517 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
         },
       }),
     ).rejects.toThrow(/occurrence_shape_by_status/);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * TARJETAS DE CRÉDITO Y CUOTAS · FASE 5
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+describeDb("Tarjetas · compras en cuotas, resúmenes y pago", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  /**
+   * El "hoy" FIJO de todos los tests de tarjetas. Igual que en recurrencia: las
+   * reglas de fechas reciben `today` como parámetro, así que acá se puede fijar
+   * el 17 de octubre de 2026 y probar bordes (cierre el 25, compras en el cierre,
+   * cruce de año) sin depender del día en que se corra la suite.
+   */
+  const TODAY = "2026-10-17";
+
+  /** Banco con plata y una tarjeta con cierre 25 y vencimiento 5. */
+  async function seedBase(options: { closingDay?: number | null; dueDay?: number | null; creditLimit?: string } = {}) {
+    const { gastos } = await seedCategories();
+
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+
+    const card = await db.account.create({
+      data: {
+        name: "Visa",
+        kind: "CREDIT_CARD",
+        closingDay: options.closingDay === undefined ? 25 : options.closingDay,
+        dueDay: options.dueDay === undefined ? 5 : options.dueDay,
+        creditLimit: options.creditLimit ?? "600000",
+      },
+    });
+
+    return { bank, card, gastos };
+  }
+
+  it("una compra en 12 cuotas es UN gasto por el total y 12 cuotas asignadas", async () => {
+    const { card } = await seedBase();
+
+    const plan = await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Heladera",
+        totalAmount: "120000",
+        installments: 12,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+
+    // UN solo gasto, por el TOTAL, a la fecha de compra. La deuda de la tarjeta
+    // nace completa: el gasto no se reparte.
+    expect(await db.movement.count()).toBe(1);
+    expect(plan.movement.kind).toBe("EXPENSE");
+    expect(plan.movement.amount).toBe("120000.00");
+    expect(plan.movement.date).toBe("2026-10-17");
+
+    // Las cuotas suman EXACTO el total y están numeradas.
+    expect(plan.items).toHaveLength(12);
+    expect(plan.items.map((item) => item.number)).toEqual(
+      Array.from({ length: 12 }, (_, index) => index + 1),
+    );
+    expect(
+      plan.items.reduce((total, item) => total.plus(item.amount), money("0")).toFixed(2),
+    ).toBe("120000.00");
+
+    // La primera cuota cae en el resumen que cierra en octubre; la 12.ª, un año
+    // después (septiembre de 2027).
+    expect(plan.items[0]).toMatchObject({ periodYear: 2026, periodMonth: 10 });
+    expect(plan.items[11]).toMatchObject({ periodYear: 2027, periodMonth: 9 });
+
+    // El saldo de la tarjeta ES la deuda: 120.000 en negativo.
+    const balances = await getAccountBalances(db);
+    const cardBalance = balances.find((balance) => balance.id === card.id);
+    expect(cardBalance?.debt?.toFixed(2)).toBe("120000.00");
+
+    // Y el plan sabe cuántas cuotas ya se facturaron: ninguna (octubre no cerró).
+    expect(plan.billedInstallments).toBe(0);
+  });
+
+  it("una compra EN el día de cierre entra en ese resumen (criterio 4)", async () => {
+    const { card } = await seedBase();
+
+    const enElCierre = await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "En el cierre",
+        totalAmount: "10000",
+        installments: 1,
+        purchaseDate: "2026-10-25",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+    expect(enElCierre.items[0]).toMatchObject({ periodYear: 2026, periodMonth: 10 });
+
+    const despuesDelCierre = await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Un día después",
+        totalAmount: "10000",
+        installments: 1,
+        purchaseDate: "2026-10-26",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+    expect(despuesDelCierre.items[0]).toMatchObject({
+      periodYear: 2026,
+      periodMonth: 11,
+    });
+  });
+
+  it("con cierre 31, la compra del último día de un mes corto entra a ese mes", async () => {
+    const { card } = await seedBase({ closingDay: 31, dueDay: 10 });
+
+    const plan = await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Fin de abril",
+        totalAmount: "30000",
+        installments: 3,
+        purchaseDate: "2026-04-30",
+        categoryName: "Hogar",
+      },
+      { today: "2026-05-01" },
+    );
+
+    expect(plan.items[0]).toMatchObject({ periodYear: 2026, periodMonth: 4 });
+    expect(plan.items[1]).toMatchObject({ periodYear: 2026, periodMonth: 5 });
+  });
+
+  it("una tarjeta sin cierre no puede cargar cuotas (409)", async () => {
+    const { card } = await seedBase({ closingDay: null, dueDay: null });
+
+    await expect(
+      createCardPlan(
+        db,
+        {
+          cardId: card.id,
+          label: "Sin cierre",
+          totalAmount: "10000",
+          installments: 1,
+          categoryName: "Hogar",
+        },
+        { today: TODAY },
+      ),
+    ).rejects.toThrow(/cierre/);
+  });
+
+  it("corre los resúmenes de los períodos cerrados: cuotas + compras directas, idempotente", async () => {
+    const { card } = await seedBase();
+
+    // 12 cuotas de 10.000; la primera entra al resumen de octubre.
+    await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Heladera",
+        totalAmount: "120000",
+        installments: 12,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+
+    // Una compra directa (no en cuotas) ANTES del cierre: entra al mismo resumen.
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "5000",
+        date: calendarToDb("2026-10-10"),
+        description: "Supermercado",
+        accountId: card.id,
+        categoryId: (await db.category.findFirstOrThrow({ where: { kind: "EXPENSE" } })).id,
+      },
+    });
+
+    // Aún no cerró octubre (hoy 17): la corrida no emite nada.
+    const antesDelCierre = await runCardStatements(db, { today: TODAY });
+    expect(antesDelCierre.results[0].created).toBe(0);
+    expect(antesDelCierre.results[0].statements).toHaveLength(0);
+
+    // El 26 de octubre octubre ya cerró (25). Total = cuota (10.000) + compra
+    // directa (5.000). El mínimo es el 5% del total.
+    const corrida = await runCardStatements(db, { today: "2026-10-26" });
+    expect(corrida.results[0].created).toBe(1);
+    expect(corrida.results[0].updated).toBe(0);
+
+    const octubre = corrida.results[0].statements[0];
+    expect(octubre).toMatchObject({
+      year: 2026,
+      month: 10,
+      closingDate: "2026-10-25",
+      dueDate: "2026-11-05",
+      totalDue: "15000.00",
+      minimumDue: "750.00",
+      paid: false,
+    });
+
+    // El gasto de compra en cuotas NO se cuenta dos veces: el resumen tiene
+    // 15.000 (10.000 de la cuota + 5.000 directos), no 135.000.
+    expect(octubre.totalDue).toBe("15000.00");
+
+    // Idempotente: dos corridas seguidas no duplican ni cambian nada.
+    const repetida = await runCardStatements(db, { today: "2026-10-26" });
+    expect(repetida.results[0].created).toBe(0);
+    expect(repetida.results[0].unchanged).toBe(1);
+    expect(await db.statement.count()).toBe(1);
+
+    // Una compra cargada TARDE en el período cerrado se refleja al recalcular
+    // (el resumen está impago, así que no está congelado).
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "2000",
+        date: calendarToDb("2026-10-20"),
+        description: "Farmacia (cargada tarde)",
+        accountId: card.id,
+        categoryId: (await db.category.findFirstOrThrow({ where: { kind: "EXPENSE" } })).id,
+      },
+    });
+
+    const recalculada = await runCardStatements(db, { today: "2026-10-26" });
+    expect(recalculada.results[0].updated).toBe(1);
+    expect(recalculada.results[0].statements[0].totalDue).toBe("17000.00");
+    expect(recalculada.results[0].statements[0].minimumDue).toBe("850.00");
+  });
+
+  it("pagar un resumen crea una TRANSFERENCIA (nunca un gasto), baja la deuda y es idempotente", async () => {
+    const { bank, card } = await seedBase();
+
+    await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Heladera",
+        totalAmount: "120000",
+        installments: 12,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+
+    const corrida = await runCardStatements(db, { today: "2026-10-26" });
+    const statement = await db.statement.findFirstOrThrow();
+
+    // Antes de pagar: un solo EXPENSE (la compra) y deuda de 120.000.
+    expect(await db.movement.count({ where: { kind: "EXPENSE" } })).toBe(1);
+
+    const pago = await payStatement(
+      db,
+      { statementId: statement.id, fromAccountId: bank.id },
+      { today: "2026-10-27" },
+    );
+
+    expect(pago.created).toBe(true);
+    expect(pago.movement.kind).toBe("TRANSFER");
+    expect(pago.movement.amount).toBe("10000.00");
+    expect(pago.movement.date).toBe("2026-10-27");
+    expect(pago.movement.account.id).toBe(bank.id);
+    expect(pago.movement.toAccount?.id).toBe(card.id);
+    expect(pago.statement.paid).toBe(true);
+
+    // Pagar NO crea un gasto: sigue habiendo UN solo EXPENSE.
+    expect(await db.movement.count({ where: { kind: "EXPENSE" } })).toBe(1);
+
+    // La deuda bajó: 120.000 de la compra − 10.000 pagados.
+    const balances = await getAccountBalances(db);
+    expect(
+      balances.find((balance) => balance.id === card.id)?.debt?.toFixed(2),
+    ).toBe("110000.00");
+
+    // Doble clic: devuelve el pago existente, no crea otra transferencia.
+    const repetido = await payStatement(
+      db,
+      { statementId: statement.id, fromAccountId: bank.id },
+      { today: "2026-10-28" },
+    );
+    expect(repetido.created).toBe(false);
+    expect(repetido.movement.id).toBe(pago.movement.id);
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(1);
+  });
+
+  it("un resumen pagado queda congelado y el plan que lo originó no se puede borrar (409)", async () => {
+    const { bank, card } = await seedBase();
+
+    const plan = await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Notebook",
+        totalAmount: "120000",
+        installments: 12,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+
+    await runCardStatements(db, { today: "2026-10-26" });
+    const statement = await db.statement.findFirstOrThrow();
+    await payStatement(
+      db,
+      { statementId: statement.id, fromAccountId: bank.id },
+      { today: "2026-10-27" },
+    );
+
+    // Una compra cargada tarde en un período YA PAGADO no reescribe el documento.
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "9999",
+        date: calendarToDb("2026-10-12"),
+        description: "Tarde",
+        accountId: card.id,
+        categoryId: (await db.category.findFirstOrThrow({ where: { kind: "EXPENSE" } })).id,
+      },
+    });
+
+    const corrida = await runCardStatements(db, { today: "2026-10-28" });
+    expect(corrida.results[0].frozen).toBe(1);
+    expect(corrida.results[0].statements[0].totalDue).toBe("10000.00");
+
+    await expect(deleteCardPlan(db, plan.id)).rejects.toThrow(/pagado|historial/);
+  });
+
+  it("borrar un plan impago deshace la compra y el resumen se recalcula", async () => {
+    const { card } = await seedBase();
+
+    const plan = await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Sillón",
+        totalAmount: "30000",
+        installments: 3,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+
+    await runCardStatements(db, { today: "2026-10-26" });
+    expect((await db.statement.findFirstOrThrow()).totalDue.toFixed(2)).toBe("10000.00");
+
+    await deleteCardPlan(db, plan.id);
+
+    // El plan, sus cuotas y el gasto desaparecieron.
+    expect(await db.cardPlan.count()).toBe(0);
+    expect(await db.cardPlanItem.count()).toBe(0);
+    expect(await db.movement.count()).toBe(0);
+
+    // La próxima corrida deja el resumen impago en cero (el documento existía y
+    // se recalcula; no se borra la historia).
+    const corrida = await runCardStatements(db, { today: "2026-10-26" });
+    expect(corrida.results[0].updated).toBe(1);
+    expect(corrida.results[0].statements[0].totalDue).toBe("0.00");
+    expect(corrida.results[0].statements[0].minimumDue).toBe("0.00");
+  });
+
+  it("el cruce diciembre/enero: el resumen de diciembre cierra en diciembre y vence en enero", async () => {
+    const { card } = await seedBase();
+
+    await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Regalo",
+        totalAmount: "50000",
+        installments: 2,
+        purchaseDate: "2026-12-20",
+        categoryName: "Hogar",
+      },
+      { today: "2026-12-20" },
+    );
+
+    const corrida = await runCardStatements(db, { today: "2027-01-26" });
+
+    // Dos resúmenes: diciembre 2026 (cerró el 25/12, venció el 5/1) y enero
+    // 2027 (cerró el 25/1, vence el 5/2).
+    expect(corrida.results[0].created).toBe(2);
+    const [enero, diciembre] = corrida.results[0].statements;
+    expect(diciembre).toMatchObject({
+      year: 2026,
+      month: 12,
+      closingDate: "2026-12-25",
+      dueDate: "2027-01-05",
+      totalDue: "25000.00",
+    });
+    expect(enero).toMatchObject({
+      year: 2027,
+      month: 1,
+      closingDate: "2027-01-25",
+      dueDate: "2027-02-05",
+      totalDue: "25000.00",
+    });
+  });
+
+  it("borrar el gasto de una compra en cuotas lo explica con la constraint correcta", async () => {
+    const { card } = await seedBase();
+
+    const plan = await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Heladera",
+        totalAmount: "12000",
+        installments: 1,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+
+    // El FK es Restrict: borrar el movimiento dejaría al plan sin su compra.
+    let caught: unknown = null;
+    try {
+      await db.movement.delete({ where: { id: plan.movement.id } });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).not.toBeNull();
+
+    // El mensaje que ve la persona tiene que mandarla al plan y no hablar de
+    // "archivar una cuenta", que es el consejo del P2003 genérico.
+    const described = describeDatabaseError(caught);
+    expect(described?.status).toBe(409);
+    expect(described?.message).toMatch(/plan/);
+  });
+
+  it("la vista de tarjetas: utilización, período en curso y compromisos 6/12", async () => {
+    const { card } = await seedBase({ creditLimit: "600000" });
+
+    await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Heladera",
+        totalAmount: "120000",
+        installments: 12,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+
+    const view = await getCardsView(db, { today: TODAY });
+    const cardView = view.cards.find((candidate) => candidate.id === card.id);
+
+    expect(cardView?.debt).toBe("120000.00");
+    expect(cardView?.utilizationPercent).toBe("20.00");
+
+    // El período en curso es octubre (cierra el 25). Proyecta la cuota 1 y no
+    // está emitido todavía.
+    expect(cardView?.currentPeriod).toMatchObject({
+      year: 2026,
+      month: 10,
+      totalDue: "10000.00",
+      minimumDue: "500.00",
+      closed: false,
+      persisted: false,
+    });
+
+    // Próximos 12 resúmenes: las 12 cuotas. Los primeros 6 suman 60.000.
+    expect(cardView?.commitments.next6Months).toBe("60000.00");
+    expect(cardView?.commitments.next12Months).toBe("120000.00");
+    expect(cardView?.commitments.months).toHaveLength(12);
+    expect(cardView?.commitments.months[0].amount).toBe("10000.00");
+    expect(cardView?.plans[0].implicitRate).toBeNull();
+  });
+
+  it("la corrida saltea (con motivo) las tarjetas con compras y sin cierre configurado", async () => {
+    const { gastos } = await seedCategories();
+    const sinCierre = await db.account.create({
+      data: { name: "Visa sin cierre", kind: "CREDIT_CARD" },
+    });
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "1000",
+        date: calendarToDb(TODAY),
+        description: "Compra",
+        accountId: sinCierre.id,
+        categoryId: gastos.id,
+      },
+    });
+
+    const corrida = await runCardStatements(db, { today: TODAY });
+    expect(corrida.results).toHaveLength(0);
+    expect(corrida.skipped).toHaveLength(1);
+    expect(corrida.skipped[0].cardId).toBe(sinCierre.id);
+    expect(corrida.skipped[0].reason).toMatch(/cierre/);
+    expect(corrida.skipped[0].cardName).toBe("Visa sin cierre");
   });
 });

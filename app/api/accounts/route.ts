@@ -27,6 +27,22 @@ function isAccountKind(value: unknown): value is AccountKind {
 }
 
 /**
+ * Interpreta un "día del mes" de la tarjeta (1..31).
+ *
+ * Devuelve `null` si no vino (vacío, `null` o `undefined`), o la cadena
+ * `"invalid"` si vino algo que no es un entero en rango. Tres estados y no dos
+ * porque "no lo mandaron" y "lo mandaron mal" no son el mismo caso: el primero
+ * se ignora, el segundo es un 400 con mensaje.
+ */
+function parseDayOfMonth(value: unknown): number | null | "invalid" {
+  if (value === undefined || value === null || value === "") return null;
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 31) return "invalid";
+  return parsed;
+}
+
+/**
  * GET /api/accounts
  *
  * Devuelve las cuentas con su saldo calculado y el patrimonio neto.
@@ -95,6 +111,9 @@ export async function GET(req: Request) {
         kind: balance.kind,
         archived: balance.archived,
         openingBalance: balance.opening,
+        closingDay: balance.closingDay,
+        dueDay: balance.dueDay,
+        creditLimit: balance.creditLimit,
       }),
       /** Saldo contable. Negativo en las cuentas de deuda. */
       balance: balance.balance.toFixed(2),
@@ -127,6 +146,11 @@ export async function GET(req: Request) {
  *     tnaPercent: "60",               // 60 = 60% TNA
  *     installmentCount: 12,
  *     firstInstallmentDate: "2026-11-15"   // opcional
+ *
+ *     // Sólo si kind = CREDIT_CARD:
+ *     closingDay: 25,                 // día de cierre del resumen (1..31)
+ *     dueDay: 5,                      // día de vencimiento (1..31)
+ *     creditLimit: "1500000"          // opcional
  *   }
  */
 export async function POST(req: Request) {
@@ -239,6 +263,44 @@ export async function POST(req: Request) {
     );
   }
 
+  // ── Parámetros de tarjeta ──────────────────────────────────────────────────
+  // Cierre y vencimiento van JUNTOS o no van: un resumen sin fecha de
+  // vencimiento no se puede pagar, y la base lo hace cumplir con
+  // `account_card_days_range`. El límite sí puede venir solo.
+  const closingDay = parseDayOfMonth(body.closingDay);
+  const dueDay = parseDayOfMonth(body.dueDay);
+
+  if (closingDay === "invalid" || dueDay === "invalid") {
+    return badRequest(
+      "El día de cierre y el de vencimiento tienen que ser números enteros entre 1 y 31.",
+    );
+  }
+  if ((closingDay === null) !== (dueDay === null)) {
+    return badRequest(
+      "El día de cierre y el de vencimiento van juntos: cargá los dos (o ninguno de los dos).",
+    );
+  }
+
+  let creditLimit: string | null = null;
+  if (
+    body.creditLimit !== undefined &&
+    body.creditLimit !== null &&
+    body.creditLimit !== ""
+  ) {
+    const parsed = parseMoneyInput(String(body.creditLimit));
+    if (parsed === null || parsed.lessThanOrEqualTo(0)) {
+      return badRequest("El límite de la tarjeta tiene que ser un monto mayor a cero.");
+    }
+    creditLimit = parsed.toFixed(2);
+  }
+
+  const hasCardParams = closingDay !== null || creditLimit !== null;
+  if (body.kind !== "CREDIT_CARD" && hasCardParams) {
+    return badRequest(
+      "Los datos de tarjeta (cierre, vencimiento, límite) sólo se cargan en cuentas de tipo tarjeta de crédito.",
+    );
+  }
+
   try {
     const account = await prisma.account.create({
       data: {
@@ -251,6 +313,9 @@ export async function POST(req: Request) {
         firstInstallmentDate: loanInput.firstInstallmentDate
           ? new Date(`${loanInput.firstInstallmentDate}T00:00:00.000Z`)
           : null,
+        closingDay,
+        dueDay,
+        creditLimit,
       },
     });
 
@@ -286,7 +351,11 @@ export async function POST(req: Request) {
 /**
  * PATCH /api/accounts
  *
- * Body: `{ id, name?, archived? }`
+ * Body: `{ id, name?, archived?, closingDay?, dueDay?, creditLimit? }`
+ *
+ * Los tres campos de tarjeta se editan juntos cuando se trata de los días
+ * (`closingDay` + `dueDay`, o los dos en `null` para limpiarlos) y sueltos
+ * cuando es el límite (`creditLimit`, o `null` para limpiarlo).
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * POR QUÉ SE ARCHIVA EN VEZ DE BORRAR
@@ -322,7 +391,38 @@ export async function PATCH(req: Request) {
   const id = typeof body.id === "string" ? body.id : "";
   if (!id) return badRequest("Falta el id de la cuenta.");
 
-  const data: { name?: string; archived?: boolean } = {};
+  // Los parámetros de tarjeta sólo se editan en una tarjeta. Se lee el `kind`
+  // ANTES de validar los días: si la cuenta es de efectivo, el mensaje correcto
+  // es "esto no es una tarjeta", no "el día 25 no existe".
+  const touchesCardFields =
+    body.closingDay !== undefined ||
+    body.dueDay !== undefined ||
+    body.creditLimit !== undefined;
+
+  let target: { kind: string; closingDay: number | null } | null = null;
+
+  if (touchesCardFields) {
+    target = await prisma.account.findUnique({
+      where: { id },
+      select: { kind: true, closingDay: true },
+    });
+    if (!target) {
+      return NextResponse.json({ error: "Esa cuenta no existe." }, { status: 404 });
+    }
+    if (target.kind !== "CREDIT_CARD") {
+      return badRequest(
+        "Los datos de tarjeta (cierre, vencimiento, límite) sólo se editan en cuentas de tipo tarjeta de crédito.",
+      );
+    }
+  }
+
+  const data: {
+    name?: string;
+    archived?: boolean;
+    closingDay?: number | null;
+    dueDay?: number | null;
+    creditLimit?: string | null;
+  } = {};
 
   if (body.name !== undefined) {
     const name = cleanName(typeof body.name === "string" ? body.name : "");
@@ -338,6 +438,66 @@ export async function PATCH(req: Request) {
       return badRequest("`archived` tiene que ser verdadero o falso.");
     }
     data.archived = body.archived;
+  }
+
+  if (body.closingDay !== undefined || body.dueDay !== undefined) {
+    const closingDay = parseDayOfMonth(body.closingDay);
+    const dueDay = parseDayOfMonth(body.dueDay);
+
+    if (closingDay === "invalid" || dueDay === "invalid") {
+      return badRequest(
+        "El día de cierre y el de vencimiento tienen que ser números enteros entre 1 y 31.",
+      );
+    }
+    if ((closingDay === null) !== (dueDay === null)) {
+      return badRequest(
+        "Mandá el día de cierre y el de vencimiento juntos (o los dos en null para limpiarlos).",
+      );
+    }
+
+    data.closingDay = closingDay;
+    data.dueDay = dueDay;
+  }
+
+  if (body.creditLimit !== undefined) {
+    if (body.creditLimit === null || body.creditLimit === "") {
+      data.creditLimit = null;
+    } else {
+      const parsed = parseMoneyInput(String(body.creditLimit));
+      if (parsed === null || parsed.lessThanOrEqualTo(0)) {
+        return badRequest("El límite de la tarjeta tiene que ser un monto mayor a cero.");
+      }
+      data.creditLimit = parsed.toFixed(2);
+    }
+  }
+
+  // ── B2: cambiar el cierre con resúmenes pagados reescribe el pasado ───────
+  // Los resúmenes pagados son documentos congelados; el día de cierre nuevo
+  // re-reparte las compras DIRECTAS por fecha y las que ya estaban incluidas en
+  // un resumen pagado volverían a facturarse en otro período: el mismo gasto
+  // aparecería dos veces y el pago doble bajaría la deuda de más. Mientras no
+  // haya resúmenes pagados, el cambio es seguro (los impagos se recalculan).
+  // El camino de salida es explícito: borrar el pago reabre el resumen.
+  if (
+    target !== null &&
+    data.closingDay !== undefined &&
+    data.closingDay !== target.closingDay
+  ) {
+    const paidStatements = await prisma.statement.count({
+      where: { accountId: id, paidMovementId: { not: null } },
+    });
+
+    if (paidStatements > 0) {
+      return NextResponse.json(
+        {
+          error:
+            paidStatements === 1
+              ? "La tarjeta ya tiene un resumen pagado: cambiar el día de cierre volvería a facturar compras que ya están incluidas en ese resumen. Borrá primero el pago (eso reabre el resumen) y volvé a intentar."
+              : `La tarjeta ya tiene ${paidStatements} resúmenes pagados: cambiar el día de cierre volvería a facturar compras que ya están incluidas en esos resúmenes. Borrá primero los pagos (eso reabre los resúmenes) y volvé a intentar.`,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   if (Object.keys(data).length === 0) {

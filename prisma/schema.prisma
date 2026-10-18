@@ -221,6 +221,41 @@ model Account {
   /// Fecha de la primera cuota. Las siguientes se calculan sumando meses.
   firstInstallmentDate DateTime? @db.Date
 
+  // ── Parámetros de la tarjeta. Sólo se usan si kind = CREDIT_CARD ──────────
+
+  /// Día del mes del CIERRE del resumen (1..31).
+  ///
+  /// Es un ANCLA al estilo de `RecurrenceRule.dayOfMonth`: en los meses más
+  /// cortos se clampea (31 → 30 de abril, 28/29 de febrero). Un cierre "31"
+  /// significa "el último día del mes", no un día que no existe.
+  ///
+  /// El rango 1..31 lo hace cumplir un CHECK junto con `dueDay`: o están los
+  /// dos, o no está ninguno. `closingDay` sin `dueDay` no describe nada (un
+  /// resumen sin vencimiento) y la app no sabría qué hacer con él.
+  closingDay Int?
+
+  /// Día del mes del VENCIMIENTO del resumen (1..31).
+  ///
+  /// ─────────────────────────────────────────────────────────────────────────
+  /// DÍA FIJO DEL MES, NO "DÍAS DESPUÉS DEL CIERRE"
+  /// ─────────────────────────────────────────────────────────────────────────
+  /// Es como lo dice el banco ("cierra el 25 y vence el 5") y no depende del
+  /// largo del mes: "vence 10 días después del cierre" un 25 de febrero daría
+  /// un 7 de marzo en un año y un 6 en otro. La fecha de vencimiento es el
+  /// primer `dueDay` (clampeado) ESTRICTAMENTE posterior al cierre:
+  ///
+  ///   · cierra 25, vence 5   → 5 del mes siguiente (el caso típico)
+  ///   · cierra 5,  vence 20  → 20 del mismo mes
+  ///   · cierra 25, vence 25  → 25 del mes siguiente (el cierre va primero)
+  ///
+  /// El cálculo vive en `lib/cards.ts` (`dueDateOf`) y está testeado.
+  dueDay Int?
+
+  /// Límite de compra de la tarjeta, para mostrar la utilización
+  /// (`deuda / límite`). NULL = la persona no lo cargó: la app dice "no se
+  /// sabe", nunca un 0% inventado.
+  creditLimit Decimal? @db.Decimal(18, 2)
+
   /// Las cuentas archivadas no aparecen al cargar movimientos, pero su historia
   /// sigue contando en los totales.
   archived Boolean @default(false)
@@ -239,6 +274,12 @@ model Account {
 
   /// Reglas de recurrencia cuyo destino es esta cuenta (sólo en TRANSFER).
   incomingRecurrenceRules RecurrenceRule[] @relation("RecurrenceRuleToAccount")
+
+  /// Planes de cuotas de esta tarjeta (sólo si kind = CREDIT_CARD).
+  cardPlans CardPlan[] @relation("CardPlanAccount")
+
+  /// Resúmenes de esta tarjeta (sólo si kind = CREDIT_CARD).
+  statements Statement[] @relation("CardStatements")
 
   /// El nombre tiene que ser único: dos cuentas llamadas "Efectivo" harían
   /// que el usuario no sepa cuál está eligiendo.
@@ -354,6 +395,13 @@ model Movement {
 
   /// La ocurrencia que este movimiento cumplió, si vino de una regla.
   recurrenceOccurrence RecurrenceOccurrence?
+
+  /// El plan en cuotas que este movimiento compró, si es la compra de un plan.
+  /// La relación es 1-a-1: un movimiento no puede ser la compra de dos planes.
+  cardPlanPurchase CardPlan? @relation("CardPlanPurchase")
+
+  /// El resumen que este movimiento pagó, si es el pago de un resumen.
+  statementPayment Statement? @relation("StatementPayment")
 
   // Índices pensados para las consultas reales de la app:
   // ordenar por fecha, filtrar por tipo+mes, y calcular el saldo de una cuenta.
@@ -542,4 +590,179 @@ model RecurrenceOccurrence {
   @@unique([ruleId, dueDate])
   /// La bandeja de pendientes: "las próximas sin resolver".
   @@index([status, dueDate])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TARJETAS DE CRÉDITO Y CUOTAS — FASE 5
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// La tarjeta YA existe en el modelo: es una cuenta de tipo CREDIT_CARD y su
+// saldo ES la deuda. Lo que agrega esta fase son tres cosas:
+//
+//   1. Los parámetros del resumen (closingDay / dueDay / creditLimit) en la
+//      cuenta: sin día de cierre la app no puede decir cuándo cierra ni cuándo
+//      vence, y sin límite no puede mostrar utilización.
+//   2. Los planes en cuotas (CardPlan + CardPlanItem): "compré en 12 cuotas"
+//      como UNA acción, con las cuotas asignadas al resumen que corresponde.
+//   3. Los resúmenes (Statement): total del período, cierre, vencimiento y
+//      mínimo, con el pago enlazado a la transferencia que lo pagó.
+//
+// La regla que no cambia: comprar con tarjeta = UN EXPENSE al comprar; pagar
+// el resumen = TRANSFER (nunca un gasto). Ver la cabecera del archivo.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Una compra en cuotas hecha con una tarjeta: "12 cuotas de $10.000".
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// POR QUÉ LA COMPRA ES UN SOLO EXPENSE (y no doce gastos mensuales)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Comprar $120.000 en 12 cuotas NO crea doce gastos de $10.000: crea UN gasto
+/// de $120.000 en la fecha de la compra, que es cuando la plata salió de tu
+/// patrimonio y la deuda quedó contraída. El saldo de la cuenta de la tarjeta
+/// (−120.000) ES la deuda: si los gastos se postearan cuota a cuota, el día
+/// después de comprar deberías 120.000 y la app mostraría 10.000.
+///
+/// Lo que se reparte por período de resumen son los `CardPlanItem`: CUÁNDO el
+/// banco te va a cobrar cada parte. El pago del resumen es una TRANSFER y
+/// nunca un gasto (criterio de aceptación 3 de la fase).
+model CardPlan {
+  id String @id @default(cuid())
+
+  /// La cuenta de la tarjeta. `Restrict`: una tarjeta con planes no se borra.
+  accountId String
+  account   Account @relation("CardPlanAccount", fields: [accountId], references: [id], onDelete: Restrict)
+
+  /// Qué se compró: "Heladera". Es también la descripción del gasto.
+  label String
+
+  /// Lo que sale la compra en total. Los items lo suman EXACTO: el último
+  /// absorbe los centavos que deja el reparto `total ÷ N`.
+  totalAmount Decimal @db.Decimal(18, 2)
+
+  /// Cantidad de cuotas (1..600, CHECK). Mismo tope que un préstamo.
+  installments Int
+
+  /// Cuándo se hizo la compra. Define el PRIMER período de resumen: si cae en
+  /// o antes del día de cierre, la primera cuota entra en el resumen que cierra
+  /// ese mes; si cae después, en el siguiente (ver `periodOf` en lib/cards.ts).
+  purchaseDate DateTime @db.Date
+
+  /// Precio de contado, si la persona lo conoce. Es el dato que permite avisar
+  /// que "12 cuotas sin interés" con descuento por pago al contado NO es gratis:
+  /// la tasa implícita se calcula con `implicitFinancingRate` (lib/money.ts).
+  /// NULL = no se sabe, y entonces la app no inventa una tasa.
+  cashPrice Decimal? @db.Decimal(18, 2)
+
+  /// El gasto ÚNICO de la compra. `@unique`: un movimiento no puede ser la
+  /// compra de dos planes. El FK es `Restrict`: el movimiento no se borra
+  /// dejando al plan sin su compra; para deshacer la compra se borra el plan
+  /// entero (que borra sus items y después el movimiento, en una transacción).
+  movementId String   @unique
+  movement   Movement @relation("CardPlanPurchase", fields: [movementId], references: [id], onDelete: Restrict)
+
+  /// Las cuotas, asignadas cada una a un período de resumen.
+  items CardPlanItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([accountId, purchaseDate])
+}
+
+/// Una cuota de un plan, asignada a un período de resumen.
+///
+/// El período se identifica por el MES DE CIERRE (periodYear/periodMonth) y no
+/// por una fecha: "la cuota 7 va en el resumen que cierra en marzo de 2027".
+/// La asignación se deriva del `closingDay` de la tarjeta y es pura: misma
+/// compra + mismo cierre → mismo cronograma, sin importar cuándo se calcule.
+///
+/// No guarda fecha de vencimiento por cuota: el vencimiento es el del resumen
+/// (dueDay) y repetirlo acá sería un segundo origen de verdad que puede
+/// contradecir al primero.
+model CardPlanItem {
+  id String @id @default(cuid())
+
+  planId String
+  plan   CardPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  /// Número de cuota, 1..N. Único dentro del plan.
+  number Int
+
+  /// El mes en que CIERRA el resumen que la factura (1..12, CHECK).
+  periodYear  Int
+  periodMonth Int
+
+  /// Lo que se paga esa cuota. Todas iguales menos la última, que absorbe el
+  /// redondeo: `Σ items == CardPlan.totalAmount`, al centavo.
+  amount Decimal @db.Decimal(18, 2)
+
+  createdAt DateTime @default(now())
+
+  @@unique([planId, number])
+  @@index([periodYear, periodMonth])
+}
+
+/// El resumen de un período de una tarjeta: lo que el banco te va a cobrar.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// QUÉ ES (y por qué se persiste)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Un resumen es un DOCUMENTO: cierra en una fecha, vence en otra, tiene un
+/// total y un pago mínimo. El cierre fija qué compras entran: las posteriores
+/// al cierre caen en el período siguiente aunque sean del mismo mes calendario.
+/// Por eso el período se identifica por el MES DE CIERRE.
+///
+/// El total y el mínimo se guardan al materializar el resumen, como el
+/// documento del banco; un resumen PAGADO queda congelado (es historia). Los
+/// NO pagados se recalculan en cada corrida (`POST /api/cards/statements`),
+/// idempotente por la clave única (accountId, periodYear, periodMonth): dos
+/// corridas seguidas no duplican ni sorprenden.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// EL PAGO ES UNA TRANSFERENCIA, NUNCA UN GASTO (criterio 3)
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Pagar un resumen mueve plata del banco a la tarjeta: baja el banco y baja
+/// la deuda. El gasto ya se contó cuando se compró (una sola vez). Por eso
+/// `paidMovementId` apunta a una TRANSFER.
+///
+/// `onDelete: SetNull`: borrar el pago deshace el pago — el resumen vuelve a
+/// quedar impago (y recalculable). Nunca queda un id apuntando a algo que ya
+/// no existe.
+model Statement {
+  id String @id @default(cuid())
+
+  accountId String
+  account   Account @relation("CardStatements", fields: [accountId], references: [id], onDelete: Restrict)
+
+  /// El año y el mes (1..12) de CIERRE del resumen.
+  periodYear  Int
+  periodMonth Int
+
+  /// La fecha de cierre: fin del período. Las compras hechas EN el día de
+  /// cierre entran en ESTE resumen.
+  closingDate DateTime @db.Date
+
+  /// La fecha de vencimiento: el primer `dueDay` (clampeado) estrictamente
+  /// posterior al cierre. Ver la decisión en la columna `Account.dueDay`.
+  dueDate DateTime @db.Date
+
+  /// La suma de lo que se factura: las cuotas de los planes asignadas a este
+  /// período + las compras directas con fecha en la ventana del período
+  /// (después del cierre anterior, hasta el cierre inclusive).
+  totalDue Decimal @db.Decimal(18, 2)
+
+  /// El pago mínimo: 5% del total redondeado hacia arriba al centavo, clampeado
+  /// al total (ver `minimumPayment` en lib/cards.ts y la decisión documentada).
+  minimumDue Decimal @db.Decimal(18, 2)
+
+  /// El movimiento que lo pagó. NULL = impago.
+  paidMovementId String?   @unique
+  paidMovement   Movement? @relation("StatementPayment", fields: [paidMovementId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Un resumen por tarjeta y período. Es lo que hace idempotente la corrida.
+  @@unique([accountId, periodYear, periodMonth])
+  @@index([accountId, dueDate])
 }

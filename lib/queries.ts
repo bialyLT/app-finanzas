@@ -1071,6 +1071,14 @@ export interface AccountRowLike {
   kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN";
   archived: boolean;
   openingBalance: { toFixed(dp: number): string } | string;
+
+  // Parámetros de tarjeta. Son OPCIONALES en la interfaz estructural porque no
+  // todos los `select` históricos los piden (una transferencia no necesita el
+  // día de cierre de la cuenta); cuando no vienen, el DTO dice `null`, que es
+  // exactamente lo que significa "no configurado".
+  closingDay?: number | null;
+  dueDay?: number | null;
+  creditLimit?: { toFixed(dp: number): string } | string | null;
 }
 
 export function toAccountDTO(account: AccountRowLike): AccountDTO {
@@ -1086,6 +1094,14 @@ export function toAccountDTO(account: AccountRowLike): AccountDTO {
       typeof account.openingBalance === "string"
         ? account.openingBalance
         : account.openingBalance.toFixed(2),
+    closingDay: account.closingDay ?? null,
+    dueDay: account.dueDay ?? null,
+    creditLimit:
+      account.creditLimit === null || account.creditLimit === undefined
+        ? null
+        : typeof account.creditLimit === "string"
+          ? account.creditLimit
+          : account.creditLimit.toFixed(2),
   };
 }
 
@@ -1273,6 +1289,15 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     message:
       "No se puede registrar un ingreso en un préstamo o una tarjeta. Si te desembolsaron un préstamo, registralo como una transferencia desde la cuenta del préstamo hacia tu cuenta de dinero.",
   },
+  {
+    // Postgres 22003: el número no entra en NUMERIC(18,2). Sin esta regla, un
+    // monto de 20 dígitos salía como 500 genérico aunque el problema es de la
+    // petición (el monto), no del servidor.
+    marker: "numeric field overflow",
+    status: 400,
+    message:
+      "El monto es demasiado grande: supera el máximo que puede guardar la app.",
+  },
 ];
 
 /**
@@ -1307,12 +1332,34 @@ export function describeDatabaseError(error: unknown): {
       return { status: 409, message: "Ese dato ya existe." };
     }
 
-    case "P2003":
+    case "P2003": {
+      // El P2003 es genérico ("violates foreign key constraint"), pero el
+      // nombre de la constraint dice QUÉ relación lo causó. Sin distinguir, el
+      // usuario que intenta borrar la compra de un plan recibe el consejo de
+      // archivar una cuenta, que no tiene nada que ver.
+      if (text.includes("CardPlan_movementId_fkey")) {
+        return {
+          status: 409,
+          message:
+            "Ese movimiento es la compra de un plan en cuotas. Para deshacer la compra, borrá el plan (DELETE /api/cards/plans).",
+        };
+      }
+      if (
+        text.includes("Statement_accountId_fkey") ||
+        text.includes("CardPlan_accountId_fkey")
+      ) {
+        return {
+          status: 409,
+          message:
+            "La cuenta tiene resúmenes o planes en cuotas asociados. Archivala en vez de borrarla para no perder el historial.",
+        };
+      }
       return {
         status: 409,
         message:
           "La cuenta tiene movimientos asociados. Archivala en vez de borrarla para no perder el historial.",
       };
+    }
 
     case "P2014":
       return {

@@ -140,9 +140,12 @@ async function main() {
     // El orden importa. Las OCURRENCIAS van primero: borrar un movimiento
     // posteado dispara el `SetNull` del FK y dejaría la ocurrencia en POSTED
     // sin movimiento, que el CHECK `occurrence_shape_by_status` rechaza (el
-    // DELETE fallaría). Después los movimientos (la FK a Account es `Restrict`:
-    // borrar las cuentas antes fallaría) y por último reglas, categorías y
-    // cuentas.
+    // DELETE fallaría). Los RESÚMENES y PLANES de tarjeta también van antes de
+    // los movimientos: el plan referencia su gasto con un FK `Restrict`.
+    // Después los movimientos (la FK a Account es `Restrict`: borrar las cuentas
+    // antes fallaría) y por último reglas, categorías y cuentas.
+    await prisma.statement.deleteMany();
+    await prisma.cardPlan.deleteMany();
     await prisma.recurrenceOccurrence.deleteMany();
     await prisma.movement.deleteMany();
     await prisma.recurrenceRule.deleteMany();
@@ -206,6 +209,62 @@ async function main() {
       401,
     );
 
+    // Las tarjetas: leer la vista y disparar la corrida de resúmenes, el pago y
+    // los planes tampoco pueden quedar abiertos. Una corrida sin sesión emitiría
+    // documentos y un pago sin sesión movería plata.
+    const tarjetasSinSesion = await fetch(`${BASE_URL}/api/cards`, {
+      headers: { Origin: BASE_URL },
+    });
+    check("sin sesión, GET /api/cards responde 401", tarjetasSinSesion.status, 401);
+
+    const resumenesSinSesion = await fetch(`${BASE_URL}/api/cards/statements`, {
+      method: "POST",
+      headers: { Origin: BASE_URL },
+    });
+    check(
+      "sin sesión, POST /api/cards/statements responde 401",
+      resumenesSinSesion.status,
+      401,
+    );
+
+    const pagoSinSesion = await fetch(`${BASE_URL}/api/cards/statements/pay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({}),
+    });
+    check(
+      "sin sesión, POST /api/cards/statements/pay responde 401",
+      pagoSinSesion.status,
+      401,
+    );
+
+    const planSinSesion = await fetch(`${BASE_URL}/api/cards/plans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({}),
+    });
+    check("sin sesión, POST /api/cards/plans responde 401", planSinSesion.status, 401);
+
+    const borrarPlanSinSesion = await fetch(`${BASE_URL}/api/cards/plans?id=x`, {
+      method: "DELETE",
+      headers: { Origin: BASE_URL },
+    });
+    check(
+      "sin sesión, DELETE /api/cards/plans responde 401",
+      borrarPlanSinSesion.status,
+      401,
+    );
+
+    const previewSinSesion = await fetch(
+      `${BASE_URL}/api/cards/plans/preview?total=100&installments=1`,
+      { headers: { Origin: BASE_URL } },
+    );
+    check(
+      "sin sesión, GET /api/cards/plans/preview responde 401",
+      previewSinSesion.status,
+      401,
+    );
+
     // Y las MISMAS escrituras, ahora CON sesión pero con `Origin` ajeno: acá
     // actúa la segunda capa anti-CSRF (`assertSameOrigin`, además de
     // `SameSite=Lax`). Si esto no diera 403, un sitio externo podría disparar
@@ -252,6 +311,42 @@ async function main() {
       ocurrenciaAjena.status,
       403,
     );
+
+    // Tarjetas: las cuatro mutaciones, con origen ajeno.
+    const resumenesAjenos = await conOrigenAjeno("/api/cards/statements", {
+      method: "POST",
+      body: "{}",
+    });
+    check(
+      "con Origin ajeno, POST /api/cards/statements responde 403",
+      resumenesAjenos.status,
+      403,
+    );
+
+    const pagoAjeno = await conOrigenAjeno("/api/cards/statements/pay", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    check(
+      "con Origin ajeno, POST /api/cards/statements/pay responde 403",
+      pagoAjeno.status,
+      403,
+    );
+
+    const planAjeno = await conOrigenAjeno("/api/cards/plans", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    check("con Origin ajeno, POST /api/cards/plans responde 403", planAjeno.status, 403);
+
+    const borrarPlanAjeno = await conOrigenAjeno("/api/cards/plans?id=x", {
+      method: "DELETE",
+    });
+    check(
+      "con Origin ajeno, DELETE /api/cards/plans responde 403",
+      borrarPlanAjeno.status,
+      403,
+    );
   }
 
   // ── Cuerpos hostiles ───────────────────────────────────────────────────────
@@ -290,6 +385,9 @@ async function main() {
       ["/api/recurrence/rules", "POST"],
       ["/api/recurrence/rules", "PATCH"],
       ["/api/recurrence/occurrences", "POST"],
+      ["/api/cards/statements", "POST"],
+      ["/api/cards/statements/pay", "POST"],
+      ["/api/cards/plans", "POST"],
     ];
 
     for (const [path, method] of rutasConCuerpo) {
@@ -1814,6 +1912,331 @@ async function main() {
 
     const corridaFinal = await post("/api/recurrence/run", {});
     check("la corrida final no materializa nada", corridaFinal.body?.materialized, 0);
+  }
+
+  // ── Tarjetas y cuotas ──────────────────────────────────────────────────────
+  section("Tarjetas y cuotas — compras, resúmenes y pago");
+  {
+    const ahora = new Date();
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const HOY = `${ahora.getFullYear()}-${pad2(ahora.getMonth() + 1)}-${pad2(ahora.getDate())}`;
+    const diaDeHoy = ahora.getDate();
+    const mesDeHoy = HOY.slice(0, 7);
+    const finDeMesDeHoy = `${mesDeHoy}-${pad2(new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0).getDate())}`;
+    const totalesDeHoy = async () =>
+      (await api(`/api/transactions?from=${mesDeHoy}-01&to=${finDeMesDeHoy}`)).body?.totals;
+    const centavos = (valor) => Math.round(Number(valor) * 100);
+    const desdeCentavos = (valor) => (valor / 100).toFixed(2);
+
+    const base = await totalesDeHoy();
+
+    // ── Una tarjeta sin cierre no puede emitir resúmenes ─────────────────────
+    // La Visa del escenario se creó SIN día de cierre (las tarjetas viejas del
+    // modelo no lo tenían). Con una compra encima, la corrida tiene que
+    // saltearla CON MOTIVO, no romperse ni inventar un cierre.
+    const gastoEnVisaSuelta = await post("/api/transactions", {
+      kind: "EXPENSE",
+      amount: "500",
+      date: HOY,
+      accountId: visa.body?.id,
+      categoryName: "Comida",
+    });
+    check("una compra directa en la Visa sin cierre (201)", gastoEnVisaSuelta.status, 201);
+
+    const corridaSinCierre = await post("/api/cards/statements", {});
+    check("la corrida responde 200 aunque haya tarjetas sin cierre", corridaSinCierre.status, 200);
+    check("no procesa ninguna tarjeta con actividad", corridaSinCierre.body?.results?.length, 0);
+    check("y saltea la Visa sin cierre", corridaSinCierre.body?.skipped?.length, 1);
+    check("diciendo cuál es", corridaSinCierre.body?.skipped?.[0]?.cardName, "Visa Santander");
+    checkTrue(
+      "y por qué (falta el cierre)",
+      String(corridaSinCierre.body?.skipped?.[0]?.reason ?? "").includes("cierre"),
+      JSON.stringify(corridaSinCierre.body?.skipped),
+    );
+
+    await api(`/api/transactions?id=${gastoEnVisaSuelta.body?.id}`, { method: "DELETE" });
+    check("la compra de prueba se borró", (await totalesDeHoy())?.expenses, base?.expenses);
+
+    // ── La API rechaza parámetros de tarjeta incoherentes ────────────────────
+    const cierreSinVencimiento = await post("/api/accounts", {
+      name: "Tarjeta rara",
+      kind: "CREDIT_CARD",
+      closingDay: 25,
+    });
+    check("cierre sin vencimiento → 400", cierreSinVencimiento.status, 400);
+
+    const diaInvalido = await post("/api/accounts", {
+      name: "Tarjeta rara",
+      kind: "CREDIT_CARD",
+      closingDay: 25,
+      dueDay: 32,
+    });
+    check("un día 32 → 400", diaInvalido.status, 400);
+
+    const diasEnBanco = await post("/api/accounts", {
+      name: "Banco raro",
+      kind: "BANK",
+      closingDay: 25,
+      dueDay: 5,
+    });
+    check("días de tarjeta en un banco → 400", diasEnBanco.status, 400);
+
+    // ── Tarjeta con cierre HOY: prueba viva de la regla inclusiva ────────────
+    // El cierre se configura en el día de hoy. Una compra hecha HOY entra al
+    // resumen que cierra HOY: si la regla del `<` en vez del `<=` estuviera mal,
+    // la cuota caería al mes siguiente y todo lo que sigue lo delataría.
+    const nube = await post("/api/accounts", {
+      name: "Visa Nube",
+      kind: "CREDIT_CARD",
+      closingDay: diaDeHoy,
+      dueDay: diaDeHoy,
+      creditLimit: "600.000",
+    });
+    check("crea una tarjeta con cierre HOY (201)", nube.status, 201);
+    check("y devuelve el día de cierre", nube.body?.closingDay, diaDeHoy);
+    check("y el límite como string decimal", nube.body?.creditLimit, "600000.00");
+
+    const patchDiaSuelto = await api("/api/accounts", {
+      method: "PATCH",
+      body: JSON.stringify({ id: nube.body?.id, dueDay: 10 }),
+    });
+    check("PATCH de un solo día → 400 (van juntos)", patchDiaSuelto.status, 400);
+
+    const patchLimite = await api("/api/accounts", {
+      method: "PATCH",
+      body: JSON.stringify({ id: nube.body?.id, creditLimit: "900.000" }),
+    });
+    check("PATCH del límite responde 200", patchLimite.status, 200);
+    check("y el límite nuevo queda", patchLimite.body?.creditLimit, "900000.00");
+
+    // ── La vista previa no escribe: cuota y tasa implícita ───────────────────
+    const previewCuotas = await api(
+      "/api/cards/plans/preview?total=120000&installments=12&cashPrice=108000",
+    );
+    check("el preview responde 200", previewCuotas.status, 200);
+    check("la cuota es el total repartido", previewCuotas.body?.installmentAmount, "10000.00");
+    check("el sobreprecio contra el contado", previewCuotas.body?.surcharge, "12000.00");
+    checkTrue(
+      "la TEA implícita ronda el 21,8% del ROADMAP",
+      Math.abs(Number(previewCuotas.body?.implicitRate?.teaPercent) - 21.8) < 0.5,
+      JSON.stringify(previewCuotas.body?.implicitRate),
+    );
+
+    const previewMala = await api("/api/cards/plans/preview?total=120000&installments=0");
+    check("0 cuotas → 400", previewMala.status, 400);
+
+    // ── La compra en cuotas ──────────────────────────────────────────────────
+    const plan = await post("/api/cards/plans", {
+      cardId: nube.body?.id,
+      label: "Heladera",
+      totalAmount: "120.000",
+      installments: 12,
+      categoryName: "Hogar",
+      purchaseDate: HOY,
+      cashPrice: "108.000",
+    });
+    check("registra la compra en 12 cuotas (201)", plan.status, 201);
+    check("son 12 cuotas", plan.body?.plan?.items?.length, 12);
+    check("la compra es UN gasto por el total", plan.body?.plan?.movement?.amount, "120000.00");
+    check("y es un EXPENSE", plan.body?.plan?.movement?.kind, "EXPENSE");
+    check(
+      "el gasto está a nombre de la tarjeta",
+      plan.body?.plan?.movement?.account?.id,
+      nube.body?.id,
+    );
+    check(
+      "la primera cuota cae en el resumen que cierra HOY (regla inclusiva)",
+      plan.body?.plan?.items?.[0]?.periodYear,
+      ahora.getFullYear(),
+    );
+    check(
+      "...es decir, este mes",
+      plan.body?.plan?.items?.[0]?.periodMonth,
+      ahora.getMonth() + 1,
+    );
+    check(
+      "la segunda, el mes que viene",
+      plan.body?.plan?.items?.[1]?.periodMonth,
+      ((ahora.getMonth() + 1) % 12) + 1,
+    );
+    check(
+      "la suma de las cuotas da EXACTO el total",
+      (plan.body?.plan?.items ?? []).reduce(
+        (total, item) => total + centavos(item.amount),
+        0,
+      ),
+      12_000_000,
+    );
+    checkTrue(
+      "el plan trae su tasa implícita",
+      Math.abs(Number(plan.body?.plan?.implicitRate?.teaPercent) - 21.8) < 0.5,
+      JSON.stringify(plan.body?.plan?.implicitRate),
+    );
+
+    const planSinCierre = await post("/api/cards/plans", {
+      cardId: visa.body?.id,
+      label: "Sin cierre",
+      totalAmount: "1000",
+      installments: 1,
+      categoryName: "Comida",
+    });
+    check("un plan en una tarjeta sin cierre → 409", planSinCierre.status, 409);
+    checkTrue(
+      "y manda a configurar el cierre",
+      String(planSinCierre.body?.error ?? "").includes("cierre"),
+      JSON.stringify(planSinCierre.body),
+    );
+
+    // ── La vista: deuda, utilización, período en curso y compromisos ─────────
+    const { body: vista } = await api("/api/cards");
+    const tarjetaNube = (vista?.cards ?? []).find((card) => card.id === nube.body?.id);
+
+    check("la vista trae la tarjeta nueva", Boolean(tarjetaNube), true);
+    check("con la deuda completa de la compra", tarjetaNube?.debt, "120000.00");
+    check("utilización: 120.000 sobre 900.000 ≈ 13,33%", tarjetaNube?.utilizationPercent, "13.33");
+    check(
+      "el período en curso es el que cierra HOY",
+      tarjetaNube?.currentPeriod?.closingDate,
+      HOY,
+    );
+    check("y proyecta la cuota del mes", tarjetaNube?.currentPeriod?.totalDue, "10000.00");
+    check("con mínimo del 5%", tarjetaNube?.currentPeriod?.minimumDue, "500.00");
+    check("el período ya cerró", tarjetaNube?.currentPeriod?.closed, true);
+    check("todavía no está emitido como documento", tarjetaNube?.currentPeriod?.persisted, false);
+    check("próximos 6 resúmenes: 6 cuotas", tarjetaNube?.commitments?.next6Months, "60000.00");
+    check("próximos 12: el plan completo", tarjetaNube?.commitments?.next12Months, "120000.00");
+
+    // ── La corrida emite el resumen del período cerrado ─────────────────────
+    const corrida = await post("/api/cards/statements", { cardId: nube.body?.id });
+    check("corre el cierre (200)", corrida.status, 200);
+    check("emite UN resumen", corrida.body?.results?.[0]?.created, 1);
+
+    const resumen = corrida.body?.results?.[0]?.statements?.[0];
+    check("el total del resumen es la cuota del mes", resumen?.totalDue, "10000.00");
+    check("el mínimo es el 5%", resumen?.minimumDue, "500.00");
+    check("cierra HOY", resumen?.closingDate, HOY);
+
+    // Vence el mismo día del mes siguiente (con el clamp de fin de mes).
+    const proximoMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 1);
+    const ultimoDiaDelProximoMes = new Date(
+      proximoMes.getFullYear(),
+      proximoMes.getMonth() + 1,
+      0,
+    ).getDate();
+    const vencimientoEsperado = `${proximoMes.getFullYear()}-${pad2(proximoMes.getMonth() + 1)}-${pad2(
+      Math.min(diaDeHoy, ultimoDiaDelProximoMes),
+    )}`;
+    check("y vence el mes que viene (nunca antes del cierre)", resumen?.dueDate, vencimientoEsperado);
+
+    const repetida = await post("/api/cards/statements", { cardId: nube.body?.id });
+    check("correrla de nuevo no duplica (created 0)", repetida.body?.results?.[0]?.created, 0);
+    check("ni cambia el resumen (unchanged 1)", repetida.body?.results?.[0]?.unchanged, 1);
+
+    // ── Una compra directa después de la corrida: el resumen impago se recalcula ──
+    const gastoDirecto = await post("/api/transactions", {
+      kind: "EXPENSE",
+      amount: "5.000",
+      date: HOY,
+      accountId: nube.body?.id,
+      categoryName: "Comida",
+    });
+    check("una compra directa con la tarjeta (201)", gastoDirecto.status, 201);
+
+    const corrida2 = await post("/api/cards/statements", { cardId: nube.body?.id });
+    const resumen2 = corrida2.body?.results?.[0]?.statements?.[0];
+    check("el resumen impago se recalcula (updated 1)", corrida2.body?.results?.[0]?.updated, 1);
+    check("total = cuota + compra directa", resumen2?.totalDue, "15000.00");
+    check("mínimo recalculado", resumen2?.minimumDue, "750.00");
+
+    const totalesConCompras = await totalesDeHoy();
+    check(
+      "las compras con tarjeta son gasto UNA vez (120.000 + 5.000)",
+      desdeCentavos(centavos(totalesConCompras?.expenses) - centavos(base?.expenses)),
+      "125000.00",
+    );
+
+    // ── El pago es una TRANSFERENCIA (criterio 3) ────────────────────────────
+    const pago = await post("/api/cards/statements/pay", {
+      statementId: resumen2?.id,
+      fromAccountId: banco.body?.id,
+    });
+    check("paga el resumen (201)", pago.status, 201);
+    check("el pago es una TRANSFERENCIA", pago.body?.movement?.kind, "TRANSFER");
+    check("por el total del resumen", pago.body?.movement?.amount, "15000.00");
+    check("sale del banco", pago.body?.movement?.account?.id, banco.body?.id);
+    check("y entra a la tarjeta", pago.body?.movement?.toAccount?.id, nube.body?.id);
+    check("el resumen queda pago", pago.body?.statement?.paid, true);
+
+    const totalesDespuesDelPago = await totalesDeHoy();
+    check("pagar NO suma gastos", totalesDespuesDelPago?.expenses, totalesConCompras?.expenses);
+
+    const pagoRepetido = await post("/api/cards/statements/pay", {
+      statementId: resumen2?.id,
+      fromAccountId: banco.body?.id,
+    });
+    check("pagar dos veces no duplica (200)", pagoRepetido.status, 200);
+    check("y devuelve created:false", pagoRepetido.body?.created, false);
+
+    const { body: vistaPaga } = await api("/api/cards");
+    const nubePaga = (vistaPaga?.cards ?? []).find((card) => card.id === nube.body?.id);
+    check("la deuda baja con el pago (120.000 + 5.000 − 15.000)", nubePaga?.debt, "110000.00");
+    check(
+      "la cuota pagada sale de los compromisos: 11 cuotas",
+      nubePaga?.commitments?.next12Months,
+      "110000.00",
+    );
+    check("los próximos 6 meses: las cuotas 2 a 6", nubePaga?.commitments?.next6Months, "50000.00");
+    check("el resumen pagado se ve pago en la vista", nubePaga?.statements?.[0]?.paid, true);
+
+    // ── Un plan con resumen pagado no se borra: el pasado no se reescribe ────
+    const borrarPlanPago = await api(`/api/cards/plans?id=${plan.body?.plan?.id}`, {
+      method: "DELETE",
+    });
+    check("un plan con resumen pagado no se borra (409)", borrarPlanPago.status, 409);
+    checkTrue(
+      "y lo explica",
+      String(borrarPlanPago.body?.error ?? "").includes("pagado"),
+      JSON.stringify(borrarPlanPago.body),
+    );
+
+    const borrarGastoDePlan = await api(
+      `/api/transactions?id=${plan.body?.plan?.movement?.id}`,
+      { method: "DELETE" },
+    );
+    check(
+      "el gasto de un plan no se borra por /transactions (409, no 500)",
+      borrarGastoDePlan.status,
+      409,
+    );
+    checkTrue(
+      "y manda a borrar el plan",
+      String(borrarGastoDePlan.body?.error ?? "").includes("plan"),
+      JSON.stringify(borrarGastoDePlan.body),
+    );
+
+    // ── Limpieza: la base queda como estaba ──────────────────────────────────
+    // Por Prisma directo porque el plan ya no se puede borrar por la API (409,
+    // que es justo lo que se acaba de verificar). El orden respeta los FK:
+    // resúmenes → planes (items en cascada) → movimientos → categoría → cuenta.
+    const prisma = new PrismaClient();
+    await prisma.statement.deleteMany({ where: { accountId: nube.body?.id } });
+    await prisma.cardPlan.deleteMany({ where: { accountId: nube.body?.id } });
+    await prisma.movement.deleteMany({
+      where: { OR: [{ accountId: nube.body?.id }, { toAccountId: nube.body?.id }] },
+    });
+    await prisma.category.deleteMany({ where: { normalizedName: "hogar" } });
+    await prisma.account.delete({ where: { id: nube.body?.id } });
+    await prisma.$disconnect();
+
+    const totalesFinales = await totalesDeHoy();
+    check("los gastos del mes volvieron al punto de partida", totalesFinales?.expenses, base?.expenses);
+    check("y también los ingresos", totalesFinales?.income, base?.income);
+
+    const { body: vistaFinal } = await api("/api/cards");
+    checkTrue(
+      "la tarjeta de prueba ya no está",
+      !(vistaFinal?.cards ?? []).some((card) => card.id === nube.body?.id),
+    );
   }
 
   // ── Logout: CSRF y atributos de la cookie ──────────────────────────────────

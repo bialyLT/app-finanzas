@@ -360,6 +360,19 @@ export async function DELETE(req: Request) {
     }
 
     console.error(error);
+
+    // Un movimiento también puede ser intocable por una relación que la fase de
+    // tarjetas agregó: el gasto de una compra en cuotas (`CardPlan_movementId_fkey`,
+    // Restrict). Sin esta traducción, ese caso salía como 500 genérico y la
+    // persona no tenía forma de saber que había que borrar el plan.
+    const described = describeDatabaseError(error);
+    if (described) {
+      return NextResponse.json(
+        { error: described.message },
+        { status: described.status },
+      );
+    }
+
     return NextResponse.json(
       { error: "No se pudo borrar el movimiento." },
       { status: 500 },

@@ -9,8 +9,8 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-17)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: **202 tests** de vitest (131 unitarios + 71 de integración), **330 aserciones** de smoke, **16 flows** de Maestro (suite completa en 33m 18s), build de producción limpio (19 entradas de ruta).
-- Fases 0, 1, 2, 3 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3 en dos rondas, núcleo server-side + UI, con el fix U1 del input de fecha incluido); fases 4, 5, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
+- Batería verde: **262 tests** de vitest (179 unitarios + 83 de integración), **431 aserciones** de smoke, **582 checks** de la batería adversarial server-side (`scripts/tester-fase5/`), **16 flows** de Maestro (suite completa en 33m 18s), build de producción limpio (24 entradas de ruta).
+- Fases 0, 1, 2, 3 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3 en dos rondas, núcleo server-side + UI, con el fix U1 del input de fecha incluido); **la 5 tiene la ronda 1 cerrada** (núcleo server-side de tarjetas y cuotas, 2026-10-17) y la ronda 2 (UI) pendiente; fases 4, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
@@ -47,8 +47,9 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 202 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 330 aserciones end-to-end (servidor arriba)
+npm test                  # 262 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 431 aserciones end-to-end (servidor arriba)
+node scripts/tester-fase5/NN-*.mjs  # 582 checks adversariales server-side (ronda 1 de la Fase 5; servidor arriba)
 npm run flows             # 16 flows de Maestro: siembra la base y corre; ~33m
 ```
 
@@ -63,9 +64,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 3 (recurrencia) completa — rondas 1 y 2.** El núcleo server-side (`RecurrenceRule` + `RecurrenceOccurrence`, motor `nextOccurrence` con clamp de fin de mes, generador *Since Last Run* `AUTO`/`NOTIFY`, API de reglas y bandeja) y la UI (`/recurrencia`: bandeja con aceptar/saltar, gestión de reglas con crear/editar/pausar/archivar/borrar, proyección; badge `🔁 regla`; generador al cargar) quedaron verificados end-to-end: typecheck 0 · 202/202 tests · 330/330 smoke · build limpio de 19 rutas · **suite 16/16 en 33m 18s** (flows 12–15 nuevos). La ronda del tester encontró y arregló **U1** (input de fecha que quedaba en `badInput` al borrar con backspace y frenaba el submit: `lib/date-input.ts` en los 4 inputs de fecha de la app).
+**Fase 5 (tarjetas y cuotas) — ronda 1 (núcleo server-side) completa; sigue la ronda 2 (UI).** El 2026-10-17 cerró el núcleo: `closingDay`/`dueDay`/`creditLimit` en las cuentas `CREDIT_CARD`, `CardPlan`/`CardPlanItem`/`Statement` (12 CHECKs, migración `20261017233037_tarjetas_y_cuotas`), dominio `lib/cards.ts` + servicio `lib/card-service.ts`, 5 rutas nuevas (`/api/cards`, `statements`, `statements/pay`, `plans`, `plans/preview`): resúmenes idempotentes (impago recalcula / pagado congela), pago = TRANSFER con claim atómico, compromisos 6/12 meses, preview con TEA implícita (21,83%). La ronda del tester dejó la batería durable **582 checks** (`scripts/tester-fase5/`) y arregló 4 bugs (B1/B2 de semántica de dominio; F2/F3 de pre-vuelo — las dos clases nuevas quedaron abstraídas en `agents/dev.md`). Cierre: typecheck 0 · 262/262 · 431/431 · build 24 rutas. **La ronda 2 es la UI**: pantalla de tarjetas, formulario de cuotas, correr el cierre, pagar el resumen — con sus flows de Maestro.
 
-**Sigue la Fase 5 (tarjetas y cuotas)** — orden elegido por el usuario: `closingDay`/`dueDay`/`creditLimit` en las cuentas `CREDIT_CARD`, planes en N cuotas (`CardPlan`/`CardPlanItem` con asignación por período de resumen), `Statement` (cierre/vencimiento/mínimo), aviso de tasa implícita y panel de cuotas comprometidas + utilización del límite. Después: lo que quede de las fases 4/7 y la Fase 9 (endurecimiento) para producción.
+La Fase 3 (recurrencia) quedó completa antes, en dos rondas (ronda 1 `2aa08c4`; ronda 2 `9fd6271`, suite 16/16 en 33m 18s). Después de la ronda 2 de la Fase 5: lo que quede de las fases 4/7 y la Fase 9 (endurecimiento) para producción.
 
 ## Bloqueos que necesitan a la persona
 

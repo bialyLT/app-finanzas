@@ -21,6 +21,7 @@ import {
   amortizationSchedule,
   formatMoney,
   formatPercent,
+  implicitFinancingRate,
   installmentPayment,
   installmentsCoveredBy,
   isNegative,
@@ -482,5 +483,63 @@ describe("loanProgress · capital, interés y cuotas restantes", () => {
       expect(progress.progressPercent.lessThanOrEqualTo(100)).toBe(true);
       expect(progress.installmentsCovered + progress.remainingCount).toBe(12);
     }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Tasa implícita de financiación (Fase 5)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+describe("implicitFinancingRate · el costo escondido de las cuotas", () => {
+  /**
+   * Los dos ejemplos del ROADMAP (§5.2): una compra de $120.000 en 12 cuotas
+   * iguales de $10.000. Con 10% de descuento por pago al contado, la tasa
+   * implícita es ≈21,8% TEA; con 20%, ≈53,1%. No son números inventados: son
+   * los que publica el propio documento como verificación de la fórmula.
+   */
+  const doceCuotas = Array(12).fill("10000");
+
+  it("10% de descuento al contado ≈ 21,8% TEA", () => {
+    const rate = implicitFinancingRate(doceCuotas, "108000");
+    expect(rate).not.toBeNull();
+    // 1,66% mensual compuesto a 12 meses da ≈21,8% efectivo anual.
+    expect(toNumber(rate!.monthlyRatePercent)).toBeCloseTo(1.66, 1);
+    expect(toNumber(rate!.teaPercent)).toBeCloseTo(21.8, 0);
+    expect(rate!.surcharge.toFixed(2)).toBe("12000.00");
+  });
+
+  it("20% de descuento al contado ≈ 53,1% TEA", () => {
+    const rate = implicitFinancingRate(doceCuotas, "96000");
+    expect(rate).not.toBeNull();
+    expect(toNumber(rate!.monthlyRatePercent)).toBeCloseTo(3.62, 1);
+    expect(toNumber(rate!.teaPercent)).toBeCloseTo(53.1, 0);
+    expect(rate!.surcharge.toFixed(2)).toBe("24000.00");
+  });
+
+  it("pagar en cuotas lo mismo que al contado es 0% (sin interés real)", () => {
+    const rate = implicitFinancingRate(doceCuotas, "120000");
+    expect(rate).not.toBeNull();
+    expect(rate!.monthlyRatePercent.toFixed(2)).toBe("0.00");
+    expect(rate!.teaPercent.toFixed(2)).toBe("0.00");
+    expect(rate!.surcharge.toFixed(2)).toBe("0.00");
+  });
+
+  it("si las cuotas salen MENOS que el contado, tampoco inventa una tasa negativa", () => {
+    const rate = implicitFinancingRate(doceCuotas, "130000");
+    expect(rate!.monthlyRatePercent.toFixed(2)).toBe("0.00");
+    expect(rate!.surcharge.toFixed(2)).toBe("-10000.00");
+  });
+
+  it("sin datos no hay ecuación", () => {
+    expect(implicitFinancingRate([], "108000")).toBeNull();
+    expect(implicitFinancingRate(doceCuotas, "0")).toBeNull();
+    expect(implicitFinancingRate(doceCuotas, "-5")).toBeNull();
+  });
+
+  it("LA INVARIANTE: una tasa mayor produce un sobreprecio mayor", () => {
+    const barato = implicitFinancingRate(doceCuotas, "110000");
+    const caro = implicitFinancingRate(doceCuotas, "90000");
+    expect(caro!.teaPercent.greaterThan(barato!.teaPercent)).toBe(true);
+    expect(caro!.surcharge.greaterThan(barato!.surcharge)).toBe(true);
   });
 });

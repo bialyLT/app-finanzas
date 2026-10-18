@@ -34,6 +34,21 @@ export interface AccountDTO {
   archived: boolean;
   /** Monto como string decimal exacto. Ver la nota de arriba. */
   openingBalance: string;
+
+  // ── Parámetros de tarjeta (sólo tienen sentido en CREDIT_CARD) ──────────
+
+  /**
+   * Día del mes del cierre del resumen (1..31), o `null` si no está cargado.
+   *
+   * El mes de cierre se clampea a fin de mes (31 → 30 de abril). Sin cierre no
+   * se pueden correr resúmenes: la tarjeta existe, pero la app no puede decir
+   * cuándo corta el período.
+   */
+  closingDay: number | null;
+  /** Día del mes del vencimiento (1..31), o `null`. Ver `closingDay`. */
+  dueDay: number | null;
+  /** Límite de compra como string decimal; `null` = no cargado (no es 0). */
+  creditLimit: string | null;
 }
 
 export interface CategoryDTO {
@@ -862,4 +877,194 @@ export function normalizeCategoryName(name: string): string {
  */
 export function cleanName(name: string): string {
   return name.trim().replace(/\s+/g, " ");
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * TARJETAS DE CRÉDITO Y CUOTAS · FASE 5
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Los mismos criterios de siempre: los montos viajan como STRING decimal exacto
+ * y las fechas como "YYYY-MM-DD". Nada de `number` para plata, nada de `Date`
+ * para fechas de calendario.
+ */
+
+/** Una cuota de un plan, con el período de resumen al que fue asignada. */
+export interface CardPlanItemDTO {
+  id: string;
+  /** Número de cuota, 1..N. */
+  number: number;
+  /** Año del CIERRE del resumen que la factura. */
+  periodYear: number;
+  /** Mes del cierre, 1..12. */
+  periodMonth: number;
+  /** Para mostrar sin reimplementar el locale en el cliente: "octubre de 2026". */
+  periodLabel: string;
+  amount: string;
+}
+
+/** La tasa implícita de una compra en cuotas contra el precio de contado. */
+export interface ImplicitRateDTO {
+  /** Tasa mensual efectiva, en porcentaje. */
+  monthlyRatePercent: string;
+  /** Tasa efectiva anual `(1 + i)^12 − 1`, en porcentaje. */
+  teaPercent: string;
+  /** Lo que se paga de más por no pagar al contado. */
+  surcharge: string;
+}
+
+/** Una compra en cuotas (o en una sola cuota). */
+export interface CardPlanDTO {
+  id: string;
+  label: string;
+  totalAmount: string;
+  installments: number;
+  purchaseDate: string;
+  /** Precio de contado, si se cargó. `null` = no se sabe. */
+  cashPrice: string | null;
+  /** Las N cuotas; la suma da EXACTO `totalAmount`. */
+  items: CardPlanItemDTO[];
+  /**
+   * El ÚNICO movimiento que materializó la compra: un EXPENSE por el total, a
+   * la fecha de compra. No hay doce gastos.
+   */
+  movement: MovementDTO;
+  /** `null` si no hay precio de contado, o si no hay costo financiero. */
+  implicitRate: ImplicitRateDTO | null;
+  /**
+   * Cuántas cuotas ya cayeron en un resumen emitido (período cerrado a la
+   * fecha de la consulta). Sirve para el "cuota 4 de 12" de la interfaz.
+   */
+  billedInstallments: number;
+}
+
+/** Un resumen de tarjeta, tal como quedó guardado. */
+export interface StatementDTO {
+  id: string;
+  /** Año del CIERRE. */
+  year: number;
+  /** Mes del cierre, 1..12. */
+  month: number;
+  periodLabel: string;
+  closingDate: string;
+  dueDate: string;
+  totalDue: string;
+  minimumDue: string;
+  /** `true` si el resumen ya tiene un pago enlazado. */
+  paid: boolean;
+  /** El movimiento TRANSFER que lo pagó, si está pago. */
+  paidMovementId: string | null;
+}
+
+/** El período de resumen en curso (proyección, no documento). */
+export interface CardCurrentPeriodDTO {
+  year: number;
+  month: number;
+  periodLabel: string;
+  closingDate: string;
+  dueDate: string;
+  /** Lo que se facturaría hoy con las compras y cuotas cargadas. */
+  totalDue: string;
+  minimumDue: string;
+  /** `true` si el cierre ya pasó (hoy o antes): se puede correr el resumen. */
+  closed: boolean;
+  /**
+   * `true` si el período ya tiene un resumen guardado; en ese caso los montos
+   * son los del documento y no una proyección.
+   */
+  persisted: boolean;
+  /** `true` si el documento guardado ya está pagado. */
+  paid: boolean;
+}
+
+/** Un mes de la proyección de cuotas comprometidas. */
+export interface CardCommitmentMonthDTO {
+  year: number;
+  month: number;
+  periodLabel: string;
+  amount: string;
+}
+
+/** Cuánto comprometen los planes en los próximos 6 y 12 resúmenes. */
+export interface CardCommitmentsDTO {
+  /** Σ de los próximos 6 períodos. */
+  next6Months: string;
+  /** Σ de los próximos 12 períodos. */
+  next12Months: string;
+  /** El detalle mes por mes de los próximos 12 períodos. */
+  months: CardCommitmentMonthDTO[];
+}
+
+/** Una tarjeta con todo lo que la pantalla de tarjetas necesita. */
+export interface CardViewDTO extends AccountBalanceDTO {
+  /** `debt / creditLimit × 100`, o `null` si no hay límite cargado. */
+  utilizationPercent: string | null;
+  /** El período de hoy, con lo que se facturaría. `null` sin día de cierre. */
+  currentPeriod: CardCurrentPeriodDTO | null;
+  commitments: CardCommitmentsDTO;
+  /** Resúmenes, del más nuevo al más viejo. */
+  statements: StatementDTO[];
+  /** Planes de cuotas vigentes (todos los de la tarjeta). */
+  plans: CardPlanDTO[];
+}
+
+/** Respuesta de `GET /api/cards`. */
+export interface CardsResponse {
+  cards: CardViewDTO[];
+  /** `true` si algún listado se recortó (ver `MOVEMENTS_MAX_ROWS` / statements). */
+  truncated: boolean;
+}
+
+/** Una tarjeta que la corrida no pudo procesar, y por qué. */
+export interface CardStatementsRunSkipDTO {
+  cardId: string;
+  cardName: string;
+  reason: string;
+}
+
+/** Lo que la corrida hizo con una tarjeta. */
+export interface CardStatementsRunCardDTO {
+  card: AccountDTO;
+  /** Resúmenes nuevos. */
+  created: number;
+  /** Resúmenes impagos que cambiaron de total. */
+  updated: number;
+  /** Resúmenes impagos que ya estaban al día. */
+  unchanged: number;
+  /** Resúmenes PAGADOS: congelados, no se tocan. */
+  frozen: number;
+  /** Los resúmenes de la tarjeta después de la corrida, del más nuevo al más viejo. */
+  statements: StatementDTO[];
+}
+
+/** Respuesta de `POST /api/cards/statements`. */
+export interface CardStatementsRunDTO {
+  runDate: string;
+  results: CardStatementsRunCardDTO[];
+  skipped: CardStatementsRunSkipDTO[];
+  /** `true` si la corrida cortó por el tope de períodos (`CARD_STATEMENTS_RUN_MAX`). */
+  truncated: boolean;
+}
+
+/** Respuesta de `POST /api/cards/statements/pay`. */
+export interface StatementPayResponseDTO {
+  statement: StatementDTO;
+  /** La TRANSFER que pagó el resumen. Nunca un gasto. */
+  movement: MovementDTO;
+  /** `false` si el resumen ya estaba pago: la operación es idempotente. */
+  created: boolean;
+}
+
+/** Vista previa de una compra en cuotas, sin escribir nada. */
+export interface CardPlanPreviewDTO {
+  totalAmount: string;
+  installments: number;
+  /** El valor de las cuotas iguales (la última puede diferir por el redondeo). */
+  installmentAmount: string;
+  lastInstallmentAmount: string;
+  /** Σ de las N cuotas (== totalAmount). */
+  totalPaid: string;
+  cashPrice: string | null;
+  /** `totalPaid − cashPrice`, si hay precio de contado. */
+  surcharge: string | null;
+  implicitRate: ImplicitRateDTO | null;
 }

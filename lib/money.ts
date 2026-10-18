@@ -527,3 +527,126 @@ export function loanProgress(
       : round(clamped.dividedBy(principal).times(100)),
   };
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Tasa implícita de financiación
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Lo que cuesta financiar: la tasa que hace que las cuotas valgan el contado. */
+export interface ImplicitRate {
+  /** Tasa mensual efectiva, en porcentaje (1,66 = 1,66% mensual). */
+  monthlyRatePercent: Money;
+  /** Tasa efectiva anual: `(1 + i)^12 − 1`, en porcentaje. */
+  teaPercent: Money;
+  /** Σ de todas las cuotas. */
+  totalPaid: Money;
+  /** `totalPaid − cashPrice`: lo que te cobran por no pagar al contado. */
+  surcharge: Money;
+}
+
+/**
+ * La tasa de interés IMPLÍCITA de una compra en cuotas con precio de contado.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL PROBLEMA QUE RESUELVE (y por qué "sin interés" miente)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * "12 cuotas sin interés" con un 10% de descuento por pago al contado no es
+ * gratis: es financiación al 10% del precio. El cartel dice "sin interés"
+ * porque no hay un interés EXPLÍCITO en la cuota, pero el costo está escondido
+ * en el precio de lista. La única forma honesta de compararlo con un préstamo
+ * es calcular la tasa que iguala el valor presente de las cuotas con el precio
+ * de contado:
+ *
+ *     Σ  cuota_k / (1 + i)^k  =  precio de contado
+ *
+ * Esa `i` es la tasa mensual que estás pagando de verdad. Se resuelve por
+ * bisección: el valor presente es estrictamente decreciente en `i`, así que
+ * alcanza con acorralar la raíz entre 0 y una tasa alta.
+ *
+ * La TEA se deriva con capitalización: `(1 + i)^12 − 1`. No es `i × 12`: la
+ * tasa mensual se compone, y comparar una TNA con una TEA es comparar peras con
+ * manzanas (el ROADMAP lo pide explícitamente como TEA).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LOS CASOS QUE NO SON UNA TASA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * · Si pagar en cuotas cuesta LO MISMO o MENOS que al contado, no hay costo
+ *   financiero: devuelve 0% / 0% (no `null`: una tasa de 0 es una respuesta
+ *   válida y útil —"esto sí es sin interés"—, y `null` significa "no se sabe").
+ * · Si no hay precio de contado (lo decide el llamador, no se llama acá) o los
+ *   pagos están vacíos, no hay ecuación que resolver: devuelve `null`.
+ * · El bucle de bisección tiene un tope de 64 (tasa mensual de 6400%): si el
+ *   valor presente no bajó del contado ni ahí, los datos no describen una
+ *   financiación real y devuelve `null` en vez de inventar un número.
+ *
+ * Es una función PURA: no toca la base ni el reloj. Los tests verifican los dos
+ * ejemplos del ROADMAP (10% de descuento ≈ 21,8% TEA; 20% ≈ 53,1% TEA).
+ */
+export function implicitFinancingRate(
+  payments: readonly (Money | string)[],
+  cashPrice: Money | string,
+): ImplicitRate | null {
+  if (payments.length === 0) return null;
+
+  const amounts = payments.map((value) =>
+    typeof value === "string" ? money(value) : value,
+  );
+  const cash = typeof cashPrice === "string" ? money(cashPrice) : cashPrice;
+
+  if (cash.lessThanOrEqualTo(0)) return null;
+
+  const totalPaid = sum(amounts);
+  if (totalPaid.lessThanOrEqualTo(0)) return null;
+
+  /** Valor presente de las cuotas a una tasa mensual `rate` (0,05 = 5%). */
+  const presentValue = (rate: Money): Money => {
+    const one = new Prisma.Decimal(1);
+    const factor = one.plus(rate);
+
+    return amounts.reduce<Money>(
+      (acc, amount, index) =>
+        acc.plus(amount.dividedBy(factor.pow(index + 1))),
+      zero(),
+    );
+  };
+
+  // Sin costo financiero: las cuotas no superan el contado. Es el caso "sin
+  // interés" real, y una tasa de 0 es la respuesta correcta.
+  if (presentValue(zero()).lessThanOrEqualTo(cash)) {
+    return {
+      monthlyRatePercent: zero(),
+      teaPercent: zero(),
+      totalPaid,
+      surcharge: round(totalPaid.minus(cash)),
+    };
+  }
+
+  let low = zero();
+  let high = new Prisma.Decimal(1); // 100% mensual: un punto de partida absurdo.
+
+  while (presentValue(high).greaterThan(cash)) {
+    high = high.times(2);
+    if (high.greaterThan(64)) return null;
+  }
+
+  // 100 iteraciones de bisección sobre un intervalo que ya arranca en [0, 1]:
+  // sobra para que la tasa quede estable al cuarto decimal.
+  for (let iteration = 0; iteration < 100; iteration += 1) {
+    const mid = low.plus(high).dividedBy(2);
+    if (presentValue(mid).greaterThan(cash)) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+
+  const monthly = low.plus(high).dividedBy(2);
+  const tea = new Prisma.Decimal(1).plus(monthly).pow(12).minus(1);
+
+  return {
+    monthlyRatePercent: round(monthly.times(100)),
+    teaPercent: round(tea.times(100)),
+    totalPaid,
+    surcharge: round(totalPaid.minus(cash)),
+  };
+}
