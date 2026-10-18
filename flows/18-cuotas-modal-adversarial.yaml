@@ -1,0 +1,345 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 18 · El modal de compra en cuotas, roto a propósito
+# ═════════════════════════════════════════════════════════════════════════════
+# El flujo 02c recorre el alta FELIZ. Éste ataca el modal: las validaciones en
+# cascada (cada submit avisa QUÉ falta, en orden), los taps sobre los LABELS
+# `block` (trampa 15: labels de dos líneas y el pie sticky), el estado limpio
+# al reabrir, la fecha fijada a mano, el <datalist> de categorías, y el DOBLE
+# TOQUE a "Registrar compra": el botón se deshabilita mientras guarda — una
+# sola compra, un solo gasto, un solo plan.
+#
+# LOS CAMPOS SE ELIGEN POR ID, NO POR TEXTO. Los labels del modal ("Total de la
+# compra", "Cuotas *"…) comparten prefijo con textos del FONDO de la página
+# —"Total proyectado: …", "Total: $ 50.000,00 · mínimo…", "Cuotas
+# comprometidas"— y el driver resuelve un tapOn por texto contra el PRIMER nodo
+# del árbol: el del fondo. En la primera corrida de este flujo, `tapOn:
+# 'Total.*'` pegó en el título del modal (el centro del nodo ancho del fondo
+# cae ahí), no enfocó ningún campo, el inputText se fue al vacío y el submit
+# volvió a reclamar el total (evidencia: step-028 de la corrida del 18/10, con
+# el campo mostrando su PLACEHOLDER). Los ids viven en los LABELS: tocar
+# `plan-total` es tocar el label `block` — el mecanismo de la trampa 15 queda
+# ejercitado igual, sin ambigüedad.
+#
+# Y EL ENCABEZADO VIVE ARRIBA. La deuda ("debe 49.700,00") y la utilización se
+# alcanzan recién con un scroll UP: cuando el flujo baja hasta la fila del plan,
+# el encabezado queda fuera de pantalla y el driver no lo serializa. La segunda
+# corrida murió en `.*debe.*49\.700,00.*` con la página correcta (paso 064 del
+# 18/10, dir 2026-10-18_061653); con el scroll UP, el probe 95 lo encontró y el
+# valor calculado a mano quedó confirmado.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (estado que deja el flujo 15)
+# ─────────────────────────────────────────────────────────────────────────────
+#   Punto de partida: la Visa está a favor 50.300,00 (el pago de más del 10
+#   y el traspaso del 14), con el resumen de octubre SIN PAGAR, cierre 15 y
+#   límite 500.000.
+#
+#   Compra:         100.000 en 10 cuotas = 10.000,00 por mes
+#   Fecha fijada:   18/10 → período de NOVIEMBRE (el cierre del 15 ya pasó)
+#   Deuda:          −50.300 + 100.000 = 49.700 → "debe 49.700,00"
+#   Utilización:    49.700 / 500.000 = 9,94%
+#   Cuotas:         "Cuota 1 de 10" (todavía sin facturar nada) y el rango
+#                   "noviembre de 2026 a agosto de 2027"
+#   Panel:          gastos 10.905.000 + 100.000 = 11.005.000,00
+#                   quedó −10.105.000 − 100.000 = −10.205.000,00
+#                   transferencias: 4 (una compra no es transferencia)
+#   Borrado:        la deuda vuelve a −50.300 (a favor 50.300,00) y el panel
+#                   a 10.905.000 / −10.105.000 con las 4 transferencias
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 01, 02, 02b, 02c y 03 a 15 antes que éste (la base de
+# 10.905.000 la dejan el 12 y el 15, y el 02c deja el resumen de octubre
+# reabierto y sin pagar). El 19 continúa después: paga el resumen de octubre
+# que éste deja intacto.
+url: http://127.0.0.1:3000
+name: "18 · Cuotas — el modal roto a propósito, validaciones, labels y doble toque"
+tags:
+  - smoke
+  - tarjetas
+  - cuotas
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+# ── Punto de partida ─────────────────────────────────────────────────────────
+- assertVisible: '.*a favor.*50\.300,00.*'
+
+- scrollUntilVisible:
+    element:
+      id: "card-new-plan-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "card-new-plan-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "plan-label"
+    timeout: 30000
+
+# ── La cascada de validaciones: cada submit dice QUÉ falta, en orden ─────────
+# 1. Sin nada: la descripción.
+- tapOn:
+    id: "plan-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "plan-error"
+    timeout: 15000
+
+- assertVisible: '.*La compra necesita una descripción \(ej: Heladera\)\..*'
+
+# 2. Con descripción (por el LABEL `block`, como un dedo real): el total.
+- tapOn:
+    id: "plan-label"
+- inputText: "Heladera"
+
+- tapOn:
+    id: "plan-submit"
+
+- assertVisible: '.*El total de la compra tiene que ser un monto mayor a cero\..*'
+
+# 3. Con total: la cantidad de cuotas.
+- tapOn:
+    id: "plan-total"
+- inputText: "100000"
+
+- tapOn:
+    id: "plan-submit"
+
+- assertVisible: '.*La cantidad de cuotas tiene que ser un número entero mayor a cero\..*'
+
+# 4. Con cuotas: la categoría.
+- tapOn:
+    id: "plan-installments"
+- inputText: "10"
+
+- tapOn:
+    id: "plan-submit"
+
+- assertVisible: '.*La compra necesita una categoría de gasto para poder contarla en los reportes\..*'
+
+# ── Cancelar y reabrir: el estado nace limpio ────────────────────────────────
+- tapOn:
+    id: "plan-cancel"
+
+- assertNotVisible:
+    id: "plan-label"
+
+- scrollUntilVisible:
+    element:
+      id: "card-new-plan-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "card-new-plan-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "plan-label"
+    timeout: 30000
+
+# Ni el error de la ronda anterior ni valores viejos: el modal se monta de cero.
+- assertNotVisible:
+    id: "plan-error"
+- assertVisible: '.*La vista previa aparece cuando cargues el total y la cantidad de cuotas.*'
+
+# ── El alta completa, con los campos elegidos por su ID ─────────────────────
+- tapOn:
+    id: "plan-label"
+- inputText: "Heladera"
+
+- tapOn:
+    id: "plan-total"
+- inputText: "100000"
+
+- tapOn:
+    id: "plan-installments"
+- inputText: "10"
+
+# La fecha se FIJA a mano (ISO por inputText, mecanismo del flujo 14): así el
+# assert "Compra del 18 de oct" vale cualquier día, no sólo hoy.
+- tapOn:
+    id: "plan-date"
+- inputText: "2026-10-18"
+- assertVisible: '.*2026-10-18.*'
+
+- tapOn:
+    id: "plan-category"
+- inputText: "Tecnología"
+
+- extendedWaitUntil:
+    visible: '.*10 cuotas de.*10\.000,00.*'
+    timeout: 15000
+
+- assertVisible: '.*En total vas a pagar.*'
+- assertVisible: '.*100\.000,00.*'
+
+# El <datalist> de la categoría queda abierto tras tipear: se cierra tocando la
+# vista previa (no interactiva) antes de registrar (trampa del 02c).
+- tapOn:
+    id: "plan-preview"
+
+# ── DOBLE TOQUE en "Registrar compra" → UNA sola compra ──────────────────────
+# El primer toque va con `waitToSettleTimeoutMs: 0`: el segundo cae mientras el
+# alta está en vuelo. El botón se deshabilita (y dice "Registrando…"), así que
+# el segundo toque no manda un segundo POST. Sin ese guard habría DOS gastos de
+# 100.000: el panel mostraría 11.105.000 y la tarjeta 149.700,00 — los números
+# de abajo son los que delatan que hay UNA sola compra.
+- tapOn:
+    id: "plan-submit"
+    waitToSettleTimeoutMs: 0
+# El segundo toque va `optional`: contra un servidor local el alta puede
+# terminar ANTES de que el toque busque el botón, y un toque que no encuentra
+# nada voltearía el flujo sin que haya bug alguno. Cuando el botón todavía
+# existe, el toque se da igual (sobre el deshabilitado) y el guard queda
+# ejercitado: si faltara, entraría el segundo POST y los números de abajo lo
+# contarían.
+- tapOn:
+    id: "plan-submit"
+    optional: true
+
+- extendedWaitUntil:
+    notVisible:
+      id: "plan-submit"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Compra en cuotas registrada.*Heladera.*10 cuotas de.*10\.000,00.*'
+
+# ── La tarjeta: una sola compra (la aritmética la delata) ────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Cuota 1 de 10.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Heladera · 10 cuotas.*'
+- assertVisible: '.*Cuota 1 de 10.*10\.000,00 por mes.*'
+- assertVisible: '.*Compra del 18 de oct de 2026.*'
+- assertVisible: '.*Cuotas de noviembre de 2026 a agosto de 2027\..*'
+
+# El encabezado de la tarjeta quedó ARRIBA del todo: primero se sube hasta la
+# deuda (el nodo no existe para el driver mientras está fuera de pantalla).
+- scrollUntilVisible:
+    element:
+      text: '.*debe.*49\.700,00.*'
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*debe.*49\.700,00.*'
+- assertVisible: '.*Utilización: 9,94%.*'
+
+- assertNotVisible: '.*Sin compras en cuotas.*'
+
+# ── El panel: el gasto entero, UNA vez; transferencias intactas ──────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*11\.005\.000,00.*'
+- assertVisible: '.*-\$.*10\.205\.000,00.*'
+- assertVisible: '.*4 transferencias entre tus cuentas.*'
+
+# ── Borrar la compra: dos pasos, sin `window.confirm` (trampa 16) ────────────
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: '.*Cuota 1 de 10.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "plan-delete-.*"
+
+- assertVisible: '.*¿Borrar la compra y su gasto\?.*'
+- assertVisible:
+    id: "plan-delete-confirm-.*"
+
+- tapOn:
+    id: "plan-delete-confirm-.*"
+
+- extendedWaitUntil:
+    notVisible:
+      text: '.*Cuota 1 de 10.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: '.*Sin compras en cuotas.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertVisible: '.*Sin compras en cuotas.*'
+
+# El aviso del borrado y la deuda de vuelta (el borrado recarga y deja arriba).
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*borrada: el gasto y sus cuotas se fueron con ella\..*'
+- assertVisible: '.*a favor.*50\.300,00.*'
+
+# ── El panel vuelve a la foto de antes de la compra ──────────────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*10\.905\.000,00.*'
+- assertVisible: '.*-\$.*10\.105\.000,00.*'
+- assertVisible: '.*4 transferencias entre tus cuentas.*'

@@ -77,6 +77,15 @@ env:
     visible: "Patrimonio neto.*"
     timeout: 90000
 
+# ── La fecha de hoy, calculada en el momento (no escrita a mano) ─────────────
+# La regla de este flujo nace con la fecha de HOY como inicio, así que tanto el
+# pendiente como el subtítulo de la regla dicen la fecha de hoy. Las dos
+# aserciones nacieron como "17 de oct de 2026" (se escribió un 17): el 18 la
+# suite amaneció en rojo por un motivo que no era un bug de la app. La fecha se
+# calcula UNA vez, con el mismo formato que muestra la app —día sin relleno +
+# mes corto es-AR (`toLocaleDateString`, que da "sept" para septiembre) + año—.
+- evalScript: ${output.m = ['ene','feb','mar','abr','may','jun','jul','ago','sept','oct','nov','dic']; output.d = new Date(); output.hoy = output.d.getDate() + ' de ' + output.m[output.d.getMonth()] + ' de ' + output.d.getFullYear()}
+
 # ── Punto de partida (lo que dejó el flujo 11) ───────────────────────────────
 - assertVisible: '.*10\.900\.000,00.*'      # gastos
 - assertNotVisible:
@@ -178,7 +187,7 @@ env:
       id: "rec-pending-.*"
     timeout: 30000
 
-- assertVisible: '.*Venció el 17 de oct de 2026.*'
+- assertVisible: '.*Venció el ${output.hoy}.*'
 - assertVisible: '.*Sale de Banco Galicia.*Alquiler.*'
 - assertVisible: '.*5\.000,00.*'
 
@@ -192,7 +201,7 @@ env:
 
 - assertVisible: '.*Gimnasio de prueba.*'
 - assertVisible: '.*Todos los meses.*'
-- assertVisible: '.*Desde el 17 de oct de 2026 · sin fin.*'
+- assertVisible: '.*Desde el ${output.hoy} · sin fin.*'
 - assertVisible: '.*Avisar y confirmar.*'
 - assertVisible:
     id: "rec-upcoming-.*"

@@ -75,7 +75,7 @@ También podés ver las corridas en vivo en el **Maestro Viewer**:
 
 ---
 
-## Las catorce trampas
+## Las dieciséis trampas
 
 Esta carpeta existe porque cada una de estas cosas nos costó una sesión de
 depuración. Están todas documentadas acá para que no vuelvan a pasar.
@@ -663,6 +663,89 @@ debajo de los dedos. Se usa en los tres componentes con fecha
 regresión vive en `flows/15-proyeccion-y-borrado.yaml`: edita una regla, borra
 la fecha de fin con `eraseText: 20` y guarda con ENTER.
 
+### 15. El pie fijo del modal tapa el último campo — y un label inline de dos líneas no se toca por su centro
+
+Dos síntomas mudos del mismo modal (el alta de compra en cuotas de la Fase 5),
+descubiertos en la ronda de la UI de tarjetas:
+
+**El tap del último campo cae en el pie.** El modal es `max-h-[92vh]` con
+`overflow-y-auto` y el pie es `sticky bottom-0`. En una ventana de 1034×557 el
+contenido superaba los 512px de `92vh` y el último campo (la categoría) quedaba
+debajo del pie. El chequeo de visibilidad de Maestro **no sabe de solapamientos**
+—compara contra el viewport y reporta `Visibility Percent: 1.0`— y el tap
+"Tap on id: plan-category … COMPLETED" en realidad tocó el botón **Cancelar** del
+pie: el modal se cerró y el paso siguiente falló por un motivo que no era el real
+(el preview "nunca aparecía"). La evidencia estaba en el log: label en
+`[310,464][441,480]` (centro y≈472) y los botones del pie en y 466..510.
+
+**El `inputText` de un label de DOS líneas se escribe en el vacío.** Con el form
+en dos columnas, "Precio de contado (opcional)" quedó en dos líneas. `tapOn` por
+`id` resuelve el LABEL (el `resource-id` vive en el `<label>` y su `htmlFor` es
+el que enfoca el input), calcula el centro de sus bounds — y ese centro cae en el
+hueco entre los dos fragmentos de línea de un label INLINE: el clic golpea el div
+contenedor, no hay transferencia de foco, y `inputText` tipea donde no hay
+campo. Todos los comandos dicen COMPLETED y el campo queda vacío; se diagnostica
+en la jerarquía porque el input muestra su **placeholder** y no un valor
+(`text=[108.000]` cuando el placeholder es `108.000`).
+
+**Se arregla en la app, no en el test** (la lección de la trampa 9): todos los
+campos viven ARRIBA del pie —dos columnas, la categoría abre la columna derecha,
+la vista previa —que no se toca— va debajo— y todos los labels son `block`, así
+el label es un rectángulo sólido y cualquier tap adentro activa el control. Y no
+se scrollea NADA adentro del modal: los gestos sobre el backdrop lo cierran
+(`onClick=onClose`) y Maestro igual no puede scrollear un contenedor interno —
+comprobado: cinco `Swiping UP from center` seguidos dejaron los bounds idénticos
+(el mismo swipe sí scrollea la página cuando no hay modal). Corolario para los
+flows: un `tapOn` que dice COMPLETED no prueba que tocó lo que creías; si el
+efecto no aparece, mirá screenshot y jerarquía ANTES de culpar a la lógica.
+
+**Caso hermano (Fase 5): el alta de tarjeta desde el formulario de cuentas.**
+Ahí el formulario CAMBIA DE FORMA al elegir el tipo tarjeta —aparecen cierre,
+vencimiento y límite debajo—, así que todos los campos que ya existían se
+DESPLAZAN. El flow fija primero lo que no depende del tipo (nombre y saldo
+inicial) y recién después elige "Tarjeta": ningún tap posterior queda apuntando
+a una coordenada que el cambio movió. La sonda que lo recorrió entera confirmó
+también que los diálogos nativos no hacen falta en este formulario (las
+validaciones son inline: "El día de cierre y el de vencimiento van juntos") y el
+patrón vive en `flows/20-tarjeta-desde-cero.yaml`.
+
+---
+
+### 16. Un diálogo nativo (`window.confirm` / `window.alert`) TUMBA al driver
+
+En la web no hay nodo para el diálogo modal del navegador: nadie lo contesta. Y
+el driver no falla en el paso que lo abre — muere en el SIGUIENTE, con un error
+que no menciona diálogos:
+
+```
+Tap on id: Eliminar movimiento... RUNNING
+03:43:56 [ INFO] ... Tapping on element: ... resource-id=Eliminar movimiento   ← el tap sí pegó
+          (35 segundos de nada: el hilo de JS del navegador está bloqueado)
+03:44:31 [ERROR] maestro.drivers.CdpWebDriver.invokeSuspend: Failed to execute JS
+03:44:31 [ERROR] maestro.orchestra.Orchestra.executeCommands:
+         [Command execution] CommandFailed: null cannot be cast to non-null type kotlin.Int
+03:45:31 [ WARN] ...captureScreenshot: Failed to capture screenshot screenshots/step-022-...
+```
+
+El `window.confirm("¿Eliminar este movimiento?")` congela el hilo de JS
+esperando una respuesta; el próximo comando del driver (`execute JS`, con el que
+serializa el árbol) no puede correr, el puente CDP revienta con un cast nulo y
+ni siquiera alcanza a sacar el screenshot de diagnóstico. Evidencia completa:
+`~/.maestro/tests/2026-10-18_034222` (sonda "confirm nativo + fecha"), paso
+`step-022-tapOnElement-Eliminar_movimiento`.
+
+**Se arregla en la app** con el patrón que ya usaban `/recurrencia` y
+`/tarjetas`: confirmación en dos pasos EN LÍNEA en la propia fila —el botón de
+borrar se convierte en `¿Eliminar?` + `Sí, borrar` / `Mejor no`, con ids
+`mov-delete-*`, `mov-delete-confirm-*` y `mov-delete-cancel-*`— y el error es
+una franja inline (`mov-delete-notice-*`), no `window.alert`. Un solo
+`deleteBusyId` deshabilita los dos botones mientras guarda: sin dobles borrados.
+
+Moraleja para el diagnóstico: si un `tapOn` dice COMPLETED y el paso siguiente
+muere con `Failed to execute JS` y/o `null cannot be cast to non-null type
+kotlin.Int`, buscá un diálogo nativo en la app antes de culpar al driver —
+`window.confirm` y `window.alert` no tienen lugar en una UI testeable.
+
 ---
 
 ## Convenciones
@@ -673,6 +756,33 @@ la fecha de fin con `eraseText: 20` y guarda con ENTER.
 - **Seleccioná por `id` cuando puedas.** El input de contraseña se toma con
   `tapOn: { id: "password" }` en vez de por texto: el texto puede cambiar, el `id`
   no.
+- **Dos regiones con los mismos textos: selectores relativos (`below` / `above`).**
+  Cuando la misma página tiene dos tarjetas o secciones que repiten etiquetas
+  ("Correr el cierre", "Utilización: …"), un `tapOn` o un `assert` por texto
+  pelado resuelve a la PRIMERA región del árbol —la de arriba— aunque el flow
+  esté hablando de la de abajo. La salida es anclar cada interacción con
+  `below: '.*<dato único de la región>.*'` (también `above`): el alcance se
+  evalúa contra TODO el árbol, así que un `assertNotVisible` scopeado ignora los
+  mismos textos que estén ARRIBA del ancla, y el `tapOn` scopeado pega en la
+  región correcta. Dos límites que salieron del banco de pruebas (sonda 94b): el
+  ancla y el objetivo tienen que estar serializados A LA VEZ —con ventana de
+  ~597 px, si están a más de una pantalla el alcance no se puede evaluar— y el
+  ancla tiene que ser única en TODA la página, no sólo en su región. El patrón
+  vive en `flows/20-tarjeta-desde-cero.yaml` (cada trato con "Alfa Test" va
+  scopeado debajo de su nombre).
+- **El `name:` de un flow no lleva dos puntos.** Maestro arma la ruta de sus
+  artefactos con el `name:` del flow, y en Windows `:` es ilegal en un nombre de
+  archivo: el flow muere ANTES de arrancar con un stack trace de Java que no dice
+  "nombre inválido":
+
+  ```
+  java.nio.file.InvalidPathException: Illegal char <:> at index 15:
+      93 · sonda cola: saldo inicial, plan retroactivo, dobles toques y pago
+  ```
+
+  La consola lo muestra como error de PowerShell (`NativeCommandError`), que
+  manda a buscar el problema al lugar equivocado. Un ` - ` o un `—` cumplen la
+  misma función. (Sonda 93, 2026-10-18: renombrada, corrida limpia después.)
 - **Cada flow corre con estado de navegador limpio al inicio del run.** Si un flow
   depende de estar logueado, hacé el login dentro del flow.
 - **El saldo de una cuenta es apertura + los movimientos firmados con fecha ≤ HOY.**
@@ -687,25 +797,43 @@ la fecha de fin con `eraseText: 20` y guarda con ENTER.
 
 | Flow | Qué verifica | Estado |
 |---|---|---|
-| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (47s) |
-| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (32s) |
-| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, la **reconciliación visible** (ΔPatrimonio +310.000 = Ahorro del mes +310.000, "cuadra al centavo"), la **tarjeta Deudas** (deuda viva 518.587,29 = Visa 50.000 + Préstamo 468.587,29; barra de progreso 6,28% = capital devuelto 31.412,71 / 500.000; «1 de 12 cubiertas · faltan 11»; interés pagado 25.000,00; DTI 7,05% = 56.412,71 / 800.000; "sin plan de cuotas" en la Visa; en septiembre «0 de 12 cubiertas» y DTI "no se puede calcular"), y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (2m 54s) |
-| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 19s) |
+| `00-diagnostico.yaml` | **No verifica la app: verifica que se pueda testear.** Que Chrome arranque, que navegue, que React hidrate, y de paso sondea cómo matchea Maestro | ✅ Pasa (1m 10s) |
+| `01-acceso.yaml` | Que la app esté cerrada sin sesión, que rechace contraseña incorrecta, que acepte la correcta y que el login deje de estar accesible | ✅ Pasa (35s) |
+| `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, la **reconciliación visible** (ΔPatrimonio +310.000 = Ahorro del mes +310.000, "cuadra al centavo"), la **tarjeta Deudas** (deuda viva 518.587,29 = Visa 50.000 + Préstamo 468.587,29; barra de progreso 6,28% = capital devuelto 31.412,71 / 500.000; «1 de 12 cubiertas · faltan 11»; interés pagado 25.000,00; DTI 7,05% = 56.412,71 / 800.000; "sin plan de cuotas" en la Visa; en septiembre «0 de 12 cubiertas» y DTI "no se puede calcular"), y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (3m) |
+| `02b-tarjetas.yaml` | El ciclo de una tarjeta real sobre el seed: configurar cierre 15 / vence 5 / límite 500.000 (la deuda de 50.000 de la Ropa pasa a 10,00% del límite y el período en curso a noviembre), "Correr el cierre" (resumen de octubre 50.000 / mínimo 2.500 "Sin pagar"), pagarlo en dos pasos con el Banco Galicia preseleccionado y el paso intermedio cancelado primero (deuda 0, "Pagado"), el 409 VERBATIM al cambiar el cierre con un resumen pagado ("Borrá primero el pago…" — el cierre NO cambia) y que el pago es transferencia, no gasto (panel 490.000 con 2 transferencias) | ✅ Pasa (2m 23s) |
+| `02c-cuotas.yaml` | La compra en cuotas de punta a punta: "Heladera" de 120.000 en 12 cuotas con contado 108.000 → vista previa con cuota 10.000,00, sobreprecio 12.000,00 y **tasa implícita 1,66% por mes — TEA 21,83%** ("el interés está en el precio", §3.3); la compra del 18/10 cae en el período de noviembre ("Cuota 1 de 12", nada facturado); deuda 120.000 / utilización 24,00% / período 10.000 con mínimo 500; compromisos 60.000 a 6 meses y 120.000 a 12; el gasto cuenta UNA vez (panel 610.000 = 490.000 + 120.000); el borrado en dos pasos se lleva el gasto Y las cuotas; y la EXTENSIÓN: el escape del 409 del 02b recorrido de verdad — borrar el pago del resumen desde /inicio (dos pasos en línea, trampa 16), el resumen se reabre solo, el cambio de cierre ahora se guarda y al final se restaura el 15 (estado = seed) | ✅ Pasa (4m 11s) |
+| `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 17s) |
 | `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 22s) |
-| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (38s) |
-| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 31s) |
-| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado, y la tarjeta del burn viva con su selector limpio (la elección completa vive en el flow 11) | ✅ Pasa (1m 57s) |
+| `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (40s) |
+| `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 29s) |
+| `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado, y la tarjeta del burn viva con su selector limpio (la elección completa vive en el flow 11) | ✅ Pasa (1m 56s) |
 | `08-panel-mes-en-rojo.yaml` | Un mes que no cierra en positivo: un gasto de 400.000 deja gastos 900.000, "Te quedó" −100.000,00 y flujo −81.412,71 — dos negativos DISTINTOS, cada uno con su signo; la tasa −12,50%; las transferencias no cambian | ✅ Pasa (1m 18s) |
-| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 56s) |
+| `09-montos-extremos.yaml` | La aritmética exacta al centavo: un gasto de $ 0,01 (punto decimal) mueve los tres números en 0,01; uno de 9.999.999,99 (formato argentino completo) los lleva a 10.900.000,00 · −10.100.000,00 · −10.081.412,71 y la tasa a −1.262,50% | ✅ Pasa (1m 58s) |
 | `10-pago-de-mas.yaml` | Pagar la tarjeta de MÁS: la Visa pasa a "a favor $ 50.000,00" (con el código viejo decía "debe -$ 50.000,00"), el banco queda −9.631.412,71 y el flujo −10.181.412,71 con 3 transferencias; gastos y "Te quedó" intactos | ✅ Pasa (1m 26s) |
 | `11-burn-mensualizado.yaml` | La elección COMPLETA del burn sobre el estado del final de la suite: el centavo de $ 0,01 repartido (`0,01 ÷ 12 = $ 0,00`), las dos vistas exactas (caja 10.900.000,00 / −10.100.000,00 contra burn 10.899.999,99 / −10.099.999,99), los dos pies del resultado, y que la selección sea EFÍMERA: volver por el encabezado deja el selector limpio y las vistas negadas con el select centrado | ✅ Pasa (1m 38s) |
-| `12-bandeja-y-archivo.yaml` | Las validaciones del alta que dicen QUÉ falta (nombre → monto → categoría), la vista previa de los extremos (0,01 y 9.999.999,99), la ocurrencia de HOY que **no es plata** hasta aceptarla (el panel sigue en 10.900.000,00), el doble toque que no duplica (10.905.000,00 · −10.105.000,00 · −10.186.412,71 · banco −9.636.412,71) y que archivar no borra: la tarjeta archivada sólo ofrece Reactivar y Borrar | ✅ Pasa (3m 6s) |
-| `13-auto-y-409.yaml` | El posteo AUTOMÁTICO: una regla mensual ancla 31 desde enero materializa y postea 9 fechas sola, el clamp de febrero (28) y el regreso al 31 en marzo, septiembre con el asiento exacto (−1.234,56 y flujo 498.765,44 con 1 transferencia) y octubre intacto; más el 409: una regla con historia no se borra (el aviso manda a archivarla) y archivarla no toca la historia | ✅ Pasa (4m 11s) |
+| `12-bandeja-y-archivo.yaml` | Las validaciones del alta que dicen QUÉ falta (nombre → monto → categoría), la vista previa de los extremos (0,01 y 9.999.999,99), la ocurrencia de HOY que **no es plata** hasta aceptarla (el panel sigue en 10.900.000,00), el doble toque que no duplica (10.905.000,00 · −10.105.000,00 · −10.186.412,71 · banco −9.636.412,71) y que archivar no borra: la tarjeta archivada sólo ofrece Reactivar y Borrar | ✅ Pasa (2m 59s) |
+| `13-auto-y-409.yaml` | El posteo AUTOMÁTICO: una regla mensual ancla 31 desde enero materializa y postea 9 fechas sola, el clamp de febrero (28) y el regreso al 31 en marzo, septiembre con el asiento exacto (−1.234,56 y flujo 498.765,44 con 1 transferencia) y octubre intacto; más el 409: una regla con historia no se borra (el aviso manda a archivarla) y archivarla no toca la historia | ✅ Pasa (4m 10s) |
 | `14-pausa-saltos-y-transfer.yaml` | El ciclo de vida completo: una regla futura nace sin ocurrencias; pausada no materializa aunque haya vencidas; reactivarla materializa las 4 de golpe y saltarlas una por una no las revive; INCOME no ofrece préstamos ni tarjetas y TRANSFER no pide categoría y sí destino; aceptar la transferencia mueve la caja (flujo −10.186.712,71, banco −9.647.823,75, Visa a favor 50.300,00, 4 transferencias) sin tocar gastos ni "Te quedó" | ✅ Pasa (4m 10s) |
-| `15-proyeccion-y-borrado.yaml` | La proyección de una regla futura: ancla 31 con clamp (31 ene → 28 feb → 31 mar), corte por fin y tope, y el descargo de que no es plata — el panel no se mueve; la edición mensual→semanal que limpia el ancla (B1), borra fin y tope con `eraseText` (**regresión del arreglo de `lib/date-input.ts`**, el bug U1 de la ronda del tester) y guarda con ENTER; y el borrado SIN historial (sin 409: flash "borrada." y la tarjeta se va con sus marcadores únicos negados) — flujo neto cero | ✅ Pasa (3m 8s) |
+| `15-proyeccion-y-borrado.yaml` | La proyección de una regla futura: ancla 31 con clamp (31 ene → 28 feb → 31 mar), corte por fin y tope, y el descargo de que no es plata — el panel no se mueve; la edición mensual→semanal que limpia el ancla (B1), borra fin y tope con `eraseText` (**regresión del arreglo de `lib/date-input.ts`**, el bug U1 de la ronda del tester) y guarda con ENTER; y el borrado SIN historial (sin 409: flash "borrada." y la tarjeta se va con sus marcadores únicos negados) — flujo neto cero | ✅ Pasa (3m 6s) |
+| `18-cuotas-modal-adversarial.yaml` | El modal de compra en cuotas atacado a propósito: la cascada de validaciones (descripción → total → cuotas → categoría, cada submit dice QUÉ falta), los campos elegidos por los **labels `block` vía ids `plan-*`** (el `tapOn` por texto pegaría en el fondo de la página — el caso está documentado en el encabezado del flow), el estado limpio al reabrir, la fecha fijada a mano, el datalist de categorías, el doble toque en "Registrar compra" (UNA sola compra de 100.000, el panel lo delata), el encabezado de la tarjeta con scroll UP ("debe 49.700,00" = 100.000 − 50.300 a favor; utilización 9,94%), el panel en 11.005.000 / −10.205.000 con 4 transferencias y el borrado en dos pasos que deshace todo (a favor 50.300 de vuelta) — flujo neto cero | ✅ Pasa (2m 46s) |
+| `19-resumen-pago.yaml` | Pagar el resumen de octubre sobre una tarjeta con SALDO A FAVOR: el pago engorda el crédito (50.300 + 50.000 = 100.300), el doble toque en "Confirmar pago" (guarda del botón + idempotencia de la API), el origen preseleccionado (el flash del pago lo nombra: Banco Galicia), el documento queda "Pagado", la utilización 0,00% y el panel con la caja movida por la transferencia (−50.000: flujo −10.236.712,71, banco −9.697.823,75, 5 transferencias) sin tocar gastos ni "Te quedó" | ✅ Pasa (1m 4s) |
+| `20-tarjeta-desde-cero.yaml` | Una tarjeta desde CERO y cuotas retroactivas: alta con saldo inicial −25.000 (el orden del formulario, validado por sondas: el monto sobrevive el cambio de tipo), el medio par cierre/vencimiento (error exacto y la cuenta NO se crea), el doble toque al submit (las deudas lo delatan: 393.287,29 y no 418.287,29), sin límite ⇒ "Utilización: no se sabe" (no un 0% inventado), la compra retroactiva del 30/09 en 5 cuotas (la cuota 1 cae en el octubre ya cerrado → "Cuota 2 de 5"; el cierre emite 2.000 / mínimo 100), el borrado que devuelve la deuda a 25.000 y el cierre #3 que recalcula el impago a 0,00 — "1 actualizado(s)", MISMO documento | ✅ Pasa (3m 51s) |
 
-**Suite completa: 16/16 en 33m 18s.** Los tiempos no son decorativos: cuando había
-servidores MCP vivos peleando por `~/.maestro/sessions` (trampa 11), el flow 00
-tardaba **5m51s en fallar** y los demás corrían entre 10 y 18 segundos más
-lentos cada uno. Un flow que tarda el doble de lo normal es un síntoma, no una
-casualidad.
+**Suite completa (00–15 + 18 + 19 + 20): 21/21 en 47m 30s** (2026-10-18, dir
+`~/.maestro/tests/2026-10-18_064912`). El orden es el de la carpeta:
+`00, 01, 02, 02b, 02c, 03…15, 18, 19, 20`. Los flujos 16 y 17 de la ronda
+anterior ya no existen como tales: su contenido vive en `02b` y `02c`
+(renombrados para correr pegados al 02, el único momento en que el estado es el
+del seed; el 02c además ganó el escape del 409 recorrido de verdad). El 18, el
+19 y el 20 son nuevos: el modal de cuotas roto a propósito, el pago del resumen
+sobre saldo a favor, y la tarjeta desde cero con cuotas retroactivas.
+
+**Límites de calendario** (lo que primero vence primero): el `20` vale hasta el
+10/11/2026 — cuando cierre el período de noviembre, su cierre #2 emitiría DOS
+resúmenes (las cuotas 1 y 2) y el flash diría "2 resúmenes nuevos" —; el `02b`
+y el `14` valen hasta el 16/11/2026.
+
+Los tiempos no son decorativos: cuando había servidores MCP vivos peleando por
+`~/.maestro/sessions` (trampa 11), el flow 00 tardaba **5m51s en fallar** y los
+demás corrían entre 10 y 18 segundos más lentos cada uno. Un flow que tarda el
+doble de lo normal es un síntoma, no una casualidad.

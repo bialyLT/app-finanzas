@@ -1,0 +1,341 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 02b · Tarjetas — configurar el cierre, correrlo y pagar el resumen
+# ═════════════════════════════════════════════════════════════════════════════
+# La tarjeta nace sin día de cierre: sin cierre no hay períodos, no hay
+# resúmenes y no hay cuotas. Este flujo recorre el ciclo completo de una
+# tarjeta REAL sobre el seed:
+#
+#   1. Estado inicial: la Visa del seed (deuda 50.000 por la compra de Ropa del
+#      12/10) no tiene cierre, no tiene vencimiento, no tiene límite. La
+#      pantalla lo dice en vez de inventar un 0% de utilización.
+#   2. Configuración: cierre 15 / vencimiento 5 / límite 500.000 → la deuda de
+#      50.000 pasa a ser el 10,00% del límite, y el período en curso pasa a ser
+#      noviembre (hoy es 18/10: el cierre del 15 ya pasó, la compra del 12/10
+#      quedó en el período de octubre).
+#   3. "Correr el cierre": emite el resumen de octubre ($ 50.000,00, mínimo
+#      $ 2.500,00 = 5%) y lo deja "Sin pagar".
+#   4. Pagar el resumen en dos pasos (el paso intermedio se cancela primero):
+#      la transferencia sale de Banco Galicia (la primera cuenta bancaria,
+#      preseleccionada), la deuda baja a 0 y el resumen queda "Pagado".
+#   5. El 409: cambiar el cierre con un resumen pagado está bloqueado y el
+#      aviso de la API se muestra VERBATIM, incluida la salida que nombra
+#      (borrar el pago reabre el resumen). La tarjeta conserva su cierre: el
+#      cambio no pasó. Esa salida se recorre DE VERDAD en el flujo 02c, que
+#      borra este pago para devolver el estado al del seed.
+#   6. El pago es una transferencia, no un gasto: el panel muestra 2
+#      transferencias y los gastos siguen en 490.000,00.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ 02b (Y POR QUÉ YA NO ES EL FLUJO 16)
+# ─────────────────────────────────────────────────────────────────────────────
+# Este flujo nació como 16, al final de la suite, y ahí no puede correr: sus
+# números son los del SEED (la Visa con la deuda de 50.000 de la Ropa del 12/10
+# y una sola transferencia), y los flujos 03–15 ya movieron esos números tres
+# veces. La ronda de la Fase 5 lo renumeró a 02b, pegado al flujo 02: es el
+# único momento de la suite en el que el estado es el del seed. Su hermano 02c
+# cierra el círculo: después de las cuotas borra el pago de este resumen (el
+# escape del 409, recorrido como usuario real) y deja otra vez el estado del
+# seed — deuda 50.000 y una sola transferencia — para que los flujos 03–15
+# corran exactamente como corrían antes de la ronda.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (seed, hoy = 2026-10-18)
+# ─────────────────────────────────────────────────────────────────────────────
+#   Deuda de la Visa:        la compra del 12/10 (50.000) → "debe $ 50.000,00"
+#   Utilización:             50.000 / 500.000 = 10,00%
+#   Período en curso:        18/10 > cierre 15/10 → noviembre de 2026
+#     (la compra del 12/10 quedó en el período de OCTUBRE, que ya cerró)
+#   Correr el cierre:        1 resumen nuevo: octubre 50.000 / mínimo 2.500
+#   Pagar:                   transferencia Galicia → Visa de 50.000
+#     · deuda de la Visa:    50.000 − 50.000 = 0  → "debe $ 0,00"
+#     · utilización:         0,00%
+#     · panel:               gastos siguen 490.000,00 (transferencia, no
+#                            gasto) y aparecen 2 transferencias (el seed ya
+#                            tenía una)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr el flujo 02 antes que éste (la suite ya corre en orden: 00, 01, 02,
+# 02b, 02c, 03…). El flujo 02c (cuotas) CONTINÚA sobre el estado que deja éste
+# —el resumen de octubre pagado y la tarjeta configurada— y lo devuelve al del
+# seed, como explica el bloque de POR QUÉ.
+url: http://127.0.0.1:3000
+name: "02b · Tarjetas — configurar, correr el cierre y pagar el resumen"
+tags:
+  - smoke
+  - tarjetas
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida. El desarrollo está en el
+# flujo 02.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Ir a /tarjetas por el encabezado ─────────────────────────────────────────
+# Se navega con el link real (no con openLink) porque el link en el
+# encabezado es parte de lo que esta ronda agrega.
+- assertVisible:
+    id: "nav-cards"
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+# ── Estado inicial: sin cierre no hay nada ───────────────────────────────────
+# La tarjeta del seed llega pelada (sin cierre, sin vencimiento, sin límite) y
+# la pantalla lo dice en vez de inventar números. Las negaciones van primero,
+# con la tarjeta entera a la vista (trampa 7).
+- assertVisible: '.*debe.*50\.000,00.*'
+- assertVisible: '.*Utilización: no se sabe.*'
+- assertVisible: '.*Sin día de cierre configurado.*'
+- assertVisible: '.*Todavía no hay resúmenes emitidos.*'
+
+# Sin cierre no hay período en curso ni botón de compra en cuotas: el alta de
+# cuotas nacen sin botón (y el texto de abajo explica por qué).
+- assertNotVisible: '.*Período en curso.*'
+- assertNotVisible:
+    id: "card-new-plan-.*"
+
+# Lo que vive al fondo de la tarjeta: se ancla el scroll en su texto para no
+# depender de estimaciones de píxeles.
+- scrollUntilVisible:
+    element:
+      text: '.*Sin día de cierre no hay proyección de cuotas.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Sin día de cierre no se pueden cargar compras en cuotas.*'
+- assertVisible: '.*Sin día de cierre no hay proyección de cuotas.*'
+
+# ── Configurar la tarjeta (⚙️) ───────────────────────────────────────────────
+# Se vuelve arriba anclando en el toggle (que está pegado al tope) SIN
+# `centerElement`: la primera fila de la página no puede llegar al centro del
+# viewport (trampa 12, corolario).
+- scrollUntilVisible:
+    element:
+      id: "cards-toggle-archived"
+    direction: UP
+    timeout: 20000
+
+- tapOn:
+    id: "card-config-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "cardconf-closing"
+    timeout: 30000
+
+- tapOn:
+    id: "cardconf-closing"
+- inputText: "15"
+- tapOn:
+    id: "cardconf-due"
+- inputText: "5"
+- tapOn:
+    id: "cardconf-limit"
+- inputText: "500000"
+
+# La vista previa del límite: escribir 500000 y ver "$ 500.000,00" antes de
+# guardar (misma familia que los otros formularios).
+- assertVisible: '.*500\.000,00.*'
+
+- tapOn:
+    id: "cardconf-save"
+
+- extendedWaitUntil:
+    visible:
+      id: "cards-flash"
+    timeout: 30000
+
+- assertVisible: '.*Configuración guardada: Visa Santander cierra el día 15 y vence el día 5.*'
+
+# ── La tarjeta configurada ───────────────────────────────────────────────────
+- assertVisible: '.*Cierra el día 15 · vence el día 5\..*'
+- assertVisible: '.*Utilización: 10,00%.*límite de.*500\.000,00.*'
+- assertVisible: '.*Período en curso: noviembre de 2026.*'
+- assertVisible: '.*Cierra el 15 de nov de 2026.*'
+- assertVisible: '.*Total proyectado:.*0,00.*mínimo:.*0,00.*'
+
+# El botón de compra en cuotas aparece recién ahora que hay cierre.
+- scrollUntilVisible:
+    element:
+      id: "card-new-plan-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible:
+    id: "card-new-plan-.*"
+- assertVisible: '.*Sin compras en cuotas.*'
+
+# ── Correr el cierre ─────────────────────────────────────────────────────────
+- tapOn:
+    id: "card-run-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "stmt-.*"
+    timeout: 30000
+
+# Correr el cierre recarga la vista y el colapso de "Cargando…" deja el scroll
+# ARRIBA: la fila del resumen queda pegada al borde inferior, con su primera
+# línea visible y el resto recortado (trampa 13, corolario de carga). Se ancla
+# el scroll en el botón "Pagar resumen" —que vive al pie de la fila— con
+# `centerElement`: con el botón centrado, las tres líneas del resumen quedan a
+# la vista.
+- scrollUntilVisible:
+    element:
+      id: "stmt-pay-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+# El resumen de octubre: 50.000, mínimo 5% = 2.500, sin pagar.
+- assertVisible: '.*octubre de 2026.*'
+- assertVisible: '.*Cerró el 15 de oct de 2026.*'
+- assertVisible: '.*Total:.*50\.000,00.*mínimo:.*2\.500,00.*'
+- assertVisible:
+    id: "stmt-unpaid-.*"
+- assertVisible:
+    id: "stmt-pay-.*"
+
+# El aviso de la corrida quedó arriba: se ancla el scroll en el propio flash
+# (sin `centerElement`: está pegado al tope, trampa 12).
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Cierre corrido: 1 resumen nuevo\..*'
+
+# ── Pagar el resumen: dos pasos, con el paso intermedio cancelado ────────────
+- scrollUntilVisible:
+    element:
+      id: "stmt-pay-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "stmt-pay-.*"
+
+# El bloque de confirmación: dice cuánto y desde qué tarjeta, y advierte que
+# es una transferencia entre cuentas propias (no un gasto nuevo).
+- assertVisible: '.*Se transfieren.*50\.000,00.*Visa Santander.*'
+- assertVisible: '.*Es una transferencia entre tus cuentas.*'
+- assertVisible:
+    id: "stmt-pay-from-.*"
+
+# Primero se CANCELA: el paso de confirmación no es una acción irreversible.
+- tapOn:
+    id: "stmt-pay-cancel-.*"
+
+- assertNotVisible: '.*Se transfieren.*'
+- assertVisible:
+    id: "stmt-pay-.*"
+
+# Y ahora sí: confirmar. La cuenta viene preseleccionada (la primera bancaria,
+# Banco Galicia); el flash del pago lo prueba al nombrarla.
+- tapOn:
+    id: "stmt-pay-.*"
+
+- tapOn:
+    id: "stmt-pay-go-.*"
+
+# Pagar recarga la vista igual que el cierre. La espera es por un dato POSITIVO
+# del estado nuevo —la utilización en 0,00%—: esperar por la AUSENCIA del botón
+# resolvería durante "Cargando…" y las aserciones siguientes correrían contra
+# una pantalla a medio pintar.
+- extendedWaitUntil:
+    visible: '.*Utilización: 0,00%.*'
+    timeout: 30000
+
+# El [^0-9] no es decorativo: un `.*debe.*0,00.*` daría por buena la deuda de
+# "$ 50.000,00" — el "0,00" del final alcanza. Con un dígito prohibido delante,
+# sólo pasa el cero de verdad.
+- assertVisible: '.*debe.*[^0-9]0,00.*'
+- assertVisible:
+    id: "stmt-paid-.*"
+- assertVisible: '.*Pagado.*'
+
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Resumen de octubre de 2026 pagado: se transfirieron.*50\.000,00.*desde Banco Galicia\..*'
+
+# ── El 409: cambiar el cierre con un resumen pagado ─────────────────────────
+# El resumen pagado es un documento congelado: repartir las compras con otro
+# cierre volvería a facturarlas. La API lo bloquea con 409 y el mensaje se
+# muestra tal cual — incluye el escape (borrar el pago reabre el resumen).
+- tapOn:
+    id: "card-config-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "cardconf-closing"
+    timeout: 30000
+
+- tapOn:
+    id: "cardconf-closing"
+- eraseText: 5
+- inputText: "20"
+- tapOn:
+    id: "cardconf-save"
+
+- extendedWaitUntil:
+    visible:
+      id: "cardconf-error"
+    timeout: 30000
+
+- assertVisible: '.*La tarjeta ya tiene un resumen pagado.*'
+- assertVisible: '.*Borrá primero el pago \(eso reabre el resumen\) y volvé a intentar\..*'
+
+- tapOn:
+    id: "cardconf-cancel"
+
+- assertNotVisible:
+    id: "cardconf-error"
+
+# La tarjeta conserva el cierre de 15: el cambio bloqueado no se aplicó.
+- assertVisible: '.*Cierra el día 15 · vence el día 5\..*'
+
+# ── El pago fue una transferencia, no un gasto ───────────────────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*490\.000,00.*'
+- assertVisible: '.*2 transferencias entre tus cuentas.*'

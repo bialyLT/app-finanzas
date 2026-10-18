@@ -1,0 +1,508 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 02c · Cuotas — alta con tasa implícita, compromisos, borrado y el escape del 409
+# ═════════════════════════════════════════════════════════════════════════════
+# Una compra en cuotas NO es un gasto por mes: es UN gasto por el total (la
+# deuda nace completa y cuenta UNA sola vez en los totales) y las cuotas son el
+# calendario con el que esa deuda se va pagando. Este flujo lo verifica de
+# punta a punta sobre la tarjeta que dejó configurada el flujo 02b:
+#
+#   1. Alta con vista previa (§3.3): una "Heladera" de $ 120.000 en 12 cuotas,
+#      con precio de contado $ 108.000. La vista previa muestra la cuota
+#      ($ 10.000,00), el sobreprecio ($ 12.000,00) y la TASA IMPLÍCITA
+#      (1,66% mensual → TEA 21,83%): "no es sin interés, el interés está en el
+#      precio".
+#   2. La compra del 18/10 (después del cierre del 15, con la fecha FIJADA a
+#      mano en el modal) cae en el período de NOVIEMBRE: "Cuota 1 de 12"
+#      todavía sin facturar ninguna.
+#   3. Los números de la tarjeta: deuda 120.000, utilización 24,00% del límite,
+#      período en curso 10.000 / mínimo 500 (la cuota del mes), y los
+#      compromisos: 60.000 a 6 meses y 120.000 a 12.
+#   4. El panel: el gasto entero cuenta UNA vez (610.000 = 490.000 + 120.000).
+#   5. Borrar la compra (en dos pasos) se lleva el gasto y sus cuotas: deuda a
+#      0 y el panel vuelve a 490.000,00.
+#   6. LA EXTENSIÓN: el escape del 409 del flujo 02b, recorrido de verdad. Se
+#      borra el pago del resumen desde /inicio (dos pasos en línea, trampa 16:
+#      nada de `window.confirm`), el resumen se reabre solo y el cambio de
+#      cierre que el 02b no pudo guardar ahora SÍ se guarda; al final se
+#      restaura el cierre 15 y el estado vuelve a ser el del seed — deuda
+#      50.000, una sola transferencia, resumen de octubre sin pagar — para que
+#      los flujos 03–15 no se enteren de nada.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (estado que deja el flujo 02b)
+# ─────────────────────────────────────────────────────────────────────────────
+#   Punto de partida: deuda 0 (resumen de octubre pagado), límite 500.000,
+#   cierre 15 → la compra del 18/10 va al período de NOVIEMBRE.
+#
+#   Cuota:          120.000 / 12 = 10.000,00
+#   Sobreprecio:    120.000 − 108.000 = 12.000,00
+#   Tasa implícita: 108.000 = 12 × 10.000 descontado → 1,66% mensual
+#                   (1,0166)¹² − 1 ≈ 21,83% TEA   [verificado en money.test.ts]
+#   Utilización:    120.000 / 500.000 = 24,00%
+#   Período actual: cuota 1 (nov 2026) = 10.000 → mínimo 5% = 500,00
+#   Compromisos:    cuotas nov 2026 → oct 2027 = 12 × 10.000
+#                     · 6 meses (nov..abr):  60.000,00
+#                     · 12 meses (nov..oct): 120.000,00
+#   Panel:          gastos 490.000 + 120.000 = 610.000,00 (una sola vez)
+#                   quedó 800.000 − 610.000 = 190.000,00
+#
+#   ── LA EXTENSIÓN ──────────────────────────────────────────────────────────
+#   Borrar el pago: el panel vuelve a 490.000,00 · 310.000,00 y 1
+#   transferencia; la Visa vuelve a deber 50.000 (utilización 10,00%) y el
+#   resumen de octubre queda SIN PAGAR con los mismos números (50.000 /
+#   mínimo 2.500). Cambiar el cierre a 20 ahora se GUARDA (el flash lo dice y
+#   trae el sufijo del límite); restaurar el 15 se guarda de nuevo. El estado
+#   final es EXACTAMENTE el del seed + la tarjeta configurada.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr el flujo 02b antes que éste (y el 02 antes del 02b): este flujo
+# parte del resumen de octubre pagado y de la tarjeta configurada (cierre 15 /
+# vence 5 / límite 500.000), y al final devuelve el estado al del seed.
+url: http://127.0.0.1:3000
+name: "02c · Cuotas — alta con tasa implícita, compromisos, borrado y el escape del 409"
+tags:
+  - smoke
+  - tarjetas
+  - cuotas
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+# ── Punto de partida (lo que dejó el flujo 02b) ──────────────────────────────
+# El [^0-9] delante del 0,00 evita el falso positivo con "$ 50.000,00": sin él,
+# el "0,00" del final del monto alcanza para dar la aserción por buena.
+- assertVisible: '.*debe.*[^0-9]0,00.*'
+- assertVisible: '.*Utilización: 0,00%.*'
+
+- scrollUntilVisible:
+    element:
+      id: "card-new-plan-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Sin compras en cuotas.*'
+
+# ── Alta de la compra en cuotas ──────────────────────────────────────────────
+- tapOn:
+    id: "card-new-plan-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "plan-label"
+    timeout: 30000
+
+# El modal entero entra en la ventana: NO se scrollea nada adentro. Maestro no
+# puede scrollear un contenedor interno y los gestos sobre el backdrop lo
+# cierran (el backdrop es onClick=onClose); además el pie `sticky bottom-0`
+# tapa el final del formulario. Por eso el form va en dos columnas: la
+# categoría abre la columna derecha (siempre lejos del pie) y la vista
+# previa —que no se toca— queda debajo. Un scrollUntilVisible acá es un error,
+# no una red de seguridad. En la corrida que falló, el tap del último campo
+# cayó sobre "Cancelar" y el modal se cerró sin decir nada.
+- tapOn:
+    id: "plan-label"
+- inputText: "Heladera"
+- tapOn:
+    id: "plan-total"
+- inputText: "120000"
+- tapOn:
+    id: "plan-installments"
+- inputText: "12"
+- tapOn:
+    id: "plan-cash"
+- inputText: "108000"
+
+# La fecha del plan se FIJA a la de hoy (18/10 → período de NOVIEMBRE, después
+# del cierre del 15: la cuota 1 todavía no facturó ninguna). Mecanismo del flujo
+# 14: los <input type="date"> aceptan ISO por `inputText` y el valor queda
+# visible tal cual. Fijarla desacopla la compra ("Compra del 18 de oct") de la
+# fecha real de la corrida.
+- tapOn:
+    id: "plan-date"
+- inputText: "2026-10-18"
+
+- assertVisible: '.*2026-10-18.*'
+
+# ── La vista previa: la cuota, el sobreprecio y la TEA implícita ─────────────
+# El cálculo lo hace el servidor después de 300 ms sin teclas. Se espera el
+# ÚLTIMO texto del cálculo (la TEA): esperar la cuota sola daría por bueno un
+# estado intermedio sin el bloque de la tasa.
+- extendedWaitUntil:
+    visible: '.*1,66% por mes.*21,83%.*'
+    timeout: 15000
+
+- assertVisible: '.*12 cuotas de.*10\.000,00.*'
+- assertVisible: '.*En total vas a pagar.*'
+- assertVisible: '.*120\.000,00.*'
+- assertVisible: '.*Al contado.*'
+- assertVisible: '.*108\.000,00.*'
+- assertVisible: '.*el interés está en el precio.*'
+- assertVisible: '.*Financiar tiene un sobreprecio de.*'
+- assertVisible: '.*12\.000,00.*'
+- assertVisible: '.*1,66% por mes.*21,83%.*'
+
+# ── La categoría (requerida), arriba de la vista previa en la columna ────────
+- tapOn:
+    id: "plan-category"
+- inputText: "Tecnología"
+
+- assertVisible: '.*Tecnología.*'
+
+# El campo tiene <datalist>: al tipear se abre el popup nativo de sugerencias
+# y el tap siguiente puede comérselo él. Se cierra tocando la vista previa
+# (no interactiva) antes de registrar. NO se puede tocar por texto "Compra en
+# cuotas": ese texto también vive en el botón de la página, detrás del
+# backdrop, y un tap ahí CIERRA el modal (trampa del texto ambiguo).
+- tapOn:
+    id: "plan-preview"
+
+# ── Registrar (el botón se deshabilita mientras guarda: sin dobles altas) ────
+- tapOn:
+    id: "plan-submit"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "plan-submit"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Compra en cuotas registrada.*Heladera.*12 cuotas de.*10\.000,00.*'
+
+# ── La compra en la tarjeta ──────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Cuota 1 de 12.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Heladera · 12 cuotas.*'
+- assertVisible: '.*Cuota 1 de 12.*10\.000,00 por mes.*'
+- assertVisible: '.*Compra del 18 de oct de 2026.*'
+- assertVisible: '.*Cuotas de noviembre de 2026 a octubre de 2027\..*'
+- assertVisible: '.*Tasa implícita: 1,66% por mes — TEA 21,83% · sobreprecio.*'
+- assertVisible: '.*12\.000,00.*'
+
+# La negación honesta: la zona de compras está a la vista y el texto del estado
+# vacío ya no está (trampa 7).
+- assertNotVisible: '.*Sin compras en cuotas.*'
+
+# ── Criterio 1: el gasto cuenta UNA sola vez (el total, no la cuota) ─────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*610\.000,00.*'                 # 490.000 + 120.000, entero
+- assertVisible: '.*\+\$.*190\.000,00.*'           # quedó: 800.000 − 610.000
+- assertVisible: '.*2 transferencias entre tus cuentas.*'
+
+# ── Los números de la tarjeta ────────────────────────────────────────────────
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+- assertVisible: '.*debe.*120\.000,00.*'
+- assertVisible: '.*Utilización: 24,00%.*límite de.*500\.000,00.*'
+- assertVisible: '.*Período en curso: noviembre de 2026.*'
+- assertVisible: '.*Total proyectado:.*10\.000,00.*mínimo:.*500,00.*'
+
+# ── Compromisos: 6 y 12 meses ────────────────────────────────────────────────
+# Se ancla en la nota del pie del bloque (queda debajo de los chips): abajo no
+# hay espacio para centrar nada (trampa 12, corolario del fondo).
+- scrollUntilVisible:
+    element:
+      text: '.*No incluye el período en curso.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertVisible: '.*Próximos 6 meses:.*'
+- assertVisible: '.*60\.000,00.*'
+- assertVisible: '.*Próximos 12 meses:.*'
+- assertVisible: '.*120\.000,00.*'
+- assertVisible: '.*nov 2026.*10\.000,00.*'
+- assertVisible: '.*oct 2027.*10\.000,00.*'
+
+- assertNotVisible: '.*Sin cuotas comprometidas todavía.*'
+
+# ── Borrar la compra: dos pasos, sin `window.confirm` ────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Cuota 1 de 12.*'
+    direction: UP
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "plan-delete-.*"
+
+- assertVisible: '.*¿Borrar la compra y su gasto\?.*'
+- assertVisible:
+    id: "plan-delete-confirm-.*"
+
+- tapOn:
+    id: "plan-delete-confirm-.*"
+
+# Borrar recarga la vista: el scroll vuelve ARRIBA (el colapso de "Cargando…")
+# y la zona de compras queda debajo del pliegue. Se baja anclando en el texto
+# del estado vacío, que es lo que se quiere verificar.
+- extendedWaitUntil:
+    notVisible:
+      text: '.*Cuota 1 de 12.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: '.*Sin compras en cuotas.*'
+    direction: DOWN
+    timeout: 20000
+
+# El borrado se lleva el gasto Y sus cuotas: la tarjeta vuelve al estado vacío.
+- assertVisible: '.*Sin compras en cuotas.*'
+- assertNotVisible: '.*Tasa implícita.*'
+
+# ── Los compromisos vuelven a cero ───────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Sin cuotas comprometidas todavía.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertVisible: '.*Sin cuotas comprometidas todavía.*'
+- assertNotVisible: '.*oct 2027.*'
+- assertNotVisible: '.*Próximos 6 meses.*'
+
+# ── El aviso del borrado y la deuda de vuelta en cero ────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+# El flash NOMBRA la compra borrada (trampa 7, corolario): la negación honesta
+# de "Heladera" no existe mientras esté a la vista. Se afirma el descargo.
+- assertVisible: '.*borrada: el gasto y sus cuotas se fueron con ella\..*'
+- assertVisible: '.*debe.*[^0-9]0,00.*'
+- assertVisible: '.*Utilización: 0,00%.*'
+
+# ── El panel vuelve a la foto del seed ───────────────────────────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*490\.000,00.*'
+- assertVisible: '.*310\.000,00.*'
+- assertVisible: '.*2 transferencias entre tus cuentas.*'
+
+# ═════════════════════════════════════════════════════════════════════════════
+# LA EXTENSIÓN · el escape del 409 del 02b, recorrido de verdad
+# ═════════════════════════════════════════════════════════════════════════════
+# El 02b chocó con el 409 al querer cambiar el cierre con un resumen pagado, y
+# la API contestó con el escape ("borrá primero el pago"). Acá se RECORRE ese
+# escape completo, que hasta ahora sólo se leía en un mensaje:
+#
+#   1. Se borra el pago del resumen desde la bandeja de movimientos: es la
+#      transferencia "Pago resumen Visa Santander octubre de 2026" del 02b.
+#      Borrar una transferencia es de DOS pasos en línea (trampa 16: nada de
+#      window.confirm) y al irse se lleva el vínculo con el resumen (FK con
+#      SetNull): el resumen se reabre SIN PAGAR en el acto.
+#   2. Con el resumen reabierto, el cambio de cierre que el 02b no pudo guardar
+#      ahora SÍ se guarda (20): el flash lo dice y la tarjeta lo muestra.
+#   3. Se restaura el cierre 15: el estado vuelve al del seed —deuda 50.000,
+#      utilización 10,00%, UNA sola transferencia, resumen de octubre sin
+#      pagar— para que los flujos 03–15 no se enteren de nada.
+#
+# La aritmética del borrado: la transferencia no era un gasto (no toca el
+# 490.000/310.000 del panel), pero sí baja el contador de transferencias del mes
+# y devuelve la deuda de la tarjeta: 0 → 50.000 con la utilización en 10,00%.
+
+# ── El pago, a la vista en la bandeja ────────────────────────────────────────
+# El buscador vive ABAJO, en la bandeja de movimientos: se baja a buscarlo
+# (dirección DOWN). Acá se llegó desde el panel, que quedó arriba: un UP
+# arrancaría yendo al revés y el timeout del scroll muere sin encontrarlo.
+- scrollUntilVisible:
+    element:
+      id: "mov-search"
+    direction: DOWN
+    timeout: 20000
+
+- tapOn:
+    id: "mov-search"
+- inputText: "Pago resumen"
+
+# La fila del pago queda DEBAJO del pliegue (el buscador vive arriba de todo en
+# la tarjeta) y el driver web sólo serializa lo que está dentro de la ventana:
+# un extendedWaitUntil acá espera para siempre un nodo que el driver ni ve
+# (trampa 7 y 9 juntas). Se BAJA hasta el dato con un scroll; la aserción
+# siguiente es el recibo de que el filtro encontró esa fila y no otra.
+- scrollUntilVisible:
+    element:
+      text: '.*Pago resumen Visa Santander octubre de 2026.*'
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: '.*Pago resumen Visa Santander octubre de 2026.*'
+
+# ── Borrar el pago: dos pasos en línea, sin diálogos nativos ────────────────
+- tapOn:
+    id: "mov-delete-.*"
+
+- extendedWaitUntil:
+    visible: '.*¿Eliminar\?.*'
+    timeout: 15000
+
+- assertVisible:
+    id: "mov-delete-confirm-.*"
+
+- tapOn:
+    id: "mov-delete-confirm-.*"
+
+# El borrado recarga la vista. La espera es por un dato POSITIVO del estado
+# nuevo: el contador de transferencias del mes, que vive arriba en "Flujo de
+# caja" (se sube a buscarlo; si ya está a la vista, no scrollea nada).
+- scrollUntilVisible:
+    element:
+      text: '.*1 transferencia entre tus cuentas.*'
+    direction: UP
+    timeout: 30000
+
+- assertVisible: '.*1 transferencia entre tus cuentas.*'
+
+# La negación HONESTA del borrado: el buscador sigue filtrando por "Pago
+# resumen" (el estado no se limpia) y la lista responde con su estado vacío de
+# filtros. Ese cartel sólo puede renderizarse si la fila del pago YA NO EXISTE.
+# Un `assertNotVisible` de la fila pasaría por la trampa 7 (después del borrado
+# la vista queda arriba y la lista, debajo del pliegue).
+- scrollUntilVisible:
+    element:
+      text: '.*Sin movimientos con esos filtros.*'
+    direction: DOWN
+    timeout: 30000
+
+- assertVisible: '.*Sin movimientos con esos filtros.*'
+
+# ── El resumen se reabrió solo: deuda 50.000 y utilización 10,00% ───────────
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+- assertVisible: '.*debe.*50\.000,00.*'
+- assertVisible: '.*Utilización: 10,00%.*límite de.*500\.000,00.*'
+- assertVisible: '.*Sin pagar.*'
+- assertVisible: '.*octubre de 2026.*'
+- assertVisible: '.*Total:.*50\.000,00.*mínimo:.*2\.500,00.*'
+- assertVisible:
+    id: "stmt-unpaid-.*"
+
+# ── El cambio de cierre que el 02b no pudo guardar, ahora SÍ ────────────────
+- tapOn:
+    id: "card-config-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "cardconf-closing"
+    timeout: 30000
+
+- tapOn:
+    id: "cardconf-closing"
+- eraseText: 5
+- inputText: "20"
+
+- tapOn:
+    id: "cardconf-save"
+
+# El flash nombra la tarjeta y trae el sufijo del límite ("· límite $ 500.000,00"):
+# el regex corta antes del sufijo y cubre el resto.
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 30000
+
+- assertVisible: '.*Configuración guardada: Visa Santander cierra el día 20 y vence el día 5.*'
+- assertVisible: '.*Cierra el día 20 · vence el día 5\..*'
+
+# ── Restaurar el cierre 15: el estado vuelve EXACTAMENTE al del seed ────────
+- tapOn:
+    id: "card-config-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "cardconf-closing"
+    timeout: 30000
+
+- tapOn:
+    id: "cardconf-closing"
+- eraseText: 5
+- inputText: "15"
+
+- tapOn:
+    id: "cardconf-save"
+
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 30000
+
+- assertVisible: '.*Configuración guardada: Visa Santander cierra el día 15 y vence el día 5.*'
+- assertVisible: '.*Cierra el día 15 · vence el día 5\..*'
+
+# ── La foto final: el panel del seed, con UNA sola transferencia ────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*490\.000,00.*'
+- assertVisible: '.*310\.000,00.*'
+- assertVisible: '.*1 transferencia entre tus cuentas.*'

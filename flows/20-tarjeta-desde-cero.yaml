@@ -1,0 +1,469 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 20 · Tarjetas — una tarjeta desde CERO y cuotas retroactivas
+# ═════════════════════════════════════════════════════════════════════════════
+# El alta de una tarjeta desde la UI no la cubría nadie: 02b/02c configuran la
+# Visa del seed y 18 juega con su modal de cuotas. Acá se crea una tarjeta con
+# SALDO INICIAL NEGATIVO (deuda) desde el formulario de cuentas, y se la lleva
+# por el ciclo completo de una compra RETROACTIVA: la compra del 30/09 —antes
+# del cierre del 10, así que su primera cuota cae en el resumen de octubre ya
+# cerrado— en 5 cuotas, con su corrida de cierre, su resumen y su borrado.
+#
+# Lo que el flujo cuida:
+#
+#   1. EL ORDEN DEL FORMULARIO: el saldo inicial se carga con el tipo por
+#      defecto (BANK) —formulario corto— y RECIÉN DESPUÉS se elige "tarjeta",
+#      que agrega cierre/vencimiento/límite debajo. Cargar primero lo que no
+#      depende del tipo deja cada tap lejos de un reflow a mitad de camino (la
+#      familia de la trampa 15); el orden quedó validado por las sondas 94/94b.
+#      El monto sobrevive el cambio de tipo y la deuda nace en 25.000.
+#   2. EL MEDIO PAR: cargar sólo el cierre (sin vencimiento) da un error exacto
+#      y NO crea la cuenta; después del error el modal sigue vivo.
+#   3. EL DOBLE TOQUE en "Crear cuenta": la cuenta se crea UNA sola vez. Lo
+#      delata el total de deudas del panel: con dos altas diría 418.287,29.
+#   4. SIN LÍMITE no se inventa un porcentaje: "Utilización: no se sabe".
+#   5. LA COMPRA RETROACTIVA: con fecha 30/09 la cuota 1 cae en el período de
+#      OCTUBRE (ya cerrado) y el plan muestra "Cuota 2 de 5" (lo próximo que se
+#      factura es noviembre). El cierre emite UN resumen de 2.000 (mínimo 100).
+#      El gasto es de septiembre: los gastos de octubre del panel NO se mueven.
+#   6. EL BORRADO devuelve la deuda a 25.000 y deja el documento de octubre
+#      EMITIDO e impago: el borrado no reescribe resúmenes. La TERCERA corrida
+#      lo recalcula a 0,00 — "1 actualizado(s)" — como fija la ronda 1: un
+#      resumen impago se recalcula; el mismo documento, sin totales fantasma.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre en este punto de la suite)
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 19):
+#
+#   gastos        10.905.000,00 · quedó −10.105.000,00
+#   flujo        −10.236.712,71 · banco −9.697.823,75
+#   Visa      a favor 100.300,00 (resumen de octubre PAGADO)
+#   deudas        368.287,29    (préstamo 468.587,29 − Visa 100.300 a favor)
+#   transferencias 5
+#
+# La tarjeta nueva ("Alfa Test", creada al final = la SEGUNDA después de la
+# Visa en /tarjetas: el orden es por fecha de creación) nace con saldo inicial
+# −25.000:
+#
+#   deudas        368.287,29 + 25.000 = 393.287,29
+#   Alfa          "debe $ 25.000,00" · "Utilización: no se sabe" · cierra 10, vence 28
+#
+# La compra de 10.000 en 5 cuotas con fecha 30/09 reparte:
+#
+#   cuota 1 · octubre de 2026 (ya cerró: la emite el cierre)
+#   cuota 2 · noviembre de 2026 (el período en curso la proyecta)
+#   … hasta febrero de 2027
+#
+#   cierre #2: "1 resumen nuevo" → octubre total 2.000, mínimo 2.500 × 5% = 100
+#
+# Borrar la compra se lleva el gasto y sus cuotas:
+#
+#   Alfa vuelve a deber 25.000 · deudas a 393.287,29 · el resumen queda
+#   (documento del pasado) con su total viejo hasta la próxima corrida, que lo
+#   recalcula a 0,00 en el MISMO documento ("1 actualizado(s)").
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 01 a 15, el 18 y el 19 antes que éste (los 368.287,29 de
+# deuda los cierra el pago del 19; el 18 borra su compra y deja a la Visa sin
+# planes, así que la ÚNICA compra en cuotas de la pantalla es la de acá).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LÍMITE DE CALENDARIO
+# ─────────────────────────────────────────────────────────────────────────────
+# Vale mientras "hoy" no pase del 10 de noviembre de 2026: apenas cierre el
+# período de noviembre, el cierre #2 emitiría DOS resúmenes (las cuotas 1 y 2) y
+# el flash diría "2 resúmenes nuevos". Es el mismo tipo de límite que el 14 (16
+# de noviembre) y el 02b (16 de noviembre); el primero que vence es éste.
+url: http://127.0.0.1:3000
+name: "20 · Tarjetas — una tarjeta desde cero y cuotas retroactivas"
+tags:
+  - smoke
+  - tarjetas
+  - cuotas
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Punto de partida: la foto que dejó el flujo 19 ───────────────────────────
+- assertVisible: '.*10\.905\.000,00.*'          # gastos
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó
+- assertVisible: '.*-\$.*10\.236\.712,71.*'      # flujo de caja
+- assertVisible: '.*-\$.*9\.697\.823,75.*'       # banco
+- assertVisible: ".*5 transferencias entre tus cuentas.*"
+
+- scrollUntilVisible:
+    element:
+      text: '.*368\.287,29.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertVisible: '.*368\.287,29.*'               # deudas con la Visa a favor
+
+# ── El alta, con el MONTO PRIMERO ────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "btn-add-account"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "btn-add-account"
+
+- extendedWaitUntil:
+    visible:
+      id: "acc-name"
+    timeout: 30000
+
+- tapOn:
+    id: "acc-name"
+- inputText: "Alfa Test"
+
+# El saldo inicial se carga con el tipo por defecto (BANK), con el formulario
+# todavía corto; después se cambia el tipo y el valor tiene que sobrevivir.
+- assertVisible: '.*Cuánta plata tiene hoy.*'
+- tapOn:
+    id: "acc-opening"
+- inputText: "-25000"
+
+- assertVisible: '.*-25000.*'
+- assertVisible: '.*Arranca con.*'
+
+# ── El tipo: tarjeta ─────────────────────────────────────────────────────────
+- tapOn: '.*Qué tipo de cuenta es.*'
+- inputText: "tarjeta"
+
+- assertVisible:
+    id: "acc-card-closing"
+- assertVisible: '.*Es deuda, no plata.*'
+
+# ── Medio par: cierre 10 sin vencimiento → error exacto, no se crea nada ─────
+- tapOn:
+    id: "acc-card-closing"
+- inputText: "10"
+
+- tapOn:
+    id: "acc-submit"
+
+- extendedWaitUntil:
+    visible: '.*El día de cierre y el de vencimiento van juntos: cargá los dos \(o ninguno de los dos\)\..*'
+    timeout: 15000
+
+- assertVisible:
+    id: "acc-submit"
+
+# ── Vencimiento 28, sin límite, y DOBLE TOQUE al submit → UNA sola cuenta ────
+- tapOn:
+    id: "acc-card-due"
+- inputText: "28"
+
+- tapOn:
+    id: "acc-submit"
+    waitToSettleTimeoutMs: 0
+- tapOn:
+    id: "acc-submit"
+    optional: true
+
+- extendedWaitUntil:
+    notVisible:
+      id: "acc-submit"
+    timeout: 30000
+
+# ── La cuenta quedó: deuda 25.000 y las deudas NO se duplicaron ──────────────
+# 368.287,29 (arranque) + 25.000 = 393.287,29. Con DOS cuentas creadas daría
+# 418.287,29 y esta aserción fallaría.
+- scrollUntilVisible:
+    element:
+      text: '.*Alfa Test.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Alfa Test.*'
+- assertVisible: '.*debe.*25\.000,00.*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*393\.287,29.*'
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*393\.287,29.*'
+
+# ── En tarjetas: la tarjeta nueva, pelada de límite ──────────────────────────
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      text: '.*Alfa Test.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Alfa Test.*'
+- assertVisible:
+    text: '.*debe.*25\.000,00.*'
+    below: '.*Alfa Test.*'
+- assertVisible:
+    text: '.*Utilización: no se sabe.*'
+    below: '.*Alfa Test.*'
+- assertVisible: '.*Cierra el día 10 · vence el día 28\..*'
+
+# ── Cierre #1: sin compras no hay nada que emitir ────────────────────────────
+# El botón de la corrida se elige POR RELACIÓN con el nombre de la tarjeta: la
+# Visa también tiene el suyo y está más arriba.
+- tapOn:
+    text: '.*Correr el cierre.*'
+    below: '.*Alfa Test.*'
+
+- extendedWaitUntil:
+    visible: '.*Cierre corrido: Alfa Test no tenía períodos cerrados nuevos para emitir\..*'
+    timeout: 30000
+
+# ── La compra retroactiva: 30/09, 10.000 en 5 cuotas ─────────────────────────
+# El bloque de "Compras en cuotas" vive abajo del encabezado: el ancla del
+# scroll es la tarjeta sin resúmenes (única en la pantalla — la Visa ya tiene
+# el suyo emitido), que deja el nombre y los botones de Alfa a la vista juntos.
+- scrollUntilVisible:
+    element:
+      id: "card-statements-empty-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    id: "card-new-plan-.*"
+    below: '.*Alfa Test.*'
+
+- extendedWaitUntil:
+    visible:
+      id: "plan-label"
+    timeout: 30000
+
+- tapOn:
+    id: "plan-label"
+- inputText: "Cuotas viejas"
+
+- tapOn:
+    id: "plan-total"
+- inputText: "10000"
+
+- tapOn:
+    id: "plan-installments"
+- inputText: "5"
+
+# La fecha se FIJA a mano (ISO por inputText): así la cuota 1 cae en octubre
+# aunque el flujo corra otro día.
+- tapOn:
+    id: "plan-date"
+- inputText: "2026-09-30"
+- assertVisible: '.*2026-09-30.*'
+
+- tapOn:
+    id: "plan-category"
+- inputText: "Tecnología"
+
+- extendedWaitUntil:
+    visible: '.*5 cuotas de.*2\.000,00.*'
+    timeout: 15000
+
+- assertVisible: '.*En total vas a pagar.*'
+- assertVisible: '.*10\.000,00.*'
+
+# El <datalist> de la categoría queda abierto tras tipear: se cierra tocando la
+# vista previa (no interactiva) antes de registrar (trampa del 02c).
+- tapOn:
+    id: "plan-preview"
+
+# DOBLE TOQUE en "Registrar compra" → UNA sola compra (el guard del modal).
+- tapOn:
+    id: "plan-submit"
+    waitToSettleTimeoutMs: 0
+- tapOn:
+    id: "plan-submit"
+    optional: true
+
+- extendedWaitUntil:
+    notVisible:
+      id: "plan-submit"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Compra en cuotas registrada.*Cuotas viejas.*5 cuotas de.*2\.000,00.*'
+
+# ── Cierre #2: emite el resumen de octubre (la cuota 1, ya cerrada) ──────────
+- scrollUntilVisible:
+    element:
+      id: "card-statements-empty-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    text: '.*Correr el cierre.*'
+    below: '.*Alfa Test.*'
+
+- extendedWaitUntil:
+    visible: '.*Cierre corrido: 1 resumen nuevo\..*'
+    timeout: 30000
+
+# ── El período en curso y el documento emitido ───────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Cierra el 10 de nov de 2026.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Total proyectado:.*2\.000,00.*mínimo:.*100,00.*'
+- assertVisible: '.*Cierra el 10 de nov de 2026.*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*Total:.*2\.000,00.*mínimo:.*100,00.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*octubre de 2026.*'
+- assertVisible:
+    id: "stmt-unpaid-.*"
+
+# El plan: la cuota 1 ya se facturó (el documento de octubre la tiene), así que
+# lo próximo es la 2; la compra quedó con su fecha real y su rango completo.
+#
+# La fila quedó al borde de abajo de la pantalla: primero se la CENTRA, porque
+# el rango y el botón Borrar no llegan al árbol si quedan fuera (la primera
+# corrida murió en la línea de abajo — paso 089 del 18/10, dir
+# 2026-10-18_063232 —; el probe 96 la centró y pasó). Ojo con el texto real:
+# septiembre abrevia "sept" (no "sep") y entre "total" y el monto va "$ ".
+- scrollUntilVisible:
+    element:
+      text: '.*Compra del 30 de sept de 2026.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Cuota 2 de 5.*2\.000,00 por mes.*'
+- assertVisible: '.*Compra del 30 de sept de 2026.*total.*10\.000,00.*'
+- assertVisible: '.*Cuotas de octubre de 2026 a febrero de 2027\..*'
+
+# ── Borrar la compra: dos pasos, sin `window.confirm` (trampa 16) ────────────
+- tapOn:
+    id: "plan-delete-.*"
+
+- assertVisible: '.*¿Borrar la compra y su gasto\?.*'
+- assertVisible:
+    id: "plan-delete-confirm-.*"
+
+- tapOn:
+    id: "plan-delete-confirm-.*"
+
+- extendedWaitUntil:
+    notVisible:
+      text: '.*Cuota 2 de 5.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*borrada: el gasto y sus cuotas se fueron con ella\..*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*Alfa Test.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible:
+    text: '.*debe.*25\.000,00.*'
+    below: '.*Alfa Test.*'
+
+# ── Cierre #3: el resumen impago se recalcula — MISMO documento, a 0,00 ──────
+- scrollUntilVisible:
+    element:
+      text: '.*Cierra el 10 de nov de 2026.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- tapOn:
+    text: '.*Correr el cierre.*'
+    below: '.*Alfa Test.*'
+
+- extendedWaitUntil:
+    visible: '.*Cierre corrido: 1 actualizado\(s\)\..*'
+    timeout: 30000
+
+# El "Total: $ 0,00 · mínimo: $ 0,00." con el guardián `[^0-9]`: sin él, el
+# "0,00" final de "$ 50.000,00" haría pasar el renglón de la Visa.
+- scrollUntilVisible:
+    element:
+      text: '.*Total:.*[^0-9]0,00.*mínimo:.*[^0-9]0,00.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*Total:.*[^0-9]0,00.*mínimo:.*[^0-9]0,00.*'
+
+# ── El panel: el flujo entero no movió la foto de octubre ────────────────────
+# El gasto era del 30/09 (septiembre): los totales de octubre no se tocan, y la
+# transferencia del 19 sigue siendo la última. La deuda queda en 393.287,29.
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*10\.905\.000,00.*'
+- assertVisible: '.*-\$.*10\.105\.000,00.*'
+- assertVisible: '.*-\$.*10\.236\.712,71.*'
+- assertVisible: '.*-\$.*9\.697\.823,75.*'
+- assertVisible: ".*5 transferencias entre tus cuentas.*"
+
+- scrollUntilVisible:
+    element:
+      text: '.*393\.287,29.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertVisible: '.*393\.287,29.*'

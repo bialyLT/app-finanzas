@@ -1,0 +1,183 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 19 · Tarjetas — pagar el resumen de octubre (el pago y el saldo a favor)
+# ═════════════════════════════════════════════════════════════════════════════
+# 02b ya pagó este resumen UNA vez, cuando la tarjeta debía 50.000. Después 02c
+# borró esa transferencia para recorrer el escape del 409: el resumen quedó
+# reabierto e impago. Éste es el pago DEFINITIVO, sobre el estado de la suite:
+# la tarjeta ya no debe —está a favor 50.300 por el pago de más del 10 y el
+# traspaso del 14— pero el documento de octubre sigue esperando.
+#
+# El flujo cubre, en el pago, lo que 02b no cubría:
+#
+#   1. Pagar un resumen sobre una tarjeta con SALDO A FAVOR: el pago se suma al
+#      crédito (50.300 + 50.000 = 100.300) en vez de saldar una deuda.
+#   2. El DOBLE TOQUE en "Confirmar pago": el botón se deshabilita mientras la
+#      transferencia está en vuelo, y aunque un segundo toque entrara, la API
+#      es idempotente (`created:false`, sin segunda transferencia). Las dos
+#      aduanas —la de la pantalla y la de la API— quedan ejercitadas.
+#   3. La cuenta de origen PRESELECCIONADA (la primera bancaria: Banco Galicia)
+#      sin tocar el selector: el flash del pago la nombra.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (octubre en este punto de la suite)
+# ─────────────────────────────────────────────────────────────────────────────
+# Punto de partida (lo que deja el flujo 18):
+#
+#   gastos        10.905.000,00
+#   quedó        −10.105.000,00
+#   flujo        −10.186.712,71
+#   banco         −9.647.823,75   (sobregirado)
+#   Visa      a favor  50.300,00  (el pago de más del 10 + el traspaso del 14)
+#   transferencias 4
+#   resumen de octubre: total 50.000,00, mínimo 2.500,00, SIN PAGAR
+#
+# Y se paga el resumen: transferencia Banco Galicia → Visa de 50.000.
+#
+#   Visa      a favor  50.300,00 + 50.000 = 100.300,00
+#   banco         −9.647.823,75 − 50.000 = −9.697.823,75
+#   flujo        −10.186.712,71 − 50.000 = −10.236.712,71
+#                (banco → tarjeta SALE de la caja, igual que el pago de más)
+#   gastos y "Te quedó": INTACTOS — una transferencia no es gasto.
+#   transferencias 5
+#   utilización: la deuda quedó a favor → el porcentaje se muestra 0,00%
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# y correr los flujos 01 a 15 y el 18 antes que éste (los 10.905.000 los deja
+# el 12; el pago de más del 10 y el traspaso del 14, el saldo a favor; el 02b y
+# el 02c, la tarjeta configurada y el resumen de octubre reabierto).
+url: http://127.0.0.1:3000
+name: "19 · Tarjetas — pagar el resumen de octubre y el saldo a favor"
+tags:
+  - smoke
+  - tarjetas
+  - pago
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- tapOn:
+    id: "nav-cards"
+
+- extendedWaitUntil:
+    visible: ".*Visa Santander.*"
+    timeout: 30000
+
+# ── Punto de partida: la tarjeta a favor y el documento esperando ────────────
+- assertVisible: '.*a favor.*50\.300,00.*'
+- assertVisible: '.*Período en curso: noviembre de 2026.*'
+
+- scrollUntilVisible:
+    element:
+      id: "stmt-pay-.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible: '.*octubre de 2026.*'
+- assertVisible: '.*Total:.*50\.000,00.*mínimo:.*2\.500,00.*'
+- assertVisible:
+    id: "stmt-unpaid-.*"
+
+# ── El pago: confirmación, origen preseleccionado y doble toque ──────────────
+- tapOn:
+    id: "stmt-pay-.*"
+
+- assertVisible: '.*Se transfieren.*50\.000,00.*Visa Santander.*'
+- assertVisible: '.*Es una transferencia entre tus cuentas.*'
+- assertVisible:
+    id: "stmt-pay-from-.*"
+
+# DOBLE TOQUE en "Confirmar pago": el primer toque va con `waitToSettleTimeoutMs:
+# 0` —el segundo cae mientras la transferencia está en vuelo—. El botón se
+# deshabilita (y dice "Pagando…"), así que no sale un segundo POST; y si
+# saliera, la API devuelve `created:false` sin duplicar. Los números de abajo
+# (100.300 a favor y 5 transferencias) son los que delatan un duplicado.
+- tapOn:
+    id: "stmt-pay-go-.*"
+    waitToSettleTimeoutMs: 0
+- tapOn:
+    id: "stmt-pay-go-.*"
+    optional: true
+
+# La señal POSITIVA de que el pago terminó es el flash con su texto: esperar
+# por la ausencia del botón resolvería durante "Cargando…" (trampa 13).
+# Pero el flash vive en el TOPE de la página y acá se está scrolleado abajo (en
+# el resumen): primero se espera un dato positivo de la zona alta —la tarjeta ya
+# a favor 100.300, el mismo papel que juega "Utilización: 0,00%" en el 02b— y
+# recién después se sube hasta el flash, como hace el 02b, antes de afirmarlo.
+- extendedWaitUntil:
+    visible: '.*a favor.*100\.300,00.*'
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "cards-flash"
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Resumen de octubre de 2026 pagado: se transfirieron.*50\.000,00.*desde Banco Galicia\..*'
+
+# ── El documento quedó pagado ────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Total:.*50\.000,00.*mínimo:.*2\.500,00.*'
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible:
+    id: "stmt-paid-.*"
+- assertVisible: '.*Pagado.*'
+- assertNotVisible:
+    id: "stmt-unpaid-.*"
+- assertNotVisible:
+    id: "stmt-pay-.*"
+
+# ── La tarjeta: el pago engordó el saldo a favor ─────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*a favor.*100\.300,00.*'
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*a favor.*100\.300,00.*'
+- assertVisible: '.*Utilización: 0,00%.*límite de.*500\.000,00.*'
+
+# ── El panel: la transferencia movió la caja, no los totales ─────────────────
+- tapOn: "Inicio"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+- assertVisible: '.*10\.905\.000,00.*'          # gastos: intactos
+- assertVisible: '.*-\$.*10\.105\.000,00.*'      # te quedó: intacto
+- assertVisible: '.*-\$.*10\.236\.712,71.*'      # flujo de caja: −50.000
+- assertVisible: '.*-\$.*9\.697\.823,75.*'       # banco: −50.000
+- assertVisible: '.*a favor.*100\.300,00.*'      # la Visa, del lado del crédito
+- assertVisible: ".*5 transferencias entre tus cuentas.*"
