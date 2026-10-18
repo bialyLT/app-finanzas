@@ -33,6 +33,7 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { calendarToDb } from "./dates";
+import type { AmortizationSystem } from "./loans";
 import { money, sum, zero, type Money } from "./money";
 
 /**
@@ -46,7 +47,7 @@ export type Db = PrismaClient | Prisma.TransactionClient;
 export interface AccountBalance {
   id: string;
   name: string;
-  kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN";
+  kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" | "RECEIVABLE";
   archived: boolean;
 
   /** Día de cierre del resumen (sólo tarjetas). `null` si no está cargado. */
@@ -55,6 +56,16 @@ export interface AccountBalance {
   dueDay: number | null;
   /** Límite de compra (sólo tarjetas). `null` = no cargado, no es 0. */
   creditLimit: Money | null;
+
+  /**
+   * El sistema de amortización (sólo préstamos, incluido el `RECEIVABLE`).
+   *
+   * `null` en todo lo demás y también en un préstamo anterior a la Fase 4: se
+   * lee como francés (`systemOf`), el único sistema que existía. Viaja acá para
+   * que la lista de cuentas pueda mostrar el contrato sin una consulta aparte.
+   */
+  amortizationSystem: AmortizationSystem | null;
+
 
   /** Lo que la cuenta tenía antes de empezar a cargar movimientos. */
   opening: Money;
@@ -121,6 +132,7 @@ export async function getAccountBalances(
         closingDay: true,
         dueDay: true,
         creditLimit: true,
+        amortizationSystem: true,
       },
       // Desempate por nombre: sin él, dos cuentas creadas en el mismo
       // milisegundo pueden salir en cualquier orden y el saldo total de la
@@ -199,6 +211,7 @@ export async function getAccountBalances(
       // `money(...)` sólo si existe: un límite de 0 guardado no existe (CHECK),
       // pero `null` no se puede convertir sin inventar un 0.
       creditLimit: account.creditLimit === null ? null : money(account.creditLimit),
+      amortizationSystem: account.amortizationSystem,
       opening,
       inflow,
       outflow,

@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
@@ -5,14 +6,30 @@ import { assertSameOrigin } from "@/lib/auth/csrf";
 import { getAccountBalances, getNetWorth } from "@/lib/balance";
 import { isCalendarDate, todayCalendar } from "@/lib/dates";
 import { cleanName } from "@/lib/finance";
-import { parseMoneyInput } from "@/lib/money";
+import {
+  createLoanAccount,
+  describeLoanError,
+  LoanError,
+} from "@/lib/loan-service";
+import {
+  isAmortizationSystem,
+  type AmortizationSystem,
+  type ImportedInstallmentInput,
+} from "@/lib/loans";
+import { money, parseMoneyInput } from "@/lib/money";
 import {
   describeDatabaseError,
   getNetWorthSeries,
   toAccountDTO,
 } from "@/lib/queries";
 
-const ACCOUNT_KINDS = ["CASH", "BANK", "CREDIT_CARD", "LOAN"] as const;
+const ACCOUNT_KINDS = [
+  "CASH",
+  "BANK",
+  "CREDIT_CARD",
+  "LOAN",
+  "RECEIVABLE",
+] as const;
 type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
 function badRequest(message: string) {
@@ -40,6 +57,76 @@ function parseDayOfMonth(value: unknown): number | null | "invalid" {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 31) return "invalid";
   return parsed;
+}
+
+/**
+ * Interpreta el cronograma de un préstamo importado: la lista de cuotas tal
+ * como la dictó el banco.
+ *
+ * Acá sólo se valida la FORMA (que sea una lista de objetos con fecha, pago e
+ * interés numéricos). La COHERENCIA del cronograma —fechas crecientes, pago ≥
+ * interés, Σ capital = monto— la valida `importedSchedule` en `lib/loans.ts`,
+ * que es la misma función que usan los tests y la vista previa: una sola
+ * definición de "cronograma importado válido".
+ */
+function parseImportedSchedule(
+  value: unknown,
+): { ok: true; items: ImportedInstallmentInput[] } | { ok: false; error: string } {
+  if (!Array.isArray(value)) {
+    return {
+      ok: false,
+      error: "El cronograma importado tiene que ser una lista de cuotas.",
+    };
+  }
+  if (value.length === 0) {
+    return {
+      ok: false,
+      error: "El cronograma importado necesita al menos una cuota.",
+    };
+  }
+  if (value.length > 600) {
+    return {
+      ok: false,
+      error: "El cronograma importado no puede tener más de 600 cuotas.",
+    };
+  }
+
+  const items: ImportedInstallmentInput[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const raw = value[index];
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+      return { ok: false, error: `La cuota ${index + 1} del cronograma importado no es un objeto.` };
+    }
+
+    const item = raw as Record<string, unknown>;
+    const dueDate = typeof item.dueDate === "string" ? item.dueDate : "";
+    if (!isCalendarDate(dueDate)) {
+      return {
+        ok: false,
+        error: `La fecha de la cuota ${index + 1} del cronograma importado no es una fecha válida.`,
+      };
+    }
+
+    const payment = parseMoneyInput(String(item.payment ?? ""));
+    if (payment === null || payment.lessThanOrEqualTo(0)) {
+      return {
+        ok: false,
+        error: `El pago de la cuota ${index + 1} del cronograma importado tiene que ser un monto mayor a cero.`,
+      };
+    }
+
+    const interest = parseMoneyInput(String(item.interest ?? "0"));
+    if (interest === null || interest.isNegative()) {
+      return {
+        ok: false,
+        error: `El interés de la cuota ${index + 1} del cronograma importado no puede ser negativo.`,
+      };
+    }
+
+    items.push({ dueDate, payment, interest });
+  }
+
+  return { ok: true, items };
 }
 
 /**
@@ -114,6 +201,7 @@ export async function GET(req: Request) {
         closingDay: balance.closingDay,
         dueDay: balance.dueDay,
         creditLimit: balance.creditLimit,
+        amortizationSystem: balance.amortizationSystem,
       }),
       /** Saldo contable. Negativo en las cuentas de deuda. */
       balance: balance.balance.toFixed(2),
@@ -138,20 +226,28 @@ export async function GET(req: Request) {
  * Body:
  *   {
  *     name: "Banco Galicia",
- *     kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN",
+ *     kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" | "RECEIVABLE",
  *     openingBalance: "100000",       // opcional, por defecto "0"
  *
- *     // Sólo si kind = LOAN:
+ *     // Sólo si kind = LOAN (debés) o RECEIVABLE (te deben):
  *     principal: "500000",
- *     tnaPercent: "60",               // 60 = 60% TNA
+ *     tnaPercent: "60",               // 60 = 60% TNA (opcional en IMPORTED)
  *     installmentCount: 12,
- *     firstInstallmentDate: "2026-11-15"   // opcional
+ *     firstInstallmentDate: "2026-11-15",   // obligatoria (arma el cronograma)
+ *     amortizationSystem: "FRENCH",   // opcional; por defecto FRENCH
+ *     imported: [                     // sólo con amortizationSystem IMPORTED
+ *       { dueDate: "2026-11-15", payment: "56412.71", interest: "25000.00" }
+ *     ]
  *
  *     // Sólo si kind = CREDIT_CARD:
  *     closingDay: 25,                 // día de cierre del resumen (1..31)
  *     dueDay: 5,                      // día de vencimiento (1..31)
  *     creditLimit: "1500000"          // opcional
  *   }
+ *
+ * Un préstamo (LOAN o RECEIVABLE) nace CON su cronograma materializado: la
+ * cuenta y sus cuotas se escriben en una sola transacción (ver `createLoanAccount`)
+ * o no se escribe nada.
  */
 export async function POST(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
@@ -180,18 +276,21 @@ export async function POST(req: Request) {
 
   if (!isAccountKind(body.kind)) {
     return badRequest(
-      "Tipo de cuenta inválido. Tiene que ser CASH, BANK, CREDIT_CARD o LOAN.",
+      "Tipo de cuenta inválido. Tiene que ser CASH, BANK, CREDIT_CARD, LOAN o RECEIVABLE.",
     );
   }
+  const kind: AccountKind = body.kind;
 
   const openingBalance = parseMoneyInput(String(body.openingBalance ?? "0"));
   if (openingBalance === null) {
     return badRequest("El saldo inicial no se entiende como un monto.");
   }
 
-  // ── Parámetros de préstamo ─────────────────────────────────────────────────
+  // ── Parámetros de préstamo (LOAN y RECEIVABLE) ─────────────────────────────
   // Se juntan SÓLO los que vinieron con valor. Un formulario que manda todos los
   // campos con "" no debería contar como "cargó parámetros de préstamo".
+  const isLoanKind = kind === "LOAN" || kind === "RECEIVABLE";
+
   const loanInput: {
     principal?: string;
     tnaPercent?: string;
@@ -241,25 +340,72 @@ export async function POST(req: Request) {
     loanInput.firstInstallmentDate = parsed;
   }
 
-  const hasLoanParams = Object.keys(loanInput).length > 0;
+  // ── El sistema de amortización y el cronograma importado ───────────────────
+  // El sistema es OPCIONAL (ausente = FRENCH, el de siempre): así el flujo que
+  // no manda el campo sigue funcionando igual. Mandarlo con un valor que no
+  // existe SÍ es un 400: adivinar el sistema sería elegir las cuotas por la
+  // persona.
+  const rawSystem = body.amortizationSystem;
+  const systemProvided =
+    rawSystem !== undefined && rawSystem !== null && rawSystem !== "";
+  if (systemProvided && !isAmortizationSystem(rawSystem)) {
+    return badRequest(
+      "El sistema de amortización no es válido. Tiene que ser FRENCH, GERMAN, AMERICAN, INTEREST_ONLY o IMPORTED.",
+    );
+  }
+  const system: AmortizationSystem = isAmortizationSystem(rawSystem)
+    ? rawSystem
+    : "FRENCH";
 
-  if (body.kind === "LOAN") {
-    // Se avisa TODO lo que falta de una vez en vez de campo por campo. Si falta
-    // la tasa y la cantidad de cuotas, descubrirlo de a uno obliga a recargar el
-    // formulario dos veces.
+  let imported: ImportedInstallmentInput[] | null = null;
+  if (body.imported !== undefined && body.imported !== null) {
+    const parsed = parseImportedSchedule(body.imported);
+    if (!parsed.ok) return badRequest(parsed.error);
+    imported = parsed.items;
+  }
+
+  const hasLoanParams =
+    Object.keys(loanInput).length > 0 || systemProvided || imported !== null;
+
+  if (isLoanKind) {
+    // Se avisa TODO lo que falta de una vez en vez de campo por campo. Si
+    // faltan dos datos, descubrirlo de a uno obliga a recargar el formulario
+    // dos veces.
     const missing: string[] = [];
-    if (!loanInput.principal) missing.push("el monto prestado");
-    if (!loanInput.tnaPercent) missing.push("la tasa (TNA)");
-    if (!loanInput.installmentCount) missing.push("la cantidad de cuotas");
+    if (!loanInput.principal) missing.push("el monto");
+
+    // El importado es la excepción estructural: su cantidad de cuotas y su
+    // primera fecha SE DERIVAN del cronograma del banco (el largo de la lista y
+    // su primera fila). Pedírselos al cliente sería pedirle datos que el
+    // servidor ignora.
+    if (system === "IMPORTED") {
+      if (imported === null) {
+        missing.push("el cronograma del banco (las cuotas importadas)");
+      }
+    } else {
+      if (!loanInput.installmentCount) missing.push("la cantidad de cuotas");
+      if (!loanInput.firstInstallmentDate) {
+        missing.push("la fecha de la primera cuota");
+      }
+      // La tasa es obligatoria salvo en el importado: ahí la composición la
+      // dicta el cronograma del banco y no hay tasa de la que derivar nada.
+      if (!loanInput.tnaPercent) missing.push("la tasa (TNA)");
+    }
 
     if (missing.length > 0) {
       return badRequest(
-        `Un préstamo necesita ${missing.join(", ")}. Sin esos datos no se puede calcular cuánto de cada cuota es interés — y sin eso, la app vuelve a contar la cuota entera como gasto.`,
+        `Un préstamo necesita ${missing.join(", ")}. Sin esos datos no se puede armar el cronograma de cuotas.`,
+      );
+    }
+
+    if (system !== "IMPORTED" && imported !== null) {
+      return badRequest(
+        "El cronograma importado sólo se usa con el sistema IMPORTED.",
       );
     }
   } else if (hasLoanParams) {
     return badRequest(
-      "Los datos de préstamo (monto, tasa, cuotas) sólo se cargan en cuentas de tipo préstamo.",
+      "Los datos de préstamo (monto, tasa, cuotas, sistema) sólo se cargan en cuentas de tipo préstamo.",
     );
   }
 
@@ -302,22 +448,47 @@ export async function POST(req: Request) {
   }
 
   try {
-    const account = await prisma.account.create({
-      data: {
+    let account: Prisma.AccountGetPayload<object>;
+
+    if (kind === "LOAN" || kind === "RECEIVABLE") {
+      // Los chequeos de arriba ya exigieron estos datos; este guard existe para
+      // que TypeScript estreche los tipos, no para fallar en la práctica.
+      if (
+        loanInput.principal === undefined ||
+        (system === "IMPORTED"
+          ? imported === null
+          : loanInput.installmentCount === undefined ||
+            loanInput.firstInstallmentDate === undefined ||
+            loanInput.tnaPercent === undefined)
+      ) {
+        throw new LoanError(400, "Faltan datos del préstamo.");
+      }
+
+      // La cuenta y su cronograma, en UNA transacción: un préstamo sin cuotas
+      // materializadas no puede quedar guardado ni por un instante.
+      account = await createLoanAccount(prisma, {
         name,
-        kind: body.kind,
+        kind,
         openingBalance: openingBalance.toFixed(2),
-        principal: loanInput.principal ?? null,
-        tnaPercent: loanInput.tnaPercent ?? null,
+        system,
+        principal: money(loanInput.principal),
+        tnaPercent: loanInput.tnaPercent ? money(loanInput.tnaPercent) : null,
         installmentCount: loanInput.installmentCount ?? null,
-        firstInstallmentDate: loanInput.firstInstallmentDate
-          ? new Date(`${loanInput.firstInstallmentDate}T00:00:00.000Z`)
-          : null,
-        closingDay,
-        dueDay,
-        creditLimit,
-      },
-    });
+        firstInstallmentDate: loanInput.firstInstallmentDate ?? null,
+        imported,
+      });
+    } else {
+      account = await prisma.account.create({
+        data: {
+          name,
+          kind,
+          openingBalance: openingBalance.toFixed(2),
+          closingDay,
+          dueDay,
+          creditLimit,
+        },
+      });
+    }
 
     return NextResponse.json(
       {
@@ -333,7 +504,7 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error(error);
 
-    const described = describeDatabaseError(error);
+    const described = describeLoanError(error) ?? describeDatabaseError(error);
     if (described) {
       return NextResponse.json(
         { error: described.message },

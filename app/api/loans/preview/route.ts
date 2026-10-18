@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
-import { loanSummary, parseMoneyInput } from "@/lib/money";
+import { isCalendarDate } from "@/lib/dates";
+import { dueDateSeries, isAmortizationSystem, loanSummaryFor } from "@/lib/loans";
+import { parseMoneyInput } from "@/lib/money";
 
 /**
  * GET /api/loans/preview?principal=500000&tnaPercent=60&installmentCount=12
@@ -25,12 +27,44 @@ import { loanSummary, parseMoneyInput } from "@/lib/money";
  * Con el cálculo en un solo lugar, la vista previa y el dato guardado NO PUEDEN
  * diferir: son el mismo código.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PARÁMETROS (todos por query string — es un GET, no modifica nada)
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   · `system`: opcional; por defecto FRENCH. El sistema importado NO tiene
+ *     vista previa: su cronograma se carga tal como lo dio el banco, no se
+ *     calcula.
+ *   · `firstInstallmentDate`: opcional. Si viene, cada cuota del plan lleva su
+ *     fecha de vencimiento; si no, `dueDate` va `null` — el plan es el mismo,
+ *     sólo falta cuándo.
+ *
  * Es GET y no POST porque no modifica nada. Se puede cachear con normalidad.
  */
 export async function GET(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
 
   const { searchParams } = new URL(req.url);
+
+  const systemParam = searchParams.get("system");
+  if (systemParam !== null && systemParam !== "" && !isAmortizationSystem(systemParam)) {
+    return NextResponse.json(
+      {
+        error:
+          "El sistema de amortización no es válido. Tiene que ser FRENCH, GERMAN, AMERICAN, INTEREST_ONLY o IMPORTED.",
+      },
+      { status: 400 },
+    );
+  }
+  const system = isAmortizationSystem(systemParam) ? systemParam : "FRENCH";
+
+  if (system === "IMPORTED") {
+    return NextResponse.json(
+      {
+        error:
+          "El sistema importado no tiene vista previa calculada: su cronograma se carga tal como lo dio el banco.",
+      },
+      { status: 400 },
+    );
+  }
 
   const principal = parseMoneyInput(searchParams.get("principal") ?? "");
   const tnaPercent = parseMoneyInput(searchParams.get("tnaPercent") ?? "");
@@ -57,15 +91,49 @@ export async function GET(req: Request) {
     );
   }
 
-  const summary = loanSummary(principal, tnaPercent, installmentCount);
+  const firstInstallmentDate = searchParams.get("firstInstallmentDate");
+  if (
+    firstInstallmentDate !== null &&
+    firstInstallmentDate !== "" &&
+    !isCalendarDate(firstInstallmentDate)
+  ) {
+    return NextResponse.json(
+      { error: "La fecha de la primera cuota no es una fecha válida." },
+      { status: 400 },
+    );
+  }
+  const dueDates =
+    firstInstallmentDate && isCalendarDate(firstInstallmentDate)
+      ? dueDateSeries(firstInstallmentDate, installmentCount)
+      : null;
+
+  // Las fórmulas puras tiran `Error` con mensajes para la persona (p. ej. el
+  // americano con tasa 0 en más de una cuota): son datos del pedido, un 400.
+  let summary: ReturnType<typeof loanSummaryFor>;
+  try {
+    summary = loanSummaryFor({ system, principal, tnaPercent, installmentCount });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "El plan de pagos no se pudo calcular con esos datos.",
+      },
+      { status: 400 },
+    );
+  }
 
   return NextResponse.json({
+    system,
     payment: summary.payment.toFixed(2),
     totalPaid: summary.totalPaid.toFixed(2),
     totalInterest: summary.totalInterest.toFixed(2),
+    totalPrincipal: summary.totalPrincipal.toFixed(2),
     interestSharePercent: summary.interestSharePercent.toFixed(2),
-    schedule: summary.schedule.map((installment) => ({
+    schedule: summary.schedule.map((installment, index) => ({
       number: installment.number,
+      dueDate: dueDates ? dueDates[index] : null,
       payment: installment.payment.toFixed(2),
       interest: installment.interest.toFixed(2),
       principal: installment.principal.toFixed(2),

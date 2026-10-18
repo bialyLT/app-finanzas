@@ -6,11 +6,11 @@ Documento de traspaso para continuar el trabajo desde otro agente o desde otra m
 
 App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Next.js 16 (App Router), Prisma y PostgreSQL. La regla central del modelo: **la plata que se mueve entre bolsillos propios no es ingreso ni gasto**. De esa regla salen los tres tipos de movimiento (`INCOME`, `EXPENSE`, `TRANSFER`) y el tratamiento de préstamos y tarjetas como cuentas de pasivo.
 
-## Estado verificado (2026-10-17)
+## Estado verificado (2026-10-18)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: **267 tests** de vitest (8 archivos, unitarios + integración), **431 aserciones** de smoke, **582 checks** de la batería adversarial server-side (`scripts/tester-fase5/`, ronda 1), **21 flows** de Maestro (suite completa en 47m 30s), build de producción limpio con `/tarjetas`. (Anotado: una corrida de `npm test` salió flaky bajo presión de RAM al cerrar la ronda 2 — 2 fallos no reproducidos en 5 corridas posteriores.)
-- Fases 0, 1, 2, 3, 5 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3 y la 5 en dos rondas cada una, núcleo server-side + UI; la 5 cerró el 2026-10-18 con la suite en 21/21); fases 4, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
+- Batería verde: **314 tests** de vitest (9 archivos, unitarios + integración), **578 aserciones** de smoke, **582 checks** de la batería adversarial de la Fase 5 (`scripts/tester-fase5/`) y **989 checks** de la Fase 4 (`scripts/tester-fase4/`), **21 flows** de Maestro (suite completa en 47m 30s; re-corrida en cada gate), build de producción limpio (28 páginas).
+- Fases 0, 1, 2, 3, 5 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3 y la 5 en dos rondas cada una, núcleo server-side + UI; la 5 cerró el 2026-10-18 con la suite en 21/21). **La 4 tiene la ronda 1 cerrada** (núcleo server-side de deudas y préstamos, 2026-10-18, batería de 989 checks) y la ronda 2 (UI) pendiente; fases 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
@@ -47,9 +47,10 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 267 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 431 aserciones end-to-end (servidor arriba)
-node scripts/tester-fase5/NN-*.mjs  # 582 checks adversariales server-side (ronda 1 de la Fase 5; servidor arriba)
+npm test                  # 314 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 578 aserciones end-to-end (servidor arriba)
+node scripts/tester-fase4/NN-*.mjs  # 989 checks adversariales server-side (Fase 4; servidor arriba)
+node scripts/tester-fase5/NN-*.mjs  # 582 checks adversariales server-side (Fase 5; servidor arriba)
 npm run flows             # 21 flows de Maestro: siembra la base y corre; ~47m
 ```
 
@@ -64,9 +65,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 5 (tarjetas y cuotas) — completa (rondas 1 y 2).** El 2026-10-17 cerró el núcleo: `closingDay`/`dueDay`/`creditLimit` en las cuentas `CREDIT_CARD`, `CardPlan`/`CardPlanItem`/`Statement` (12 CHECKs, migración `20261017233037_tarjetas_y_cuotas`), dominio `lib/cards.ts` + servicio `lib/card-service.ts`, 5 rutas nuevas (`/api/cards`, `statements`, `statements/pay`, `plans`, `plans/preview`): resúmenes idempotentes (impago recalcula / pagado congela), pago = TRANSFER con claim atómico, compromisos 6/12 meses, preview con TEA implícita (21,83%). La ronda del tester dejó la batería durable **582 checks** (`scripts/tester-fase5/`) y arregló 4 bugs (B1/B2 de semántica de dominio; F2/F3 de pre-vuelo — las dos clases nuevas quedaron abstraídas en `agents/dev.md`). Cierre: typecheck 0 · 262/262 · 431/431 · build 24 rutas. **La ronda 2 (UI) cerró el 2026-10-18:** pantalla `/tarjetas` (config del par cierre/vencimiento y el límite, período en curso, resumen con pago en dos pasos, cuotas y compromisos 6/12), modal de compra en cuotas con TEA implícita, alta de tarjeta desde el formulario de cuentas y borrado de movimientos en línea. Suite **21/21 en 47m 30s**; 1 bug de app arreglado (`window.confirm` tumbaba al driver — trampa 16) y 2 del arnés (orden de flows; fecha fija). Diferidos: reabrir un resumen pagado, rubros del resumen, planes `IMPORTED` de tarjeta y pago parcial de resumen.
+**Fase 4 (deudas y préstamos) — ronda 1 cerrada; sigue la ronda 2 (UI).** El 2026-10-18 cerró el núcleo server-side: tabla `Installment` + los 5 sistemas de amortización (francés, alemán, americano, solo interés, importado), dirección derivada (`OWED_TO_ME` + `RECEIVABLE` como activo), `GET /api/loans` (vista + compromisos 6/12 aditivos), `POST /api/loans/pay` (cuota / capital extra / cancelación anticipada, idempotentes con lock + cobertura-prefijo), preview extendido y alta de préstamos en `POST /api/accounts` (incluido el importado estricto). La ronda del tester dejó **989 checks** durables (`scripts/tester-fase4/`) y arregló **5 bugs** con repro que falla primero (B1/B2 de semántica derivada; H1-H3 de la clase hostil ya listada). Cierre: typecheck 0 · 314/314 · 578/578 · build 28 páginas. **La ronda 2 es la UI**: alta guiada (recibí/presté), desembolso como paso explícito, progreso de deuda y "Compromisos próximos" en pantalla — con sus flows de Maestro.
 
-La Fase 3 (recurrencia) quedó completa antes, en dos rondas (ronda 1 `2aa08c4`; ronda 2 `9fd6271`, suite 16/16 en 33m 18s). Sigue la **Fase 4 (deudas y préstamos) en dos rondas**: ronda 1 server-side en curso (`Installment` + sistemas de amortización alemán/americano/solo interés/importado, `OWED_TO_ME`+`RECEIVABLE`, pago parcial y cancelación anticipada, datos de "Compromisos próximos") y ronda 2 la UI guiada con el progreso de deuda. Después: lo que quede de la Fase 7 y la Fase 9 (endurecimiento) para producción.
+La Fase 3 (recurrencia) quedó completa antes, en dos rondas (ronda 1 `2aa08c4`; ronda 2 `9fd6271`, suite 16/16 en 33m 18s), y la Fase 5 (tarjetas y cuotas) cerró el 2026-10-18 en dos rondas (núcleo server-side con batería de 582 checks; UI con suite 21/21 en 47m 30s). Después de la ronda 2 de la Fase 4: lo que quede de la **Fase 7 (carga rápida)** y la Fase 9 (endurecimiento) para producción.
 
 ## Bloqueos que necesitan a la persona
 

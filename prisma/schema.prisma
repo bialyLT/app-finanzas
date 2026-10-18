@@ -96,8 +96,20 @@ datasource db {
 // Enums
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Tipo de cuenta. Los dos primeros son ACTIVOS (plata tuya); los dos últimos
-/// son PASIVOS (plata que debés).
+/// Tipo de cuenta.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// PASIVO vs ACTIVO ES LA DISTINCIÓN QUE MANDA
+/// ─────────────────────────────────────────────────────────────────────────────
+///   · CASH / BANK / RECEIVABLE → ACTIVOS (plata tuya, o plata que te deben).
+///   · CREDIT_CARD / LOAN       → PASIVOS (plata que debés).
+///
+/// `RECEIVABLE` (Fase 4) es el espejo de `LOAN`: un préstamo que VOS diste. Su
+/// saldo es POSITIVO (lo que te deben) y suma al patrimonio como activo — jamás
+/// cae del lado de las deudas (`isLiability` sólo mira LOAN y CREDIT_CARD). La
+/// dirección de un préstamo se DERIVA de acá (`loanDirectionOf` en lib/loans.ts):
+/// `LOAN` = I_OWE, `RECEIVABLE` = OWED_TO_ME. No hay un campo aparte que pueda
+/// contradecir al kind.
 enum AccountKind {
   /// Efectivo, billetera, caja de ahorro en pesos.
   CASH
@@ -105,8 +117,29 @@ enum AccountKind {
   BANK
   /// Tarjeta de crédito. Es una cuenta de deuda, no un medio de pago mágico.
   CREDIT_CARD
-  /// Préstamo, crédito, financiación en cuotas.
+  /// Préstamo, crédito, financiación en cuotas. Vos debés.
   LOAN
+  /// Préstamo que DISTE: te deben. Es un ACTIVO, no una deuda.
+  RECEIVABLE
+}
+
+/// Sistema de amortización: cómo se devuelve el capital de un préstamo.
+///
+/// Los cinco viven en `lib/loans.ts` con sus fórmulas y su documentación. La
+/// columna que usa este enum admite NULL en las cuentas creadas antes de la
+/// Fase 4, y `NULL` se LEE como FRENCH (era el único sistema que existía):
+/// `systemOf()` hace esa traducción en un solo lugar.
+enum AmortizationSystem {
+  /// Cuota constante: pagás lo mismo todos los meses (los bancos argentinos).
+  FRENCH
+  /// Capital constante: cada cuota amortiza lo mismo y el pago baja mes a mes.
+  GERMAN
+  /// Interés periódico y todo el capital en la última cuota (bullet).
+  AMERICAN
+  /// Rotativo: sólo interés, el capital no se amortiza por contrato.
+  INTEREST_ONLY
+  /// El cronograma lo dicta un documento externo: se valida, no se recalcula.
+  IMPORTED
 }
 
 /// Tipo de movimiento. Ver la explicación de arriba.
@@ -204,9 +237,9 @@ model Account {
   /// debés (en negativo).
   openingBalance Decimal @default(0) @db.Decimal(18, 2)
 
-  // ── Parámetros del préstamo. Sólo se usan si kind = LOAN ──────────────────
+  // ── Parámetros del préstamo. Sólo se usan si kind = LOAN o RECEIVABLE ────
 
-  /// Monto original que te prestaron.
+  /// Monto original que te prestaron (LOAN) o que prestaste (RECEIVABLE).
   principal Decimal? @db.Decimal(18, 2)
 
   /// Tasa Nominal Anual en PORCENTAJE (60 significa 60% TNA, no 0,60).
@@ -218,8 +251,15 @@ model Account {
   /// Cuántas cuotas pactaste en total.
   installmentCount Int?
 
-  /// Fecha de la primera cuota. Las siguientes se calculan sumando meses.
+  /// Fecha de la primera cuota. Las siguientes se calculan sumando meses
+  /// (con clamp de fin de mes contra esta ANCLA: 31 de enero → 28 de febrero →
+  /// 31 de marzo, como la recurrencia y las tarjetas).
   firstInstallmentDate DateTime? @db.Date
+
+  /// Sistema con el que se devuelve el capital. NULL = cuenta anterior a la
+  /// Fase 4; se lee como FRENCH (`systemOf`). Obligatoria de hecho para el
+  /// sistema IMPORTED, que no tiene tasa de la que derivar el cronograma.
+  amortizationSystem AmortizationSystem?
 
   // ── Parámetros de la tarjeta. Sólo se usan si kind = CREDIT_CARD ──────────
 
@@ -280,6 +320,9 @@ model Account {
 
   /// Resúmenes de esta tarjeta (sólo si kind = CREDIT_CARD).
   statements Statement[] @relation("CardStatements")
+
+  /// El cronograma materializado del préstamo (sólo LOAN o RECEIVABLE).
+  installments Installment[] @relation("LoanInstallments")
 
   /// El nombre tiene que ser único: dos cuentas llamadas "Efectivo" harían
   /// que el usuario no sepa cuál está eligiendo.
@@ -764,5 +807,87 @@ model Statement {
 
   /// Un resumen por tarjeta y período. Es lo que hace idempotente la corrida.
   @@unique([accountId, periodYear, periodMonth])
+  @@index([accountId, dueDate])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PRÉSTAMOS — FASE 4
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// El préstamo NO tiene tabla propia: sus parámetros (capital, tasa, cuotas,
+// primera fecha y sistema) viven en la cuenta, y el SALDO DE LA CUENTA ES LA
+// DEUDA VIVA (decisión del rediseño, no negociable). Lo que agrega esta fase
+// es una sola tabla nueva —`Installment`— con el CONTRATO materializado:
+// cuánto vence, cuándo y cómo se descompone, cuota por cuota.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTRATO vs PROYECCIÓN (la decisión que ordena todo)
+// ─────────────────────────────────────────────────────────────────────────────
+// El cronograma es un DOCUMENTO: lo que se pactó. Una vez escrito no se
+// recalcula ni se reescribe — si se recalculara con cada pago extra, la cuota 3
+// que ya pagaste "cambiaría" y el contrato tendría dos versiones incompatibles.
+//
+// El avance NO vive acá: se deriva de los movimientos reales (Σ transferencias
+// que entraron al préstamo, definición de la Fase 6) y se mide CONTRA el
+// cronograma (`installmentsCoveredBy`). Por eso no hay columna `paid`: el
+// estado "pagada" no es un dato que se guarda y puede quedar viejo, es una
+// consecuencia de la plata que consta.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// EXISTE PARA RESPONDER "¿QUÉ CUOTAS TENGO COMPROMETIDAS?"
+// ─────────────────────────────────────────────────────────────────────────────
+// Sin esta tabla, esa pregunta obliga a recalcular cada cronograma al vuelo
+// —y peor: obliga a que cada consumidor lo recalcule igual, con las mismas
+// reglas—. Materializado, el compromiso es una consulta: las cuotas impagas
+// del mes que viene. El calendario se fija UNA vez, en el alta.
+//
+// `onDelete: Cascade` en la cuenta: el cronograma es una derivación del
+// contrato, no historia. Borrar una cuenta sin movimientos (lo único que la
+// app permite borrar) se lleva su cronograma; un movimiento jamás se borra en
+// cascada (Restrict), así que el historial no corre riesgo.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Una cuota del contrato de un préstamo: cuándo vence y cómo se descompone.
+model Installment {
+  id String @id @default(cuid())
+
+  /// La cuenta del préstamo (LOAN o RECEIVABLE). `Cascade`: ver arriba.
+  accountId String
+  account   Account @relation("LoanInstallments", fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// Número de cuota, 1..N. Único dentro de la cuenta (CHECK + índice).
+  number Int
+
+  /// Fecha de vencimiento: calendario puro (`@db.Date`), sin hora ni zona.
+  /// Se fija al materializar (serie mensual con clamp en los calculados; la
+  /// fecha declarada en los importados) y no se vuelve a calcular.
+  dueDate DateTime @db.Date
+
+  /// Lo que se paga esa cuota. `payment = interest + principal`, exacto: hay
+  /// un CHECK que lo exige — descomponer la cuota es el punto de todo el
+  /// modelo (sin eso, la cuota entera volvería a contarse como gasto).
+  payment Decimal @db.Decimal(18, 2)
+
+  /// La parte que es COSTO REAL. Gasto si el préstamo es tuyo (LOAN), ingreso
+  /// si lo diste (RECEIVABLE). Puede ser 0 (alemán/francés con tasa 0, y las
+  /// cuotas intermedias del americano y del rotativo por su capital).
+  interest Decimal @db.Decimal(18, 2)
+
+  /// La parte que AMORTIZA DEUDA. Transferencia, nunca gasto ni ingreso.
+  /// Puede ser 0 (americano y solo interés: el capital va al final o nunca).
+  principal Decimal @db.Decimal(18, 2)
+
+  /// El saldo del contrato después de esta cuota. No es la deuda viva —esa es
+  /// el saldo de la cuenta— sino lo que el cronograma declara: cierra en 0 en
+  /// los cuatro sistemas que amortizan, y queda en el capital original en un
+  /// rotativo (la única excepción, documentada en `lib/loans.ts`).
+  remainingBalance Decimal @db.Decimal(18, 2)
+
+  createdAt DateTime @default(now())
+
+  /// Una cuota por número y préstamo. Es la mitad de la garantía de
+  /// idempotencia: re-materializar un cronograma no puede duplicar filas.
+  @@unique([accountId, number])
+  /// La consulta de compromisos: las cuotas de un préstamo por fecha.
   @@index([accountId, dueDate])
 }

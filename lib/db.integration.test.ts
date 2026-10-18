@@ -27,7 +27,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { addDays, calendarToDb } from "./dates";
+import { addDays, calendarToDb, dbToCalendar } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule, money } from "./money";
 import { getAccountBalances, getNetWorth } from "./balance";
@@ -47,6 +47,13 @@ import {
   runDueOccurrences,
   skipOccurrence,
 } from "./recurring";
+import {
+  createLoanAccount,
+  ensureLoanInstallments,
+  getLoansView,
+  payLoanInstallment,
+} from "./loan-service";
+import { dueDateSeries, loanScheduleFor } from "./loans";
 import {
   categoriesInPeriod,
   getDebtReport,
@@ -87,6 +94,10 @@ async function resetDatabase() {
   await db.statement.deleteMany();
   await db.cardPlan.deleteMany();
   await db.recurrenceOccurrence.deleteMany();
+  // El cronograma de un préstamo cuelga de su cuenta con Cascade —borrar la
+  // cuenta lo arrastraría—, pero se borra explícito: el orden tiene que leerse
+  // de arriba a abajo sin conocer las reglas de cada FK.
+  await db.installment.deleteMany();
   await db.movement.deleteMany();
   await db.recurrenceRule.deleteMany();
   await db.category.deleteMany();
@@ -3884,5 +3895,926 @@ describeDb("Tarjetas · compras en cuotas, resúmenes y pago", () => {
     expect(corrida.skipped[0].cardId).toBe(sinCierre.id);
     expect(corrida.skipped[0].reason).toMatch(/cierre/);
     expect(corrida.skipped[0].cardName).toBe("Visa sin cierre");
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * PRÉSTAMOS (FASE 4): CRONOGRAMA, PAGO Y VISTA
+ * ════════════════════════════════════════════════════════════════════════════
+ * El contrato de un préstamo es su cronograma MATERIALIZADO. Estos tests
+ * verifican, contra la base real: que el alta lo escriba completo y en la misma
+ * transacción, que el pago lo respete (cobertura por capital, no por
+ * calendario), que la cancelación pague lo que queda sin interés, que un
+ * préstamo dado (RECEIVABLE) sea un ACTIVO y no entre al reporte de deudas, y
+ * que la base se niegue a guardar cuotas imposibles.
+ */
+describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
+  const TODAY = "2026-11-30";
+  const FIRST = "2026-11-15";
+
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  /** El escenario mínimo: banco con 100.000 y préstamo francés de 500.000. */
+  async function seedFrenchLoan() {
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+    const loan = await createLoanAccount(db, {
+      name: "Préstamo",
+      kind: "LOAN",
+      openingBalance: "0",
+      system: "FRENCH",
+      principal: money("500000"),
+      tnaPercent: money("60"),
+      installmentCount: 12,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "500000",
+        date: calendarToDb("2026-09-30"),
+        accountId: loan.id,
+        toAccountId: bank.id,
+        description: "Desembolso del préstamo",
+      },
+    });
+
+    return { bank, loan };
+  }
+
+  it("el alta materializa el cronograma completo, con sus fechas de vencimiento", async () => {
+    const loan = await createLoanAccount(db, {
+      name: "Préstamo",
+      kind: "LOAN",
+      openingBalance: "0",
+      system: "FRENCH",
+      principal: money("500000"),
+      tnaPercent: money("60"),
+      installmentCount: 12,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    expect(loan.amortizationSystem).toBe("FRENCH");
+    expect(loan.installmentCount).toBe(12);
+    expect(dbToCalendar(loan.firstInstallmentDate as Date)).toBe(FIRST);
+
+    const rows = await db.installment.findMany({
+      where: { accountId: loan.id },
+      orderBy: { number: "asc" },
+    });
+    expect(rows).toHaveLength(12);
+
+    // El documento guardado es, cuota por cuota, el cronograma puro — con las
+    // fechas de la serie mensual, que en los sistemas calculados viene de
+    // `dueDateSeries`.
+    const schedule = loanScheduleFor({
+      system: "FRENCH",
+      principal: "500000",
+      tnaPercent: "60",
+      installmentCount: 12,
+    });
+    const dueDates = dueDateSeries(FIRST, 12);
+    expect(
+      rows.map((row) => ({
+        number: row.number,
+        payment: row.payment.toFixed(2),
+        interest: row.interest.toFixed(2),
+        principal: row.principal.toFixed(2),
+        remainingBalance: row.remainingBalance.toFixed(2),
+        dueDate: dbToCalendar(row.dueDate),
+      })),
+    ).toEqual(
+      schedule.map((item, index) => ({
+        number: item.number,
+        payment: item.payment.toFixed(2),
+        interest: item.interest.toFixed(2),
+        principal: item.principal.toFixed(2),
+        remainingBalance: item.remainingBalance.toFixed(2),
+        dueDate: dueDates[index],
+      })),
+    );
+
+    // La cuota del §3.2, clavada a mano además del cruce con la función pura.
+    expect(rows[0].payment.toFixed(2)).toBe("56412.71");
+    expect(rows[0].remainingBalance.toFixed(2)).toBe("468587.29");
+    expect(rows[11].remainingBalance.toFixed(2)).toBe("0.00");
+  });
+
+  it("el alta importada guarda el cronograma del banco tal cual y exige coherencia", async () => {
+    const loan = await createLoanAccount(db, {
+      name: "Préstamo importado",
+      kind: "LOAN",
+      openingBalance: "0",
+      system: "IMPORTED",
+      principal: money("47500"),
+      tnaPercent: null,
+      installmentCount: null,
+      firstInstallmentDate: null,
+      imported: [
+        { dueDate: "2026-11-15", payment: money("30000"), interest: money("5000") },
+        { dueDate: "2026-12-15", payment: money("25000"), interest: money("2500") },
+      ],
+    });
+
+    expect(loan.amortizationSystem).toBe("IMPORTED");
+    // El largo y la primera fecha del contrato se DERIVAN del documento.
+    expect(loan.installmentCount).toBe(2);
+    expect(dbToCalendar(loan.firstInstallmentDate as Date)).toBe("2026-11-15");
+
+    const rows = await db.installment.findMany({
+      where: { accountId: loan.id },
+      orderBy: { number: "asc" },
+    });
+    expect(
+      rows.map((row) => ({
+        number: row.number,
+        dueDate: dbToCalendar(row.dueDate),
+        payment: row.payment.toFixed(2),
+        interest: row.interest.toFixed(2),
+        principal: row.principal.toFixed(2),
+        remainingBalance: row.remainingBalance.toFixed(2),
+      })),
+    ).toEqual([
+      {
+        number: 1,
+        dueDate: "2026-11-15",
+        payment: "30000.00",
+        interest: "5000.00",
+        principal: "25000.00",
+        remainingBalance: "22500.00",
+      },
+      {
+        number: 2,
+        dueDate: "2026-12-15",
+        payment: "25000.00",
+        interest: "2500.00",
+        principal: "22500.00",
+        remainingBalance: "0.00",
+      },
+    ]);
+
+    // Σ capital ≠ monto: el cronograma describe otro préstamo → 400 con palabras.
+    await expect(
+      createLoanAccount(db, {
+        name: "Importado roto",
+        kind: "LOAN",
+        openingBalance: "0",
+        system: "IMPORTED",
+        principal: money("100000"),
+        tnaPercent: null,
+        installmentCount: null,
+        firstInstallmentDate: null,
+        imported: [
+          { dueDate: "2026-11-15", payment: money("30000"), interest: money("5000") },
+        ],
+      }),
+    ).rejects.toThrow(/no coincide/);
+
+    // Fechas que no crecen: dos cuotas el mismo día no existen.
+    await expect(
+      createLoanAccount(db, {
+        name: "Importado desordenado",
+        kind: "LOAN",
+        openingBalance: "0",
+        system: "IMPORTED",
+        principal: money("47500"),
+        tnaPercent: null,
+        installmentCount: null,
+        firstInstallmentDate: null,
+        imported: [
+          { dueDate: "2026-11-15", payment: money("30000"), interest: money("5000") },
+          { dueDate: "2026-11-15", payment: money("25000"), interest: money("2500") },
+        ],
+      }),
+    ).rejects.toThrow(/estrictamente crecientes/);
+
+    // Los dos rechazos son de VALIDACIÓN: no quedó ninguna cuenta a medias.
+    expect(await db.account.count()).toBe(1);
+    expect(await db.installment.count()).toBe(2);
+  });
+
+  it("la vista deriva la cobertura del capital real y arma los compromisos", async () => {
+    const { bank, loan } = await seedFrenchLoan();
+    const schedule = loanScheduleFor({
+      system: "FRENCH",
+      principal: "500000",
+      tnaPercent: "60",
+      installmentCount: 12,
+    });
+
+    // La cuota 1, pagada el día de su vencimiento.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: schedule[0].principal.toFixed(2),
+        date: calendarToDb("2026-11-15"),
+        accountId: bank.id,
+        toAccountId: loan.id,
+        description: "Cuota 1 · capital",
+      },
+    });
+
+    const { loans } = await getLoansView(db, { today: TODAY });
+    expect(loans).toHaveLength(1);
+
+    const view = loans[0];
+    expect(view.kind).toBe("LOAN");
+    expect(view.direction).toBe("I_OWE");
+    expect(view.system).toBe("FRENCH");
+    expect(view.debt).toBe("468587.29");
+    expect(view.receivable).toBeNull();
+    expect(view.plan).toEqual({
+      payment: "56412.71",
+      principal: "500000.00",
+      installmentCount: 12,
+      paidCount: 1,
+      remainingCount: 11,
+    });
+    expect(view.capitalPaid).toBe("31412.71");
+    expect(view.interestPaid).toBe("25000.00");
+    expect(view.progressPercent).toBe("6.28");
+    expect(view.nextInstallment?.number).toBe(2);
+    expect(view.nextInstallment?.dueDate).toBe("2026-12-15");
+    expect(view.installments).toHaveLength(12);
+    expect(view.installments[0].covered).toBe(true);
+    expect(view.installments[1].covered).toBe(false);
+
+    // Compromisos: la ventana arranca en el mes de `today` (noviembre) y las 11
+    // cuotas impagas caen dentro de los 12 meses — la 1 ya está cubierta.
+    expect(view.commitments?.months).toHaveLength(12);
+    expect(view.commitments?.months[0]).toMatchObject({
+      year: 2026,
+      month: 11,
+      amount: "0.00",
+    });
+    expect(view.commitments?.months[1]).toMatchObject({
+      year: 2026,
+      month: 12,
+      amount: "56412.71",
+    });
+    expect(view.commitments?.next6Months).toBe("282063.55");
+    // 11 cuotas × 56.412,71 menos los 8 centavos que ajusta la última al cerrar
+    // el capital: el compromiso suma los PAGOS reales del cronograma (la 12.ª
+    // es de 56.412,63), no una cuota redonda hipotética.
+    expect(view.commitments?.next12Months).toBe("620539.73");
+    expect(view.commitments?.overdue).toBe("0.00");
+    expect(view.commitments?.overdueCount).toBe(0);
+  });
+
+  it("pagar la cuota parte el pago: transferencia por capital y gasto por interés", async () => {
+    const { bank, loan } = await seedFrenchLoan();
+    const schedule = loanScheduleFor({
+      system: "FRENCH",
+      principal: "500000",
+      tnaPercent: "60",
+      installmentCount: 12,
+    });
+
+    const first = schedule[0];
+    const result = await payLoanInstallment(
+      db,
+      {
+        accountId: loan.id,
+        cashAccountId: bank.id,
+        date: "2026-11-15",
+        installmentNumber: 1,
+        extraCapital: null,
+        cancel: false,
+        categoryName: null,
+      },
+      { today: TODAY },
+    );
+
+    expect(result.created).toBe(true);
+    expect(result.cancelled).toBe(false);
+    expect(result.installment?.number).toBe(1);
+    expect(result.installment?.covered).toBe(true);
+    expect(result.principalPaid).toBe(first.principal.toFixed(2));
+    expect(result.interestPaid).toBe(first.interest.toFixed(2));
+
+    // Las dos patas, en el orden del contrato: el capital es una transferencia
+    // (no un gasto) y el interés es el único gasto.
+    expect(result.movements).toHaveLength(2);
+    expect(result.movements[0]).toMatchObject({
+      kind: "TRANSFER",
+      amount: first.principal.toFixed(2),
+      description: "Cuota 1 · capital",
+    });
+    expect(result.movements[0].account.id).toBe(bank.id);
+    expect(result.movements[0].toAccount?.id).toBe(loan.id);
+    expect(result.movements[1]).toMatchObject({
+      kind: "EXPENSE",
+      amount: first.interest.toFixed(2),
+      description: "Cuota 1 · interés",
+    });
+    expect(result.movements[1].category?.name).toBe("Intereses");
+
+    // La vista posterior: cubierta 1, próxima la 2.
+    expect(result.loan.plan?.paidCount).toBe(1);
+    expect(result.loan.nextInstallment?.number).toBe(2);
+
+    // La plata: el banco pagó capital + interés; el préstamo bajó el capital.
+    const balances = await getAccountBalances(db);
+    const bankBalance = balances.find((item) => item.id === bank.id);
+    const loanBalance = balances.find((item) => item.id === loan.id);
+    expect(bankBalance?.balance.toFixed(2)).toBe("543587.29");
+    expect(loanBalance?.balance.toFixed(2)).toBe("-468587.29");
+    expect(loanBalance?.debt?.toFixed(2)).toBe("468587.29");
+
+    // ── El doble toque: la MISMA cuota otra vez — created: false, nada escrito.
+    const again = await payLoanInstallment(
+      db,
+      {
+        accountId: loan.id,
+        cashAccountId: bank.id,
+        date: "2026-11-15",
+        installmentNumber: 1,
+        extraCapital: null,
+        cancel: false,
+        categoryName: null,
+      },
+      { today: TODAY },
+    );
+    expect(again.created).toBe(false);
+    expect(again.movements).toEqual([]);
+    expect(again.principalPaid).toBeNull();
+    expect(
+      await db.movement.count({
+        where: { OR: [{ accountId: loan.id }, { toAccountId: loan.id }] },
+      }),
+    ).toBe(2); // desembolso + capital de la cuota 1
+
+    // ── Las cuotas se pagan en orden: saltar a la 3 con la 2 pendiente es 400.
+    await expect(
+      payLoanInstallment(
+        db,
+        {
+          accountId: loan.id,
+          cashAccountId: bank.id,
+          date: "2026-12-01",
+          installmentNumber: 3,
+          extraCapital: null,
+          cancel: false,
+          categoryName: null,
+        },
+        { today: TODAY },
+      ),
+    ).rejects.toThrow(/en orden/);
+
+    // ── Omitir el número paga la próxima impaga (la 2).
+    const second = await payLoanInstallment(
+      db,
+      {
+        accountId: loan.id,
+        cashAccountId: bank.id,
+        date: "2026-12-15",
+        installmentNumber: null,
+        extraCapital: null,
+        cancel: false,
+        categoryName: null,
+      },
+      { today: TODAY },
+    );
+    expect(second.created).toBe(true);
+    expect(second.installment?.number).toBe(2);
+    expect(second.principalPaid).toBe(schedule[1].principal.toFixed(2));
+
+    // ── Pagar de más del saldo que queda es 400 (y no escribe nada).
+    const movementsBefore = await db.movement.count();
+    await expect(
+      payLoanInstallment(
+        db,
+        {
+          accountId: loan.id,
+          cashAccountId: bank.id,
+          date: "2027-01-15",
+          installmentNumber: 3,
+          extraCapital: money("999999"),
+          cancel: false,
+          categoryName: null,
+        },
+        { today: TODAY },
+      ),
+    ).rejects.toThrow(/supera el saldo/);
+    expect(await db.movement.count()).toBe(movementsBefore);
+  });
+
+  it("el capital extra amortiza de más y la cancelación paga el resto sin interés", async () => {
+    const { bank, loan } = await seedFrenchLoan();
+    const schedule = loanScheduleFor({
+      system: "FRENCH",
+      principal: "500000",
+      tnaPercent: "60",
+      installmentCount: 12,
+    });
+
+    // Cuota 1 + 50.000 de capital extra: el extra baja la deuda, no adelanta
+    // el interés (el cronograma es el contrato y no se recalcula).
+    const conExtra = await payLoanInstallment(
+      db,
+      {
+        accountId: loan.id,
+        cashAccountId: bank.id,
+        date: "2026-11-15",
+        installmentNumber: 1,
+        extraCapital: money("50000"),
+        cancel: false,
+        categoryName: null,
+      },
+      { today: TODAY },
+    );
+
+    expect(conExtra.created).toBe(true);
+    expect(conExtra.principalPaid).toBe(
+      schedule[0].principal.plus("50000").toFixed(2),
+    );
+    // El capital pagado cubre la 1 y la 2: la 3 sigue pendiente.
+    expect(conExtra.loan.capitalPaid).toBe("81412.71");
+    expect(conExtra.loan.plan?.paidCount).toBe(2);
+    expect(conExtra.loan.nextInstallment?.number).toBe(3);
+
+    // ── Cancelación anticipada: todo el capital que queda, SIN interés. La
+    // vista se evalúa EL DÍA DEL PAGO (12-01): un pago fechado el 12-01 no
+    // cuenta en un `today` del 11-30 — y con el mismo `today` que el pago, el
+    // doble toque de más abajo sigue siendo idempotente.
+    const remaining = money("500000").minus("81412.71");
+    const cancelacion = await payLoanInstallment(
+      db,
+      {
+        accountId: loan.id,
+        cashAccountId: bank.id,
+        date: "2026-12-01",
+        installmentNumber: null,
+        extraCapital: null,
+        cancel: true,
+        categoryName: null,
+      },
+      { today: "2026-12-01" },
+    );
+
+    expect(cancelacion.created).toBe(true);
+    expect(cancelacion.cancelled).toBe(true);
+    expect(cancelacion.principalPaid).toBe(remaining.toFixed(2));
+    expect(cancelacion.interestPaid).toBeNull();
+    expect(cancelacion.movements).toHaveLength(1);
+    expect(cancelacion.movements[0]).toMatchObject({
+      kind: "TRANSFER",
+      amount: remaining.toFixed(2),
+      description: "Cancelación anticipada · capital",
+    });
+
+    // La vista final: capital completo, ninguna cuota pendiente y el interés
+    // pagado con la semántica de la Fase 6 (Σ interés de las cuotas cubiertas).
+    expect(cancelacion.loan.capitalPaid).toBe("500000.00");
+    expect(cancelacion.loan.plan?.paidCount).toBe(12);
+    expect(cancelacion.loan.plan?.remainingCount).toBe(0);
+    expect(cancelacion.loan.nextInstallment).toBeNull();
+    expect(cancelacion.loan.interestPaid).toBe("176952.44");
+    expect(cancelacion.loan.progressPercent).toBe("100.00");
+    expect(cancelacion.loan.debt).toBe("0.00");
+
+    // Cancelar otra vez no paga dos veces.
+    const cancelAgain = await payLoanInstallment(
+      db,
+      {
+        accountId: loan.id,
+        cashAccountId: bank.id,
+        date: "2026-12-01",
+        installmentNumber: null,
+        extraCapital: null,
+        cancel: true,
+        categoryName: null,
+      },
+      { today: "2026-12-01" },
+    );
+    expect(cancelAgain.created).toBe(false);
+    expect(cancelAgain.cancelled).toBe(false);
+
+    // Cancelar JUNTO con una cuota o con extra no existe: es una cosa o la otra.
+    await expect(
+      payLoanInstallment(
+        db,
+        {
+          accountId: loan.id,
+          cashAccountId: bank.id,
+          date: "2026-12-01",
+          installmentNumber: 1,
+          extraCapital: null,
+          cancel: true,
+          categoryName: null,
+        },
+        { today: TODAY },
+      ),
+    ).rejects.toThrow(/no se combina/);
+  });
+
+  it("un préstamo dado (RECEIVABLE) cobra al revés y NO es deuda", async () => {
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+    });
+    const receivable = await createLoanAccount(db, {
+      name: "Préstamo a Marce",
+      kind: "RECEIVABLE",
+      openingBalance: "0",
+      system: "FRENCH",
+      principal: money("100000"),
+      tnaPercent: money("60"),
+      installmentCount: 6,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    const rows = await db.installment.findMany({
+      where: { accountId: receivable.id },
+      orderBy: { number: "asc" },
+    });
+
+    // El desembolso: la plata SALE del banco y entra a la cuenta por cobrar
+    // (me deben). No es un gasto: el patrimonio no cambia.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "100000",
+        date: calendarToDb("2026-10-05"),
+        accountId: bank.id,
+        toAccountId: receivable.id,
+        description: "Le presté a Marce",
+      },
+    });
+
+    const hastaOctubre = await getAccountBalances(db, { asOf: "2026-10-31" });
+    const receivableBalance = hastaOctubre.find((item) => item.id === receivable.id);
+    expect(receivableBalance?.balance.toFixed(2)).toBe("100000.00");
+    expect(receivableBalance?.isLiability).toBe(false);
+    expect(receivableBalance?.debt).toBeNull();
+
+    // El reporte de deudas NO lo ve: es un activo, no una deuda.
+    const report = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+    expect(report.rows).toEqual([]);
+    expect(report.totalDebt).toBe("0.00");
+    expect(report.dti).toMatchObject({ monthlyCommitment: "0.00", planCount: 0 });
+
+    // El patrimonio tampoco cambia por prestar: el activo reemplaza a la plata.
+    const worth = await getNetWorth(db, { asOf: "2026-10-31" });
+    expect(worth.assets.toFixed(2)).toBe("100000.00");
+    expect(worth.liabilities.toFixed(2)).toBe("0.00");
+    expect(worth.net.toFixed(2)).toBe("100000.00");
+
+    // ── Cobrar la cuota 1: el capital vuelve (transferencia inversa) y el
+    // interés es un INGRESO real, pero entra al banco — NUNCA a la cuenta por
+    // cobrar (el trigger lo prohíbe aparte).
+    const first = rows[0];
+    const cobro = await payLoanInstallment(
+      db,
+      {
+        accountId: receivable.id,
+        cashAccountId: bank.id,
+        date: "2026-11-15",
+        installmentNumber: 1,
+        extraCapital: null,
+        cancel: false,
+        categoryName: null,
+      },
+      { today: TODAY },
+    );
+
+    expect(cobro.created).toBe(true);
+    expect(cobro.principalPaid).toBe(first.principal.toFixed(2));
+    expect(cobro.interestPaid).toBe(first.interest.toFixed(2));
+    expect(cobro.movements).toHaveLength(2);
+    expect(cobro.movements[0]).toMatchObject({
+      kind: "TRANSFER",
+      amount: first.principal.toFixed(2),
+    });
+    expect(cobro.movements[0].account.id).toBe(receivable.id);
+    expect(cobro.movements[0].toAccount?.id).toBe(bank.id);
+    expect(cobro.movements[1]).toMatchObject({
+      kind: "INCOME",
+      amount: first.interest.toFixed(2),
+    });
+    expect(cobro.movements[1].account.id).toBe(bank.id);
+
+    // La vista: dirección invertida, sin "deuda", con lo que te deben.
+    const { loans } = await getLoansView(db, { today: TODAY });
+    expect(loans).toHaveLength(1);
+    const view = loans[0];
+    expect(view.kind).toBe("RECEIVABLE");
+    expect(view.direction).toBe("OWED_TO_ME");
+    expect(view.debt).toBeNull();
+    expect(view.capitalPaid).toBe(first.principal.toFixed(2));
+    expect(view.plan?.paidCount).toBe(1);
+    expect(view.receivable).toBe(
+      money("100000").minus(first.principal).toFixed(2),
+    );
+
+    // Un INCOME directo a la cuenta por cobrar inflaría un activo sin plata.
+    // La categoría se pide con upsert: el cobro de la cuota ya la creó (misma
+    // normalización de nombre), y un create chocaría con su unicidad.
+    const categoria = await db.category.upsert({
+      where: { normalizedName: "intereses" },
+      update: {},
+      create: { name: "Intereses", normalizedName: "intereses", kind: "INCOME" },
+    });
+    await expect(
+      db.movement.create({
+        data: {
+          kind: "INCOME",
+          amount: "1000",
+          date: calendarToDb("2026-11-20"),
+          accountId: receivable.id,
+          categoryId: categoria.id,
+        },
+      }),
+    ).rejects.toThrow(/pasivo_no_recibe_ingreso/);
+  });
+
+  it("el rotativo no acepta cuotas por la ruta y se cancela pagando el capital", async () => {
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK", openingBalance: "200000" },
+    });
+    const revolving = await createLoanAccount(db, {
+      name: "Línea rotativa",
+      kind: "LOAN",
+      openingBalance: "0",
+      system: "INTEREST_ONLY",
+      principal: money("100000"),
+      tnaPercent: money("60"),
+      installmentCount: 12,
+      firstInstallmentDate: FIRST,
+      imported: null,
+    });
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "100000",
+        date: calendarToDb("2026-10-05"),
+        accountId: revolving.id,
+        toAccountId: bank.id,
+        description: "Desembolso del rotativo",
+      },
+    });
+
+    // Pagar "una cuota" no puede: el interés no toca el saldo y la cobertura no
+    // se puede derivar (un doble toque sería indetectable).
+    await expect(
+      payLoanInstallment(
+        db,
+        {
+          accountId: revolving.id,
+          cashAccountId: bank.id,
+          date: "2026-11-15",
+          installmentNumber: 1,
+          extraCapital: null,
+          cancel: false,
+          categoryName: null,
+        },
+        { today: TODAY },
+      ),
+    ).rejects.toThrow(/solo interés/);
+
+    // La vista: sin próxima cuota, interés "no se sabe" y compromisos de los
+    // meses que vienen — pero NADA vencido (no hay fuente de verdad).
+    const { loans } = await getLoansView(db, { today: TODAY });
+    const view = loans[0];
+    expect(view.system).toBe("INTEREST_ONLY");
+    expect(view.nextInstallment).toBeNull();
+    expect(view.interestPaid).toBeNull();
+    expect(view.plan?.paidCount).toBe(0);
+    expect(view.commitments?.overdue).toBe("0.00");
+    expect(view.commitments?.overdueCount).toBe(0);
+    expect(view.commitments?.next12Months).toBe("60000.00");
+
+    // Cancelar: paga el capital entero (no pagado todavía), sin interés.
+    const cancelacion = await payLoanInstallment(
+      db,
+      {
+        accountId: revolving.id,
+        cashAccountId: bank.id,
+        date: "2026-11-20",
+        installmentNumber: null,
+        extraCapital: null,
+        cancel: true,
+        categoryName: null,
+      },
+      { today: TODAY },
+    );
+    expect(cancelacion.created).toBe(true);
+    expect(cancelacion.principalPaid).toBe("100000.00");
+    expect(cancelacion.movements).toHaveLength(1);
+
+    const { loans: despues } = await getLoansView(db, { today: TODAY });
+    expect(despues[0].plan?.paidCount).toBe(12);
+    expect(despues[0].plan?.remainingCount).toBe(0);
+    expect(despues[0].interestPaid).toBeNull();
+    expect(despues[0].debt).toBe("0.00");
+  });
+
+  it("la curación completa las filas faltantes sin reescribir lo existente", async () => {
+    // Cuenta con parámetros completos pero sin filas (creada antes de que el
+    // alta materializara): la primera lectura las crea, idempotentemente.
+    const loan = await db.account.create({
+      data: {
+        name: "Préstamo viejo",
+        kind: "LOAN",
+        principal: "500000",
+        tnaPercent: "60",
+        installmentCount: 12,
+        firstInstallmentDate: calendarToDb(FIRST),
+        amortizationSystem: "FRENCH",
+      },
+    });
+
+    const { loans } = await getLoansView(db, { today: TODAY });
+    const view = loans.find((item) => item.id === loan.id);
+    expect(view?.installments).toHaveLength(12);
+    expect(view?.plan?.payment).toBe("56412.71");
+    expect(await db.installment.count({ where: { accountId: loan.id } })).toBe(12);
+
+    // Segunda pasada: no agrega nada (skipDuplicates) ni pisa lo que hay.
+    const created = await ensureLoanInstallments(db, {
+      id: loan.id,
+      principal: money("500000"),
+      tnaPercent: money("60"),
+      installmentCount: 12,
+      firstInstallmentDate: calendarToDb(FIRST),
+      amortizationSystem: "FRENCH",
+    });
+    expect(created).toBe(0);
+  });
+
+  it("un préstamo legado sin fecha no inventa cronograma: vista sin plan", async () => {
+    const loan = await db.account.create({
+      data: {
+        name: "Préstamo legado",
+        kind: "LOAN",
+        principal: "500000",
+        tnaPercent: "60",
+        installmentCount: 12,
+      },
+    });
+
+    const { loans } = await getLoansView(db, { today: TODAY });
+    const view = loans.find((item) => item.id === loan.id);
+    expect(view?.system).toBe("FRENCH");
+    expect(view?.installments).toEqual([]);
+    expect(view?.plan).toBeNull();
+    expect(view?.commitments).toBeNull();
+    expect(view?.nextInstallment).toBeNull();
+
+    // Y pagar por API tampoco se puede: sin cuotas materializadas no hay
+    // contrato que pagar (el mensaje manda a cargar parámetros o transferir).
+    const bank = await db.account.create({
+      data: { name: "Banco", kind: "BANK" },
+    });
+    await expect(
+      payLoanInstallment(
+        db,
+        {
+          accountId: loan.id,
+          cashAccountId: bank.id,
+          date: "2026-11-15",
+          installmentNumber: 1,
+          extraCapital: null,
+          cancel: false,
+          categoryName: null,
+        },
+        { today: TODAY },
+      ),
+    ).rejects.toThrow(/no tiene cronograma/);
+  });
+
+  it("la base rechaza cuotas imposibles (los CHECK del cronograma)", async () => {
+    const loan = await db.account.create({
+      data: {
+        name: "Préstamo",
+        kind: "LOAN",
+        principal: "1000",
+        tnaPercent: "60",
+        installmentCount: 1,
+      },
+    });
+
+    const base = {
+      accountId: loan.id,
+      number: 1,
+      dueDate: calendarToDb(FIRST),
+    };
+
+    // Pago cero: una cuota de cero no es una cuota.
+    await expect(
+      db.installment.create({
+        data: { ...base, payment: "0", interest: "0", principal: "0", remainingBalance: "0" },
+      }),
+    ).rejects.toThrow(/installment_payment_positive/);
+
+    // Interés negativo.
+    await expect(
+      db.installment.create({
+        data: {
+          ...base,
+          payment: "100",
+          interest: "-1",
+          principal: "101",
+          remainingBalance: "1000",
+        },
+      }),
+    ).rejects.toThrow(/installment_interest_nonnegative/);
+
+    // La identidad del split: payment = interest + principal.
+    await expect(
+      db.installment.create({
+        data: {
+          ...base,
+          payment: "100",
+          interest: "60",
+          principal: "50",
+          remainingBalance: "900",
+        },
+      }),
+    ).rejects.toThrow(/installment_split_matches_payment/);
+
+    // Saldo negativo: un cronograma que "debe al revés" describe una quita.
+    await expect(
+      db.installment.create({
+        data: {
+          ...base,
+          payment: "100",
+          interest: "60",
+          principal: "40",
+          remainingBalance: "-1",
+        },
+      }),
+    ).rejects.toThrow(/installment_remaining_nonnegative/);
+
+    // Único por préstamo: dos cuotas con el mismo número no existen.
+    await db.installment.create({
+      data: {
+        ...base,
+        payment: "100",
+        interest: "60",
+        principal: "40",
+        remainingBalance: "960",
+      },
+    });
+    await expect(
+      db.installment.create({
+        data: {
+          ...base,
+          payment: "100",
+          interest: "60",
+          principal: "40",
+          remainingBalance: "960",
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("la base admite el importado sin tasa y RECEIVABLE, y prohíbe el sistema fuera de préstamos", async () => {
+    // IMPORTED sin tasa: la composición la dicta el cronograma del banco.
+    const imported = await db.account.create({
+      data: {
+        name: "Importado",
+        kind: "LOAN",
+        principal: "1000",
+        installmentCount: 1,
+        amortizationSystem: "IMPORTED",
+      },
+    });
+    expect(imported.id).toBeTruthy();
+
+    // Un sistema de amortización en una cuenta que no es préstamo es una
+    // promesa vacía.
+    await expect(
+      db.account.create({
+        data: { name: "Caja", kind: "CASH", amortizationSystem: "FRENCH" },
+      }),
+    ).rejects.toThrow(/loan_parameters_only_on_loans/);
+
+    // RECEIVABLE es una de las DOS cuentas de préstamo: parámetros completos.
+    const receivable = await db.account.create({
+      data: {
+        name: "Préstamo dado",
+        kind: "RECEIVABLE",
+        principal: "1000",
+        tnaPercent: "60",
+        installmentCount: 1,
+      },
+    });
+    expect(receivable.id).toBeTruthy();
   });
 });

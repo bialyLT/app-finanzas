@@ -147,6 +147,9 @@ async function main() {
     await prisma.statement.deleteMany();
     await prisma.cardPlan.deleteMany();
     await prisma.recurrenceOccurrence.deleteMany();
+    // Las CUOTAS (Fase 4) van antes que las cuentas: la FK es CASCADE, pero el
+    // orden explícito deja dicho que un préstamo no deja filas huérfanas.
+    await prisma.installment.deleteMany();
     await prisma.movement.deleteMany();
     await prisma.recurrenceRule.deleteMany();
     await prisma.category.deleteMany();
@@ -265,6 +268,35 @@ async function main() {
       401,
     );
 
+    // Los préstamos (Fase 4): la vista, la vista previa y —sobre todo— el pago
+    // de una cuota mueven dinero y compromisos, así que van con la misma
+    // protección que el resto.
+    const prestamosSinSesion = await fetch(`${BASE_URL}/api/loans`, {
+      headers: { Origin: BASE_URL },
+    });
+    check("sin sesión, GET /api/loans responde 401", prestamosSinSesion.status, 401);
+
+    const previewPrestamoSinSesion = await fetch(
+      `${BASE_URL}/api/loans/preview?principal=100000&tnaPercent=60&installmentCount=12`,
+      { headers: { Origin: BASE_URL } },
+    );
+    check(
+      "sin sesión, GET /api/loans/preview responde 401",
+      previewPrestamoSinSesion.status,
+      401,
+    );
+
+    const pagoPrestamoSinSesion = await fetch(`${BASE_URL}/api/loans/pay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({}),
+    });
+    check(
+      "sin sesión, POST /api/loans/pay responde 401",
+      pagoPrestamoSinSesion.status,
+      401,
+    );
+
     // Y las MISMAS escrituras, ahora CON sesión pero con `Origin` ajeno: acá
     // actúa la segunda capa anti-CSRF (`assertSameOrigin`, además de
     // `SameSite=Lax`). Si esto no diera 403, un sitio externo podría disparar
@@ -347,6 +379,18 @@ async function main() {
       borrarPlanAjeno.status,
       403,
     );
+
+    // El pago de un préstamo es la mutación más sensible de la Fase 4: un sitio
+    // externo no puede pagar cuotas en nombre de la persona logueada.
+    const pagoPrestamoAjeno = await conOrigenAjeno("/api/loans/pay", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    check(
+      "con Origin ajeno, POST /api/loans/pay responde 403",
+      pagoPrestamoAjeno.status,
+      403,
+    );
   }
 
   // ── Cuerpos hostiles ───────────────────────────────────────────────────────
@@ -388,6 +432,7 @@ async function main() {
       ["/api/cards/statements", "POST"],
       ["/api/cards/statements/pay", "POST"],
       ["/api/cards/plans", "POST"],
+      ["/api/loans/pay", "POST"],
     ];
 
     for (const [path, method] of rutasConCuerpo) {
@@ -461,6 +506,7 @@ async function main() {
     principal: "500.000",
     tnaPercent: "60",
     installmentCount: 12,
+    firstInstallmentDate: "2026-10-15",
   });
   check("crea el préstamo (201)", prestamo.status, 201);
 
@@ -2236,6 +2282,522 @@ async function main() {
     checkTrue(
       "la tarjeta de prueba ya no está",
       !(vistaFinal?.cards ?? []).some((card) => card.id === nube.body?.id),
+    );
+  }
+
+  // ── Préstamos (Fase 4): cronograma, pago y cancelación ─────────────────────
+  // Todo lo de acá pasa por las rutas REALES (`/api/loans`, `/api/loans/pay`):
+  // cobertura derivada del capital, patas por dirección, idempotencia del doble
+  // toque y cancelación. Los escenarios de prueba usan cuentas propias que se
+  // borran al final (por Prisma, como la limpieza de tarjetas): la base queda
+  // como estaba y el seed sigue siendo el mismo después de correr el smoke.
+  section("Préstamos — cronograma, pago y cancelación (Fase 4)");
+  {
+    const totalesDelMes = async () =>
+      (await api(`/api/transactions?from=${MES}-01&to=${MES}-31`)).body?.totals;
+    const totalesAntes = await totalesDelMes();
+
+    // El préstamo del seed ya tiene su cronograma materializado: la vista lo
+    // lee de la base y deriva la cobertura del capital real (la cuota 1 se pagó
+    // a mano en «Movimientos de octubre»: transferencia + gasto).
+    const { body: vista } = await api("/api/loans?asOf=2026-10-31");
+    const seedLoan = (vista?.loans ?? []).find((l) => l.name === "Préstamo personal");
+    checkTrue("la vista lista el préstamo del seed", seedLoan !== undefined);
+
+    check("dirección derivada del kind: LOAN = I_OWE", seedLoan?.direction, "I_OWE");
+    check("sistema del seed: FRENCH", seedLoan?.system, "FRENCH");
+    check("12 cuotas materializadas", seedLoan?.installments?.length, 12);
+    check("la cuota 1 vence el 15/10", seedLoan?.installments?.[0]?.dueDate, "2026-10-15");
+    check("la cuota 2 vence el 15/11", seedLoan?.installments?.[1]?.dueDate, "2026-11-15");
+    check("la cuota 1 está cubierta (el pago a mano)", seedLoan?.installments?.[0]?.covered, true);
+    check("la cuota 2 todavía no", seedLoan?.installments?.[1]?.covered, false);
+    check("1 de 12 cuotas cubiertas", seedLoan?.plan?.paidCount, 1);
+    check("la próxima impaga es la cuota 2", seedLoan?.nextInstallment?.number, 2);
+    check("capital pagado 31.412,71", seedLoan?.capitalPaid, "31412.71");
+    check("interés pagado 25.000,00 (el de la cuota cubierta)", seedLoan?.interestPaid, "25000.00");
+    check("deuda viva 468.587,29 (500.000 − capital)", seedLoan?.debt, "468587.29");
+    check("un LOAN no tiene lado «a cobrar»", seedLoan?.receivable, null);
+
+    // Compromisos desde octubre: las 11 cuotas impagas caen en los 12 meses. La
+    // última cuota cierra el capital al centavo (su pago es 56.412,63), así que
+    // la suma de pagos reales es 620.539,73 — no 11 × 56.412,71.
+    check("compromisos: octubre en cero (la cuota 1 está pagada)", seedLoan?.commitments?.months?.[0]?.amount, "0.00");
+    check("compromisos: noviembre = cuota 2", seedLoan?.commitments?.months?.[1]?.amount, "56412.71");
+    check("compromisos: 5 cuotas en 6 meses", seedLoan?.commitments?.next6Months, "282063.55");
+    check("compromisos: 11 cuotas en 12 meses", seedLoan?.commitments?.next12Months, "620539.73");
+    check("nada vencido al 31/10", seedLoan?.commitments?.overdue, "0.00");
+    check("y no hay cuotas vencidas", seedLoan?.commitments?.overdueCount, 0);
+
+    // ── El escenario de prueba: banco y préstamo propios ─────────────────────
+    const bancoPrueba = await post("/api/accounts", {
+      name: "Banco de prueba préstamos",
+      kind: "BANK",
+      openingBalance: "100.000",
+    });
+    check("crea el banco de prueba (201)", bancoPrueba.status, 201);
+
+    const prestamoPrueba = await post("/api/accounts", {
+      name: "Préstamo de prueba (smoke)",
+      kind: "LOAN",
+      principal: "500.000",
+      tnaPercent: "60",
+      installmentCount: 12,
+      firstInstallmentDate: "2026-10-05",
+    });
+    check("crea el préstamo de prueba (201)", prestamoPrueba.status, 201);
+    check("el sistema por defecto es FRENCH", prestamoPrueba.body?.amortizationSystem, "FRENCH");
+
+    // El desembolso: la plata sale del préstamo y entra al banco (igual que el
+    // seed). La deuda viva del préstamo sale del SALDO de la cuenta, no del
+    // cronograma: sin este movimiento los pagos dejarían la cuenta con saldo
+    // positivo y la deuda negativa — plata que nunca entró.
+    const desembolsoPrueba = await post("/api/transactions", {
+      kind: "TRANSFER",
+      amount: "500.000",
+      date: "2026-10-01",
+      accountId: prestamoPrueba.body?.id,
+      toAccountId: bancoPrueba.body?.id,
+      description: "Desembolso del préstamo de prueba (smoke)",
+    });
+    check("registra el desembolso del préstamo de prueba (201)", desembolsoPrueba.status, 201);
+
+    // ── Pagar una cuota: capital por transferencia, interés por gasto ────────
+    const cuota1 = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-05",
+      installmentNumber: 1,
+    });
+    check("paga la cuota 1 (201)", cuota1.status, 201);
+    check("created: true (escribió)", cuota1.body?.created, true);
+    check("no fue una cancelación", cuota1.body?.cancelled, false);
+    check("la cuota pagada es la 1", cuota1.body?.installment?.number, 1);
+    check("capital de la cuota: 31.412,71", cuota1.body?.principalPaid, "31412.71");
+    check("interés de la cuota: 25.000,00", cuota1.body?.interestPaid, "25000.00");
+    check("dos patas: capital + interés", cuota1.body?.movements?.length, 2);
+    check("la pata del capital es una TRANSFERENCIA", cuota1.body?.movements?.[0]?.kind, "TRANSFER");
+    check("por el capital de la cuota", cuota1.body?.movements?.[0]?.amount, "31412.71");
+    check("sale del banco de prueba", cuota1.body?.movements?.[0]?.account?.id, bancoPrueba.body?.id);
+    check("y entra al préstamo", cuota1.body?.movements?.[0]?.toAccount?.id, prestamoPrueba.body?.id);
+    check("la pata del interés es un GASTO", cuota1.body?.movements?.[1]?.kind, "EXPENSE");
+    check("por el interés de la cuota", cuota1.body?.movements?.[1]?.amount, "25000.00");
+    check("con categoría Intereses", cuota1.body?.movements?.[1]?.category?.name, "Intereses");
+    check("la vista ya cuenta 1 cuota cubierta", cuota1.body?.loan?.plan?.paidCount, 1);
+    check("y la próxima es la 2", cuota1.body?.loan?.nextInstallment?.number, 2);
+
+    // El doble toque: el MISMO pedido otra vez — idempotente, NADA se escribe.
+    const dobleToque = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-05",
+      installmentNumber: 1,
+    });
+    check("el doble toque responde 200 (reintento)", dobleToque.status, 200);
+    check("created: false", dobleToque.body?.created, false);
+    check("sin movimientos nuevos", dobleToque.body?.movements?.length, 0);
+
+    // Saltarse una cuota no se puede: la cobertura es un PREFIJO, no un set.
+    const salteada = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-12-05",
+      installmentNumber: 4,
+    });
+    check("pagar la 4 con la 2 pendiente: 400", salteada.status, 400);
+    checkTrue(
+      "y explica el orden",
+      String(salteada.body?.error ?? "").includes("en orden"),
+      JSON.stringify(salteada.body),
+    );
+
+    // Cuota 2 con capital extra: el extra amortiza de más; el interés de la
+    // cuota NO baja (el cronograma es el contrato y no se recalcula).
+    const conExtra = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-06",
+      installmentNumber: 2,
+      extraCapital: "50000",
+    });
+    check("paga la cuota 2 con extra (201)", conExtra.status, 201);
+    check("capital de este pago: 32.983,35 + 50.000", conExtra.body?.principalPaid, "82983.35");
+    check("interés: el de la cuota 2 (23.429,36)", conExtra.body?.interestPaid, "23429.36");
+    check("la cobertura avanza a 3 (el extra cubre una más)", conExtra.body?.loan?.plan?.paidCount, 3);
+    check("la próxima impaga es la 4", conExtra.body?.loan?.nextInstallment?.number, 4);
+
+    // Pagar más capital que el saldo que queda: 400 — el resto es cancelación.
+    const deMas = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-06",
+      installmentNumber: 4,
+      extraCapital: "999999",
+    });
+    check("capital extra mayor al saldo: 400", deMas.status, 400);
+    checkTrue(
+      "y dice cuánto es el saldo",
+      String(deMas.body?.error ?? "").includes("supera el saldo"),
+      JSON.stringify(deMas.body),
+    );
+
+    // Parámetros imposibles: cada rechazo explica el motivo, nunca un 500.
+    const sinCuenta = await post("/api/loans/pay", {});
+    check("pago sin cuenta: 400", sinCuenta.status, 400);
+    const numeroCero = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      installmentNumber: 0,
+    });
+    check("cuota 0: 400", numeroCero.status, 400);
+    const extraNegativo = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      extraCapital: "-5",
+    });
+    check("capital extra negativo: 400", extraNegativo.status, 400);
+    const cancelNoBooleano = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      cancel: "sí",
+    });
+    check("cancel no booleano: 400", cancelNoBooleano.status, 400);
+    const fechaImposible = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-02-31",
+    });
+    check("31 de febrero en el pago: 400", fechaImposible.status, 400);
+    const idHostil = await post("/api/loans/pay", {
+      accountId: "'; DROP TABLE \"Account\"; --",
+      cashAccountId: bancoPrueba.body?.id,
+    });
+    // Prisma parametriza: el id hostil no rompe nada, sólo no encuentra el
+    // préstamo. La respuesta correcta es el 404 de «no existe», jamás un 500.
+    check("id hostil: 404 (parametrizado, no hay 500)", idHostil.status, 404);
+    checkTrue(
+      "y dice que no existe, no un error del server",
+      String(idHostil.body?.error ?? "").includes("no existe"),
+      JSON.stringify(idHostil.body),
+    );
+
+    // ── Cancelación anticipada: el capital que queda, SIN interés ────────────
+    const cancelacion = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-07",
+      cancel: true,
+    });
+    check("cancela el préstamo (201)", cancelacion.status, 201);
+    check("cancelled: true", cancelacion.body?.cancelled, true);
+    check("paga el capital restante 385.603,94", cancelacion.body?.principalPaid, "385603.94");
+    check("sin interés en la cancelación", cancelacion.body?.interestPaid, null);
+    check("una sola pata (la transferencia del capital)", cancelacion.body?.movements?.length, 1);
+    check("capital completo en la vista", cancelacion.body?.loan?.capitalPaid, "500000.00");
+    check("las 12 cuotas quedan cubiertas", cancelacion.body?.loan?.plan?.paidCount, 12);
+    check("sin próxima cuota", cancelacion.body?.loan?.nextInstallment, null);
+    check("deuda 0,00", cancelacion.body?.loan?.debt, "0.00");
+    check("progreso 100,00", cancelacion.body?.loan?.progressPercent, "100.00");
+    check("interés pagado: el de las cuotas cubiertas", cancelacion.body?.loan?.interestPaid, "176952.44");
+
+    // Cancelar de nuevo no paga dos veces.
+    const cancelarDosVeces = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-07",
+      cancel: true,
+    });
+    check("el doble toque de la cancelación responde 200", cancelarDosVeces.status, 200);
+    check("created: false", cancelarDosVeces.body?.created, false);
+
+    // Cancelar JUNTO con una cuota no existe: es una cosa o la otra.
+    const cancelarConCuota = await post("/api/loans/pay", {
+      accountId: prestamoPrueba.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-07",
+      installmentNumber: 5,
+      cancel: true,
+    });
+    check("cancelación + cuota: 400", cancelarConCuota.status, 400);
+    checkTrue(
+      "y explica que no se combinan",
+      String(cancelarConCuota.body?.error ?? "").includes("no se combina"),
+      JSON.stringify(cancelarConCuota.body),
+    );
+
+    // ── Un préstamo dado (RECEIVABLE): cobra al revés y NO es deuda ──────────
+    const porCobrar = await post("/api/accounts", {
+      name: "Préstamo a Marce (smoke)",
+      kind: "RECEIVABLE",
+      principal: "100.000",
+      tnaPercent: "60",
+      installmentCount: 6,
+      firstInstallmentDate: "2026-10-06",
+    });
+    check("crea el préstamo a cobrar (201)", porCobrar.status, 201);
+
+    // El desembolso: la plata sale del banco y entra a la cuenta por cobrar.
+    // No es un gasto: el patrimonio no cambia, cambia de forma.
+    const lePresto = await post("/api/transactions", {
+      kind: "TRANSFER",
+      amount: "100.000",
+      date: "2026-10-06",
+      accountId: bancoPrueba.body?.id,
+      toAccountId: porCobrar.body?.id,
+      description: "Le presté a Marce (smoke)",
+    });
+    check("registra el desembolso (201)", lePresto.status, 201);
+
+    const cuotaDada = (await api("/api/loans?asOf=2026-10-31")).body?.loans?.find(
+      (l) => l.id === porCobrar.body?.id,
+    )?.installments?.[0];
+    checkTrue("la vista trae el cronograma del préstamo dado", cuotaDada !== undefined);
+
+    const cobro = await post("/api/loans/pay", {
+      accountId: porCobrar.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-08",
+      installmentNumber: 1,
+    });
+    check("cobra la cuota 1 (201)", cobro.status, 201);
+    check("el capital vuelve: el de la cuota", cobro.body?.principalPaid, "14701.75");
+    check("el interés es INGRESO: 100.000 × 5% = 5.000,00", cobro.body?.interestPaid, "5000.00");
+    check("dos patas", cobro.body?.movements?.length, 2);
+    check("el capital vuelve como TRANSFERENCIA", cobro.body?.movements?.[0]?.kind, "TRANSFER");
+    check("sale de la cuenta por cobrar", cobro.body?.movements?.[0]?.account?.id, porCobrar.body?.id);
+    check("y entra al banco", cobro.body?.movements?.[0]?.toAccount?.id, bancoPrueba.body?.id);
+    check("el interés entra como INCOME", cobro.body?.movements?.[1]?.kind, "INCOME");
+    check(
+      "y entra a la cuenta de dinero, NUNCA a la cuenta por cobrar",
+      cobro.body?.movements?.[1]?.account?.id,
+      bancoPrueba.body?.id,
+    );
+
+    const { body: vistaDados } = await api("/api/loans?asOf=2026-10-31");
+    const dado = (vistaDados?.loans ?? []).find((l) => l.id === porCobrar.body?.id);
+    check("dirección: OWED_TO_ME", dado?.direction, "OWED_TO_ME");
+    check("no tiene «deuda» (es un activo)", dado?.debt, null);
+    check("lo que te deben: 85.298,25", dado?.receivable, "85298.25");
+    check("capital recuperado: 14.701,75", dado?.capitalPaid, "14701.75");
+    check("1 de 6 cuotas cobradas", dado?.plan?.paidCount, 1);
+
+    // El reporte de DEUDAS no lo ve: es un activo, no una deuda. Ni las filas,
+    // ni el total, ni el DTI cambian por prestar plata.
+    const { body: deudaDados } = await api(`/api/debts?month=${MES}&asOf=${MES}-31`);
+    const filasDeuda = deudaDados?.debtReport?.rows ?? [];
+    checkTrue(
+      "el préstamo dado no aparece en los pasivos",
+      !filasDeuda.some((f) => f.name === "Préstamo a Marce (smoke)"),
+    );
+    check("y el total de deuda sigue siendo el del seed", deudaDados?.debtReport?.totalDebt, "518587.29");
+    check("DTI · sigue habiendo un solo plan", deudaDados?.debtReport?.dti?.planCount, 1);
+
+    // Un INCOME directo a la cuenta por cobrar inflaría un activo sin plata: la
+    // base lo prohíbe y la API lo traduce a 400 con explicación.
+    const ingresoInflado = await post("/api/transactions", {
+      kind: "INCOME",
+      amount: "1000",
+      date: "2026-10-09",
+      accountId: porCobrar.body?.id,
+      categoryName: "Intereses",
+    });
+    check("ingreso directo a la cuenta por cobrar: 400", ingresoInflado.status, 400);
+    checkTrue(
+      "y explica que ahí no entra un ingreso",
+      String(ingresoInflado.body?.error ?? "").includes("ingreso"),
+      JSON.stringify(ingresoInflado.body),
+    );
+
+    // ── El rotativo: no acepta cuotas; se cancela pagando el capital ─────────
+    const rotativo = await post("/api/accounts", {
+      name: "Línea rotativa (smoke)",
+      kind: "LOAN",
+      principal: "100.000",
+      tnaPercent: "60",
+      installmentCount: 12,
+      firstInstallmentDate: "2026-10-07",
+      amortizationSystem: "INTEREST_ONLY",
+    });
+    check("crea la línea rotativa (201)", rotativo.status, 201);
+
+    // El desembolso del rotativo, igual que el préstamo de prueba: el saldo de
+    // la cuenta es la deuda viva; el capital entra al banco y la línea nace
+    // debiendo.
+    const desembolsoRotativo = await post("/api/transactions", {
+      kind: "TRANSFER",
+      amount: "100.000",
+      date: "2026-10-07",
+      accountId: rotativo.body?.id,
+      toAccountId: bancoPrueba.body?.id,
+      description: "Desembolso de la línea rotativa (smoke)",
+    });
+    check("registra el desembolso del rotativo (201)", desembolsoRotativo.status, 201);
+
+    const cuotaRotativa = await post("/api/loans/pay", {
+      accountId: rotativo.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-08",
+      installmentNumber: 1,
+    });
+    check("el rotativo no acepta cuotas: 400", cuotaRotativa.status, 400);
+    checkTrue(
+      "y explica por qué (el interés no amortiza)",
+      String(cuotaRotativa.body?.error ?? "").includes("solo interés"),
+      JSON.stringify(cuotaRotativa.body),
+    );
+
+    const canceladoRotativo = await post("/api/loans/pay", {
+      accountId: rotativo.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-09",
+      cancel: true,
+    });
+    check("el rotativo se cancela pagando el capital (201)", canceladoRotativo.status, 201);
+    check("capital: 100.000,00", canceladoRotativo.body?.principalPaid, "100000.00");
+    check("rotativo: interés pagado null (no se deriva del saldo)", canceladoRotativo.body?.loan?.interestPaid, null);
+    check("deuda 0,00 tras cancelar", canceladoRotativo.body?.loan?.debt, "0.00");
+
+    // ── El sistema importado: el cronograma lo dicta el banco ────────────────
+    const importado = await post("/api/accounts", {
+      name: "Crédito importado (smoke)",
+      kind: "LOAN",
+      principal: "47.500",
+      amortizationSystem: "IMPORTED",
+      imported: [
+        { dueDate: "2026-11-15", payment: "30.000", interest: "5.000" },
+        { dueDate: "2026-12-15", payment: "25.000", interest: "2.500" },
+      ],
+    });
+    check("crea el préstamo importado sin tasa ni cuotas (201)", importado.status, 201);
+    check("sistema IMPORTED", importado.body?.amortizationSystem, "IMPORTED");
+
+    const { body: vistaImportado } = await api("/api/loans?asOf=2026-11-01");
+    const credito = (vistaImportado?.loans ?? []).find((l) => l.id === importado.body?.id);
+    check("la vista lo muestra IMPORTED", credito?.system, "IMPORTED");
+    check("sin tasa: la composición la dicta el banco", credito?.tnaPercent, null);
+    check("las 2 cuotas se derivan del cronograma", credito?.plan?.installmentCount, 2);
+    check("y la primera fecha también", credito?.firstInstallmentDate, "2026-11-15");
+    check("cuota 1 al 15/11", credito?.installments?.[0]?.dueDate, "2026-11-15");
+    check("ninguna cubierta todavía", credito?.plan?.paidCount, 0);
+    check("compromisos: las 2 cuotas (30.000 + 25.000)", credito?.commitments?.next12Months, "55000.00");
+    check("nada vencido al 01/11", credito?.commitments?.overdue, "0.00");
+
+    // Un cronograma importado que no suma el monto del préstamo no entra: la
+    // diferencia sería un perdón o un cobro fantasma.
+    const importadoInconsistente = await post("/api/accounts", {
+      name: "Importado inconsistente (smoke)",
+      kind: "LOAN",
+      principal: "30.000",
+      amortizationSystem: "IMPORTED",
+      imported: [{ dueDate: "2026-11-15", payment: "30.000", interest: "5.000" }],
+    });
+    check("importado con Σ capital ≠ monto: 400", importadoInconsistente.status, 400);
+    checkTrue(
+      "y dice cuánto no coincide",
+      String(importadoInconsistente.body?.error ?? "").includes("no coincide"),
+      JSON.stringify(importadoInconsistente.body),
+    );
+
+    // Pagar una cuota del importado: la composición es la del banco, tal cual.
+    const cuotaImportada = await post("/api/loans/pay", {
+      accountId: importado.body?.id,
+      cashAccountId: bancoPrueba.body?.id,
+      date: "2026-10-09",
+      installmentNumber: 1,
+    });
+    check("paga la cuota 1 del importado (201)", cuotaImportada.status, 201);
+    check("capital: el que dictó el banco (25.000,00)", cuotaImportada.body?.principalPaid, "25000.00");
+    check("interés: el que dictó el banco (5.000,00)", cuotaImportada.body?.interestPaid, "5000.00");
+
+    // ── Los sistemas, en la vista previa (una fórmula cada uno) ──────────────
+    const aleman = await api(
+      "/api/loans/preview?principal=500000&tnaPercent=60&installmentCount=12&system=GERMAN&firstInstallmentDate=2026-11-15",
+    );
+    check("alemán: cuota 1 = capital fijo + interés", aleman.body?.schedule?.[0]?.payment, "66666.66");
+    check("alemán: capital fijo 41.666,66", aleman.body?.schedule?.[0]?.principal, "41666.66");
+    check("alemán: la última absorbe el resto del capital", aleman.body?.schedule?.[11]?.principal, "41666.74");
+    check("alemán: el capital vuelve entero", aleman.body?.totalPrincipal, "500000.00");
+    check("alemán: las fechas salen de la primera", aleman.body?.schedule?.[1]?.dueDate, "2026-12-15");
+
+    const americano = await api(
+      "/api/loans/preview?principal=500000&tnaPercent=60&installmentCount=12&system=AMERICAN",
+    );
+    check("americano: la cuota 1 es solo interés", americano.body?.schedule?.[0]?.payment, "25000.00");
+    check("americano: sin amortización hasta el final", americano.body?.schedule?.[0]?.principal, "0.00");
+    check("americano: la última paga interés + todo el capital", americano.body?.schedule?.[11]?.payment, "525000.00");
+
+    const americanoSinTasa = await api(
+      "/api/loans/preview?principal=500000&tnaPercent=0&installmentCount=12&system=AMERICAN",
+    );
+    check("americano con tasa 0: 400 (cuotas de $0 no son cuotas)", americanoSinTasa.status, 400);
+    checkTrue(
+      "y lo explica en castellano",
+      String(americanoSinTasa.body?.error ?? "").includes("americano"),
+      JSON.stringify(americanoSinTasa.body),
+    );
+
+    const rotativoPreview = await api(
+      "/api/loans/preview?principal=500000&tnaPercent=60&installmentCount=12&system=INTEREST_ONLY",
+    );
+    check("rotativo: cada cuota es el interés", rotativoPreview.body?.schedule?.[0]?.payment, "25000.00");
+    check("rotativo: no amortiza capital por contrato", rotativoPreview.body?.totalPrincipal, "0.00");
+
+    const importadoPreview = await api(
+      "/api/loans/preview?principal=500000&tnaPercent=60&installmentCount=12&system=IMPORTED",
+    );
+    check("el importado no tiene vista previa: 400", importadoPreview.status, 400);
+    checkTrue(
+      "y dice por qué",
+      String(importadoPreview.body?.error ?? "").includes("vista previa"),
+      JSON.stringify(importadoPreview.body),
+    );
+
+    // Un préstamo imposible de repartir (5 centavos en 12 cuotas) es 400: la
+    // API lo rechaza ANTES de armar un cronograma de cuotas de cero.
+    const minusculo = await post("/api/accounts", {
+      name: "Préstamo minúsculo (smoke)",
+      kind: "LOAN",
+      principal: "0.05",
+      tnaPercent: "60",
+      installmentCount: 12,
+      firstInstallmentDate: "2026-10-10",
+    });
+    check("5 centavos en 12 cuotas: 400", minusculo.status, 400);
+    checkTrue(
+      "y explica que es demasiado chico",
+      String(minusculo.body?.error ?? "").includes("demasiado chico"),
+      JSON.stringify(minusculo.body),
+    );
+
+    // ── Limpieza: la base queda como estaba ──────────────────────────────────
+    // Los movimientos referencian las cuentas con FK `Restrict`, así que van
+    // primero; las cuotas caen con su cuenta en cascada.
+    const idsDePrueba = [
+      bancoPrueba.body?.id,
+      prestamoPrueba.body?.id,
+      porCobrar.body?.id,
+      rotativo.body?.id,
+      importado.body?.id,
+    ].filter(Boolean);
+    const prisma = new PrismaClient();
+    await prisma.movement.deleteMany({
+      where: {
+        OR: [
+          { accountId: { in: idsDePrueba } },
+          { toAccountId: { in: idsDePrueba } },
+        ],
+      },
+    });
+    await prisma.account.deleteMany({ where: { id: { in: idsDePrueba } } });
+    await prisma.$disconnect();
+
+    const totalesDespues = await totalesDelMes();
+    check("los gastos del mes volvieron al punto de partida", totalesDespues?.expenses, totalesAntes?.expenses);
+    check("y también los ingresos", totalesDespues?.income, totalesAntes?.income);
+
+    const { body: vistaFinal } = await api("/api/loans?asOf=2026-12-31");
+    checkTrue(
+      "los préstamos de prueba ya no están",
+      !(vistaFinal?.loans ?? []).some((l) => idsDePrueba.includes(l.id)),
     );
   }
 

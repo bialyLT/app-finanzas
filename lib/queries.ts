@@ -59,9 +59,13 @@ import type {
 // de arriba, que TypeScript borra al compilar.
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import {
-  amortizationSchedule,
+  loanProgressFor,
+  loanScheduleFor,
+  systemOf,
+  type AmortizationSystem,
+} from "./loans";
+import {
   isZero,
-  loanProgress,
   money,
   monthlyShare,
   round,
@@ -768,27 +772,81 @@ export async function getMonthReconciliation(
 }
 
 /**
- * El cronograma de un préstamo a partir de los parámetros de su cuenta.
+ * El cronograma de un préstamo: PREFIERE el documento materializado.
  *
- * Devuelve `null` —"sin plan", no un plan inventado— cuando falta algún
- * parámetro. La base lo prohíbe con el CHECK `loan_has_parameters`, así que ese
- * caso no debería existir; la defensa también cubre una cantidad de cuotas no
- * positiva, que el CHECK permite y `amortizationSchedule` rechaza lanzando: un
- * dato así no puede tumbar el reporte de deudas entero.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA JERARQUÍA (documento > parámetros — la decisión de la Fase 4)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * 1. **Filas de `Installment` presentes** → ESAS son el contrato, tal como se
+ *    pactaron (o tal como las dictó el banco en un importado). No se recalcula
+ *    nada: recalcular y comparar contra lo materializado dejaría DOS versiones
+ *    del mismo contrato, que es exactamente lo que la materialización evita.
+ * 2. **Sin filas** (cuenta anterior a la Fase 4, que no tenía cronograma) → se
+ *    rearma desde los parámetros con `loanScheduleFor`. Un importado sin filas
+ *    NO se puede rearmar —habría que adivinar lo que dice el banco— y va como
+ *    "sin plan" (`null`).
+ *
+ * Devuelve `null` —"sin plan", no un plan inventado— también cuando faltan
+ * parámetros (la base lo prohíbe con `loan_has_parameters`; la defensa es para
+ * una base ya rota) y cuando los números no describen un contrato posible
+ * (p. ej. tasa 0 en el americano): esa fila va sin plan en vez de tumbar el
+ * reporte de deudas entero.
  */
-function loanSchedule(account: {
-  principal: Prisma.Decimal | null;
-  tnaPercent: Prisma.Decimal | null;
-  installmentCount: number | null;
-}): Installment[] | null {
-  const { principal, tnaPercent, installmentCount } = account;
+function loanSchedule(
+  account: {
+    principal: Prisma.Decimal | null;
+    tnaPercent: Prisma.Decimal | null;
+    installmentCount: number | null;
+    amortizationSystem: AmortizationSystem | null;
+  },
+  documentRows: readonly {
+    number: number;
+    payment: Prisma.Decimal;
+    interest: Prisma.Decimal;
+    principal: Prisma.Decimal;
+    remainingBalance: Prisma.Decimal;
+  }[],
+): { system: AmortizationSystem; schedule: Installment[] } | null {
+  const system = systemOf(account.amortizationSystem);
 
-  if (principal === null || tnaPercent === null || installmentCount === null) {
+  if (documentRows.length > 0) {
+    return {
+      system,
+      schedule: documentRows.map((row) => ({
+        number: row.number,
+        payment: money(row.payment),
+        interest: money(row.interest),
+        principal: money(row.principal),
+        remainingBalance: money(row.remainingBalance),
+      })),
+    };
+  }
+
+  if (system === "IMPORTED") return null;
+  if (
+    account.principal === null ||
+    account.tnaPercent === null ||
+    account.installmentCount === null ||
+    account.installmentCount <= 0
+  ) {
     return null;
   }
-  if (installmentCount <= 0) return null;
 
-  return amortizationSchedule(principal, tnaPercent, installmentCount);
+  try {
+    return {
+      system,
+      schedule: loanScheduleFor({
+        system,
+        principal: account.principal,
+        tnaPercent: account.tnaPercent,
+        installmentCount: account.installmentCount,
+      }),
+    };
+  } catch {
+    // Un dato legado que no describe un contrato posible (una tasa corrupta,
+    // un sistema que exige tasa mayor a cero): la fila va sin plan.
+    return null;
+  }
 }
 
 /** Una cuenta de deuda: préstamo o tarjeta. */
@@ -809,7 +867,12 @@ type DebtBalance = AccountBalance & { kind: "LOAN" | "CREDIT_CARD" };
  *     deuda hasta el corte. Una transferencia al préstamo ES la amortización:
  *     el progreso se mide con la plata que consta, no con el calendario.
  *   · Interés pagado → Σ del interés de las cuotas CUBIERTAS por ese capital
- *     (`loanProgress`): no se estima ni se prorratea.
+ *     (`loanProgressFor`): no se estima ni se prorratea. En un rotativo
+ *     (`INTEREST_ONLY`) es `null`: su interés se registra como gasto y no es
+ *     derivable del saldo — inventar un número sería peor que decir "no se
+ *     sabe".
+ *   · El cronograma del plan → el MATERIALIZADO (`Installment`) si existe; si
+ *     no, se rearma desde los parámetros (`loanSchedule`). El documento manda.
  *   · Cuotas restantes → `total − cubiertas`.
  *   · DTI → Σ de la cuota mensual de los planes CON cuotas pendientes ÷ el
  *     ingreso ganado del mes mostrado (la misma `movementTotals` y la misma
@@ -824,11 +887,15 @@ type DebtBalance = AccountBalance & { kind: "LOAN" | "CREDIT_CARD" };
  *     cuotas a una Visa daría números de aspecto confiable sobre algo que nadie
  *     pactó.
  *   · Un préstamo sin parámetros (`loanSchedule` → `null`) va por el mismo
- *     camino: la base lo prohíbe, la defensa es para una base ya rota.
+ *     camino: la base lo prohíbe, la defensa es para una base ya rota. Un
+ *     préstamo importado sin filas materializadas también: su composición sólo
+ *     vive en el cronograma del banco.
  *   · Sin ingreso no hay DTI (`percent: null`): no es "0% de compromiso", es
  *     "no se puede calcular" — y la pantalla lo dice con palabras.
- *   · El préstamo que YO di (alguien me debe a mí) no tiene representación en
- *     el modelo todavía —no existe un `OWED_TO_ME`—: no hay nada que reportar.
+ *   · El préstamo que YO di (`RECEIVABLE`) es un ACTIVO, no una deuda: no entra
+ *     a este reporte —ni a sus filas, ni a `totalDebt`, ni al numerador del
+ *     DTI—. Su progreso se mira en `/api/loans`, que sí muestra las dos
+ *     direcciones (`I_OWE` y `OWED_TO_ME`).
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * QUÉ FILAS SE MUESTRAN (y qué suma el total)
@@ -872,10 +939,11 @@ export async function getDebtReport(
     .filter((balance) => balance.kind === "LOAN")
     .map((balance) => balance.id);
 
-  // Los parámetros del plan y el capital amortizado tampoco dependen entre sí.
-  // El capital mira TODA la vida de la deuda hasta el corte (no sólo el mes):
-  // la amortización es acumulada, igual que este número.
-  const [loanAccounts, capitalRows] = await Promise.all([
+  // Los parámetros del plan, el documento materializado y el capital
+  // amortizado no dependen entre sí: los tres van en paralelo. El capital mira
+  // TODA la vida de la deuda hasta el corte (no sólo el mes): la amortización
+  // es acumulada, igual que este número.
+  const [loanAccounts, installmentRows, capitalRows] = await Promise.all([
     db.account.findMany({
       where: { kind: "LOAN" },
       select: {
@@ -883,6 +951,19 @@ export async function getDebtReport(
         principal: true,
         tnaPercent: true,
         installmentCount: true,
+        amortizationSystem: true,
+      },
+    }),
+    db.installment.findMany({
+      where: { accountId: { in: loanIds } },
+      orderBy: [{ accountId: "asc" }, { number: "asc" }],
+      select: {
+        accountId: true,
+        number: true,
+        payment: true,
+        interest: true,
+        principal: true,
+        remainingBalance: true,
       },
     }),
     db.movement.groupBy({
@@ -899,6 +980,13 @@ export async function getDebtReport(
   const paramsById = new Map(
     loanAccounts.map((account) => [account.id, account]),
   );
+
+  const installmentsByLoan = new Map<string, typeof installmentRows>();
+  for (const row of installmentRows) {
+    const list = installmentsByLoan.get(row.accountId) ?? [];
+    list.push(row);
+    installmentsByLoan.set(row.accountId, list);
+  }
 
   const capitalPaidByLoan = new Map<string, Money>();
   for (const row of capitalRows) {
@@ -928,32 +1016,49 @@ export async function getDebtReport(
 
     if (balance.kind === "LOAN") {
       const params = paramsById.get(balance.id);
-      const schedule = params ? loanSchedule(params) : null;
 
-      if (schedule) {
-        const progress = loanProgress(
-          schedule,
-          capitalPaidByLoan.get(balance.id) ?? zero(),
+      if (params) {
+        const composed = loanSchedule(
+          params,
+          installmentsByLoan.get(balance.id) ?? [],
         );
 
-        plan = {
-          // La cuota constante, la del cronograma: las siguientes son iguales
-          // salvo la última, que ajusta el centavo del redondeo.
-          payment: schedule[0].payment.toFixed(2),
-          // El principal sale del cronograma (no de un parámetro aparte): el
-          // porcentaje no se mide contra una vara distinta de la que se cobra.
-          principal: progress.principal.toFixed(2),
-          installmentCount: schedule.length,
-          paidCount: progress.installmentsCovered,
-          remainingCount: progress.remainingCount,
-        };
-        capitalPaid = progress.capitalPaid.toFixed(2);
-        interestPaid = progress.interestPaid.toFixed(2);
-        progressPercent = progress.progressPercent.toFixed(2);
+        if (composed) {
+          const progress = loanProgressFor(
+            {
+              system: composed.system,
+              principal:
+                params.principal ??
+                sum(composed.schedule.map((item) => item.principal)),
+              tnaPercent: params.tnaPercent,
+              installmentCount: composed.schedule.length,
+            },
+            composed.schedule,
+            capitalPaidByLoan.get(balance.id) ?? zero(),
+          );
 
-        // Un plan terminado libera su cuota: no compromete más.
-        if (progress.remainingCount > 0) {
-          commitments.push(schedule[0].payment);
+          plan = {
+            // La cuota del cronograma: en el francés las siguientes son
+            // iguales salvo la última (el centavo del redondeo); en el
+            // americano es el interés periódico; en el rotativo, el interés
+            // mensual.
+            payment: composed.schedule[0].payment.toFixed(2),
+            // El principal sale del cronograma (no de un parámetro aparte): el
+            // porcentaje no se mide contra una vara distinta de la que se cobra.
+            principal: progress.principal.toFixed(2),
+            installmentCount: composed.schedule.length,
+            paidCount: progress.installmentsCovered,
+            remainingCount: progress.remainingCount,
+          };
+          capitalPaid = progress.capitalPaid.toFixed(2);
+          interestPaid =
+            progress.interestPaid === null ? null : progress.interestPaid.toFixed(2);
+          progressPercent = progress.progressPercent.toFixed(2);
+
+          // Un plan terminado libera su cuota: no compromete más.
+          if (progress.remainingCount > 0) {
+            commitments.push(composed.schedule[0].payment);
+          }
         }
       }
     }
@@ -1068,7 +1173,7 @@ type CategoryRow = NonNullable<MovementRow["category"]>;
 export interface AccountRowLike {
   id: string;
   name: string;
-  kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN";
+  kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" | "RECEIVABLE";
   archived: boolean;
   openingBalance: { toFixed(dp: number): string } | string;
 
@@ -1079,6 +1184,11 @@ export interface AccountRowLike {
   closingDay?: number | null;
   dueDay?: number | null;
   creditLimit?: { toFixed(dp: number): string } | string | null;
+
+  // Mismo criterio para el sistema de amortización: sólo los `select` de
+  // préstamos lo piden, y `null` significa "no configurado / anterior a la
+  // Fase 4", que se lee como francés.
+  amortizationSystem?: AmortizationSystem | null;
 }
 
 export function toAccountDTO(account: AccountRowLike): AccountDTO {
@@ -1102,6 +1212,7 @@ export function toAccountDTO(account: AccountRowLike): AccountDTO {
         : typeof account.creditLimit === "string"
           ? account.creditLimit
           : account.creditLimit.toFixed(2),
+    amortizationSystem: account.amortizationSystem ?? null,
   };
 }
 
@@ -1226,13 +1337,24 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     marker: "loan_has_parameters",
     status: 400,
     message:
-      "Un préstamo necesita monto, tasa y cantidad de cuotas para poder calcular el interés de cada cuota. Sin eso, la app volvería a contar la cuota entera como gasto.",
+      "Un préstamo necesita el monto, la cantidad de cuotas y la tasa (TNA) — salvo en el sistema importado, donde la composición la dicta el cronograma del banco — para poder calcular el interés de cada cuota. Sin eso, la app volvería a contar la cuota entera como gasto.",
   },
   {
     marker: "loan_parameters_only_on_loans",
     status: 400,
     message:
-      "Los datos de préstamo (monto, tasa, cuotas) sólo se cargan en cuentas de tipo préstamo.",
+      "Los datos de préstamo (monto, tasa, cuotas, sistema) sólo se cargan en cuentas de tipo préstamo.",
+  },
+  {
+    // Fase 4: una cuota del cronograma materializado. El resto de los CHECKs de
+    // `Installment` no llegan a dispararse desde la API (el cronograma se arma
+    // y valida antes de escribir); éste es el que protege el caso "demasiado
+    // chico para esa cantidad de cuotas", que la API rechaza con su propio
+    // mensaje y la base respalda por si algo escribe sin pasar por la API.
+    marker: "installment_payment_positive",
+    status: 400,
+    message:
+      "Cada cuota del préstamo tiene que ser de al menos un centavo: subí el monto o bajá la cantidad de cuotas.",
   },
   // ── Recurrencia (Fase 3) ───────────────────────────────────────────────────
   // Una regla es la PROMESA de un movimiento: se le exigen las mismas reglas de
@@ -1287,7 +1409,7 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     marker: "[finanzas:pasivo_no_recibe_ingreso]",
     status: 400,
     message:
-      "No se puede registrar un ingreso en un préstamo o una tarjeta. Si te desembolsaron un préstamo, registralo como una transferencia desde la cuenta del préstamo hacia tu cuenta de dinero.",
+      "No se puede registrar un ingreso en un préstamo, un préstamo a cobrar o una tarjeta. Usá una transferencia desde la cuenta de deuda hacia tu cuenta de dinero; el interés cobrado es un ingreso, pero entra a tu cuenta de dinero.",
   },
   {
     // Postgres 22003: el número no entra en NUMERIC(18,2). Sin esta regla, un
@@ -1297,6 +1419,17 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     status: 400,
     message:
       "El monto es demasiado grande: supera el máximo que puede guardar la app.",
+  },
+  {
+    // Postgres 22021: el texto trae una secuencia que la codificación UTF-8 no
+    // admite — el caso real es el byte NUL (\u0000) en cualquier campo de
+    // texto. Prisma no tipa este error (llega sin código), así que sin esta
+    // regla un nombre, una descripción o una categoría con NUL era un 500
+    // genérico aunque el problema es de la petición y se puede sacar.
+    marker: "invalid byte sequence for encoding",
+    status: 400,
+    message:
+      "Algún texto de la petición tiene un carácter que no se puede guardar. Quitá ese carácter e intentá de nuevo.",
   },
 ];
 

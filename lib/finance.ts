@@ -25,7 +25,31 @@
 
 export type MovementKindDTO = "INCOME" | "EXPENSE" | "TRANSFER";
 export type CategoryKindDTO = "INCOME" | "EXPENSE";
-export type AccountKindDTO = "CASH" | "BANK" | "CREDIT_CARD" | "LOAN";
+export type AccountKindDTO = "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" | "RECEIVABLE";
+
+/**
+ * El sistema de amortización de un préstamo, tal como viaja al cliente.
+ *
+ * Son los mismos cinco de `Account.amortizationSystem`: francés (cuota
+ * constante), alemán (capital constante), americano (interés + capital al
+ * final), solo interés (rotativo) e importado (cronograma externo). El `null`
+ * del campo en `AccountDTO` significa "cuenta anterior a la Fase 4" y se lee
+ * como francés.
+ */
+export type AmortizationSystemDTO =
+  | "FRENCH"
+  | "GERMAN"
+  | "AMERICAN"
+  | "INTEREST_ONLY"
+  | "IMPORTED";
+
+/**
+ * La dirección de un préstamo: quién le debe a quién.
+ *
+ * Se DERIVA del kind (`LOAN` → I_OWE, `RECEIVABLE` → OWED_TO_ME): no existe un
+ * campo aparte que pueda contradecirlo. Ver `loanDirectionOf` en lib/loans.ts.
+ */
+export type LoanDirectionDTO = "I_OWE" | "OWED_TO_ME";
 
 export interface AccountDTO {
   id: string;
@@ -49,6 +73,15 @@ export interface AccountDTO {
   dueDay: number | null;
   /** Límite de compra como string decimal; `null` = no cargado (no es 0). */
   creditLimit: string | null;
+
+  // ── Parámetros de préstamo (sólo tienen sentido en LOAN y RECEIVABLE) ───
+
+  /**
+   * El sistema con el que se devuelve el capital, o `null` en las cuentas de
+   * dinero (donde no aplica) y en las de préstamo anteriores a la Fase 4
+   * (donde se lee como francés: era el único sistema que existía).
+   */
+  amortizationSystem: AmortizationSystemDTO | null;
 }
 
 export interface CategoryDTO {
@@ -602,17 +635,23 @@ export interface CategoriesResponse {
  * una cuota en el formulario y otra en la lista.
  */
 export interface LoanPreviewDTO {
-  /** La cuota que vas a pagar todos los meses. */
+  /** El sistema con el que se calculó el cronograma. */
+  system: AmortizationSystemDTO;
+  /** El pago de la PRIMERA cuota (en el americano es sólo interés). */
   payment: string;
   /** Total desembolsado a lo largo de todo el préstamo. */
   totalPaid: string;
   /** Lo que se queda el banco. Es el costo real. */
   totalInterest: string;
+  /** Capital total del cronograma (vuelve a vos; no es costo). */
+  totalPrincipal: string;
   /** De cada 100 pesos pagados, cuántos son del banco. */
   interestSharePercent: string;
   /** El plan de pagos completo, para poder mostrarlo en detalle. */
   schedule: {
     number: number;
+    /** La fecha de vencimiento, si la vista previa la recibió. */
+    dueDate: string | null;
     payment: string;
     /** La parte que es COSTO REAL. Es gasto. */
     interest: string;
@@ -620,6 +659,126 @@ export interface LoanPreviewDTO {
     principal: string;
     remainingBalance: string;
   }[];
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Préstamos (Fase 4)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Una cuota del cronograma materializado, tal como viaja al cliente. */
+export interface LoanInstallmentDTO {
+  number: number;
+  dueDate: string;
+  payment: string;
+  interest: string;
+  principal: string;
+  remainingBalance: string;
+  /**
+   * Si el capital que consta ya cubre esta cuota. La cobertura se DERIVA de
+   * las transferencias reales (no es una columna): una cuota marcada acá como
+   * cubierta es una cuota que ya no compromete nada.
+   */
+  covered: boolean;
+}
+
+/** Un mes de compromisos de un préstamo. */
+export interface LoanCommitmentMonthDTO {
+  year: number;
+  month: number;
+  periodLabel: string;
+  amount: string;
+}
+
+/**
+ * Cuánto compromete un préstamo en los próximos 6 y 12 meses.
+ *
+ * `overdue` va SEPARADO y no suma a `next12Months`: una cuota vencida ya no es
+ * "próxima", y contarla en los dos lados inflaría el compromiso. En un rotativo
+ * (solo interés) `overdue` es 0 a propósito: el pago del interés del mes va como
+ * gasto y no se puede derivar del saldo (ver `loanCommitments` en lib/loans.ts).
+ */
+export interface LoanCommitmentsDTO {
+  next6Months: string;
+  next12Months: string;
+  months: LoanCommitmentMonthDTO[];
+  overdue: string;
+  overdueCount: number;
+}
+
+/**
+ * Un préstamo —propio o dado— con su cronograma, su progreso y sus compromisos.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `balance` vs `debt` vs `receivable` (el signo no se adivina)
+ * ─────────────────────────────────────────────────────────────────────────────
+ *   · `balance` es el saldo CONTABLE de la cuenta: negativo si debés (LOAN),
+ *     positivo si te deben (RECEIVABLE).
+ *   · `debt` es la deuda MOSTRADA en positivo, sólo en LOAN. En un RECEIVABLE
+ *     es `null`: no es deuda de nadie de este lado — es un activo.
+ *   · `receivable` es lo que te deben, en positivo, sólo en RECEIVABLE.
+ *
+ * Un préstamo que NO es deuda jamás puede caer del lado de los pasivos: para
+ * eso `isLiability` sólo mira LOAN y CREDIT_CARD, y `getDebtReport` también.
+ */
+export interface LoanViewDTO extends AccountBalanceDTO {
+  /** `LOAN` (debés) o `RECEIVABLE` (te deben). */
+  kind: "LOAN" | "RECEIVABLE";
+  direction: LoanDirectionDTO;
+  system: AmortizationSystemDTO;
+  /** Lo que te deben, en positivo. `null` si el préstamo es tuyo (LOAN). */
+  receivable: string | null;
+
+  // ── El contrato y su progreso (los mismos campos que el reporte de deudas) ─
+
+  principal: string | null;
+  tnaPercent: string | null;
+  installmentCount: number | null;
+  firstInstallmentDate: string | null;
+  /** El plan, con su progreso. `null` sin cronograma (dato legado). */
+  plan: DebtPlanDTO | null;
+  /** Σ del capital amortizado/recuperado, clampeado al principal. */
+  capitalPaid: string | null;
+  /**
+   * Σ del interés de las cuotas cubiertas. `null` sin cronograma y también en
+   * un rotativo: su interés se paga como gasto y no se puede derivar del saldo.
+   */
+  interestPaid: string | null;
+  progressPercent: string | null;
+  /** La próxima cuota impaga (la única que la ruta de pago acepta). `null` si no queda ninguna. */
+  nextInstallment: LoanInstallmentDTO | null;
+  /** El cronograma completo, cuota por cuota. `[]` sin cronograma. */
+  installments: LoanInstallmentDTO[];
+  /** Los próximos 6/12 meses de cuotas impagas. `null` sin cronograma. */
+  commitments: LoanCommitmentsDTO | null;
+}
+
+/** Respuesta de `GET /api/loans`. */
+export interface LoansResponse {
+  loans: LoanViewDTO[];
+}
+
+/**
+ * Lo que hizo `POST /api/loans/pay`.
+ *
+ * `created: false` es la respuesta IDEMPOTENTE: la cuota pedida ya estaba
+ * cubierta (un doble toque, un reintento) y NADA se escribió — pero la vista
+ * viaja igual para que la pantalla muestre el estado real.
+ */
+export interface LoanPayResponseDTO {
+  /** `true` si este llamado creó movimientos; `false` si era un reintento. */
+  created: boolean;
+  /** `true` si el pago fue una cancelación anticipada de todo el capital. */
+  cancelled: boolean;
+  /** La cuota pagada/cancelada por este movimiento, si corresponde. */
+  installment: LoanInstallmentDTO | null;
+  /** Capital de este pago (cuota + extra); `null` si no se creó nada. */
+  principalPaid: string | null;
+  /** Interés de este pago; `null` si no se creó nada (o si fue una cancelación). */
+  interestPaid: string | null;
+  /** Las patas creadas: TRANSFER + EXPENSE/INCOME. Vacío en un reintento. */
+  movements: MovementDTO[];
+  /** El préstamo después del pago. */
+  loan: LoanViewDTO;
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -783,6 +942,25 @@ export const ACCOUNT_KIND_LABEL: Record<AccountKindDTO, string> = {
   BANK: "Cuenta bancaria",
   CREDIT_CARD: "Tarjeta de crédito",
   LOAN: "Préstamo",
+  RECEIVABLE: "Préstamo a cobrar",
+};
+
+/**
+ * Etiqueta de la dirección de un préstamo, para la interfaz.
+ *
+ * "Me deben" y no "a cobrar": la palabra que la persona usaría.
+ */
+export const LOAN_DIRECTION_LABEL: Record<LoanDirectionDTO, string> = {
+  I_OWE: "Lo debo",
+  OWED_TO_ME: "Me lo deben",
+};
+
+export const AMORTIZATION_SYSTEM_LABEL: Record<AmortizationSystemDTO, string> = {
+  FRENCH: "Cuota fija (francés)",
+  GERMAN: "Capital constante (alemán)",
+  AMERICAN: "Interés y capital al final (americano)",
+  INTEREST_ONLY: "Solo interés (rotativo)",
+  IMPORTED: "Cronograma externo",
 };
 
 export const RECUR_FREQ_LABEL: Record<RecurFreqDTO, string> = {
@@ -817,11 +995,21 @@ export function isLiabilityKind(kind: AccountKindDTO): boolean {
 /**
  * Cuentas que pueden recibir un ingreso.
  *
- * Que un préstamo no aparezca acá es el punto del rediseño: cobrar un préstamo
- * no es ganar plata.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ SE ENUMERA LO QUE SÍ (y no lo que no)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * La versión vieja era `!isLiabilityKind(kind)` y alcanzaba mientras sólo
+ * existieran cuentas de dinero y de deuda. Con `RECEIVABLE` (Fase 4) deja de
+ * alcanzar: un préstamo que DISTE no es un pasivo, pero tampoco puede recibir
+ * un ingreso —el trigger de la base lo rechaza—. El interés que cobrás es
+ * ingreso, sí, pero entra a tu cuenta de DINERO; a la cuenta que te deben le
+ * entraría un activo sin que haya entrado un peso.
+ *
+ * Que un préstamo (en cualquier dirección) no aparezca acá es el punto del
+ * rediseño: cobrar un préstamo no es ganar plata.
  */
 export function canReceiveIncome(kind: AccountKindDTO): boolean {
-  return !isLiabilityKind(kind);
+  return kind === "CASH" || kind === "BANK";
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

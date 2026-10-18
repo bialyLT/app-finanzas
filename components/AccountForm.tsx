@@ -25,6 +25,8 @@ const KIND_HELP: Record<AccountKindDTO, string> = {
   CREDIT_CARD:
     "Es deuda, no plata. Lo que gastás con la tarjeta se suma a lo que debés.",
   LOAN: "Plata que te prestaron y tenés que devolver con interés.",
+  RECEIVABLE:
+    "Plata que prestaste y te tienen que devolver: es un activo, no una deuda.",
 };
 
 export default function AccountForm({ onClose, onSaved }: Props) {
@@ -112,6 +114,9 @@ export default function AccountForm({ onClose, onSaved }: Props) {
       if (!principal.trim()) missing.push("el monto prestado");
       if (!tnaPercent.trim()) missing.push("la tasa (TNA)");
       if (!installmentCount.trim()) missing.push("la cantidad de cuotas");
+      // La fecha dejó de ser opcional con la Fase 4: sin ella no se puede
+      // materializar el cronograma (la API la exige con un 400).
+      if (!firstInstallmentDate.trim()) missing.push("la fecha de la primera cuota");
       if (missing.length > 0) {
         setError(`Falta ${missing.join(", ")}.`);
         return;
@@ -140,7 +145,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 principal,
                 tnaPercent,
                 installmentCount,
-                ...(firstInstallmentDate ? { firstInstallmentDate } : {}),
+                firstInstallmentDate,
               }
             : {}),
           // Sólo si la tarjeta tiene los dos días: la API exige el par completo
@@ -280,8 +285,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
 
               <div>
                 <label htmlFor="loan-first" className="text-sm font-medium">
-                  Primera cuota{" "}
-                  <span className="font-normal text-zinc-500">(opcional)</span>
+                  Primera cuota *
                 </label>
                 <input
                   id="loan-first"
