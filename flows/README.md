@@ -818,20 +818,31 @@ kotlin.Int`, buscá un diálogo nativo en la app antes de culpar al driver —
 | `18-cuotas-modal-adversarial.yaml` | El modal de compra en cuotas atacado a propósito: la cascada de validaciones (descripción → total → cuotas → categoría, cada submit dice QUÉ falta), los campos elegidos por los **labels `block` vía ids `plan-*`** (el `tapOn` por texto pegaría en el fondo de la página — el caso está documentado en el encabezado del flow), el estado limpio al reabrir, la fecha fijada a mano, el datalist de categorías, el doble toque en "Registrar compra" (UNA sola compra de 100.000, el panel lo delata), el encabezado de la tarjeta con scroll UP ("debe 49.700,00" = 100.000 − 50.300 a favor; utilización 9,94%), el panel en 11.005.000 / −10.205.000 con 4 transferencias y el borrado en dos pasos que deshace todo (a favor 50.300 de vuelta) — flujo neto cero | ✅ Pasa (2m 46s) |
 | `19-resumen-pago.yaml` | Pagar el resumen de octubre sobre una tarjeta con SALDO A FAVOR: el pago engorda el crédito (50.300 + 50.000 = 100.300), el doble toque en "Confirmar pago" (guarda del botón + idempotencia de la API), el origen preseleccionado (el flash del pago lo nombra: Banco Galicia), el documento queda "Pagado", la utilización 0,00% y el panel con la caja movida por la transferencia (−50.000: flujo −10.236.712,71, banco −9.697.823,75, 5 transferencias) sin tocar gastos ni "Te quedó" | ✅ Pasa (1m 4s) |
 | `20-tarjeta-desde-cero.yaml` | Una tarjeta desde CERO y cuotas retroactivas: alta con saldo inicial −25.000 (el orden del formulario, validado por sondas: el monto sobrevive el cambio de tipo), el medio par cierre/vencimiento (error exacto y la cuenta NO se crea), el doble toque al submit (las deudas lo delatan: 393.287,29 y no 418.287,29), sin límite ⇒ "Utilización: no se sabe" (no un 0% inventado), la compra retroactiva del 30/09 en 5 cuotas (la cuota 1 cae en el octubre ya cerrado → "Cuota 2 de 5"; el cierre emite 2.000 / mínimo 100), el borrado que devuelve la deuda a 25.000 y el cierre #3 que recalcula el impago a 0,00 — "1 actualizado(s)", MISMO documento | ✅ Pasa (3m 51s) |
+| `21-prestamo-desde-cero.yaml` | La UI de préstamos nueva, dirección "recibí": el alta guiada de 500.000 al 60% en 12 con la vista previa del servidor (cuota 56.412,71), la primera cuota computada al **día 20 del mes anterior** (nunca "hoy" literal: la 1 siempre vencida, la 2 siempre en el mes en curso), el **DESEMBOLSO como paso 2 explícito** que registra la transferencia (sin él la deuda viva mentiría — el aviso `loan-warning` tiene que NO estar), el split exacto de la cuota 1 en el bloque de pago (interés 25.000,00 + capital 31.412,71) con el refetch al tope y su flash, el progreso de la tarjeta scopeado debajo del nombre propio (debe 468.587,29 · "Cubriste 1 de 12" · "Próxima cuota 2 de 12" ya en el mes en curso), la cancelación anticipada en DOS pasos en línea (capital pendiente 468.587,29, sin interés de las cuotas que faltan) y el cierre: debe 0,00, chip "Cubierto" (sin scoping — vive en la MISMA fila del título, la trampa que dejó este flow), "Cubriste 12 de 12" al 100%, "No queda ninguna cuota por pagar" y el cronograma con la 1 PAGADA y las 11 CUBIERTAS; la sección de deudas vuelve al seed (468.587,29) | ✅ Pasa (4m 4s) |
+| `22-prestamo-a-cobrar.yaml` | La dirección "presté" (`OWED_TO_ME`, el espejo del LOAN): la dirección se elige ANTES de cargar ("¿De qué cuenta salió?"), el paso 2 del desembolso se **posterga a propósito** ("Ahora no") y se recorre el CAMINO DE RECUPERACIÓN — el aviso de que "te deben" miente, el desembolso desde la PROPIA tarjeta con el monto del contrato (100.000,00: el principal, no la deuda viva que recién creado vale 0 — el bug del card-disburse de esta ronda), "te deben" 0,00 → 100.000,00, la cuota vencida del RECEIVABLE que NO entra en "Compromisos próximos" ("Sin cuotas vencidas"), el cobro de la cuota 1 con split exacto (interés 5.000,00 + capital 14.701,75) y el progreso final: te deben 85.298,25 · "Cobraste 1 de 6" | ✅ Pasa (3m 32s) |
 
-**Suite completa (00–15 + 18 + 19 + 20): 21/21 en 47m 30s** (2026-10-18, dir
-`~/.maestro/tests/2026-10-18_064912`). El orden es el de la carpeta:
-`00, 01, 02, 02b, 02c, 03…15, 18, 19, 20`. Los flujos 16 y 17 de la ronda
-anterior ya no existen como tales: su contenido vive en `02b` y `02c`
+**Suite completa (00–15 + 18 + 19 + 20 + 21 + 22): 23 flows.** La última
+corrida ENTERA —21/21 en 47m 30s— es anterior a la ronda de préstamos
+(2026-10-18, dir `~/.maestro/tests/2026-10-18_064912`); el `21` y el `22` se
+validaron por separado sobre el build final y con la base recién sembrada
+(4m 4s y 3m 32s) y la próxima corrida completa los suma al final. El orden es el
+de la carpeta:
+`00, 01, 02, 02b, 02c, 03…15, 18, 19, 20, 21, 22`. Los flujos 16 y 17 de la
+ronda anterior ya no existen como tales: su contenido vive en `02b` y `02c`
 (renombrados para correr pegados al 02, el único momento en que el estado es el
 del seed; el 02c además ganó el escape del 409 recorrido de verdad). El 18, el
 19 y el 20 son nuevos: el modal de cuotas roto a propósito, el pago del resumen
-sobre saldo a favor, y la tarjeta desde cero con cuotas retroactivas.
+sobre saldo a favor, y la tarjeta desde cero con cuotas retroactivas. El `21` y
+el `22` son los nuevos de la ronda de préstamos: el alta guiada con desembolso
+explícito, el pago y la cancelación anticipada, y el camino de recuperación del
+desembolso postergado con el cobro.
 
 **Límites de calendario** (lo que primero vence primero): el `20` vale hasta el
 10/11/2026 — cuando cierre el período de noviembre, su cierre #2 emitiría DOS
 resúmenes (las cuotas 1 y 2) y el flash diría "2 resúmenes nuevos" —; el `02b`
-y el `14` valen hasta el 16/11/2026.
+y el `14` valen hasta el 16/11/2026. El `21` y el `22` no tienen límite
+propio: computan su fecha en el momento (día 20 del mes anterior), así que la
+cuota 1 está vencida y la cuota 2 cae en el mes en curso cualquier día del año.
 
 Los tiempos no son decorativos: cuando había servidores MCP vivos peleando por
 `~/.maestro/sessions` (trampa 11), el flow 00 tardaba **5m51s en fallar** y los

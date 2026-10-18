@@ -1,0 +1,371 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 21 · Préstamos — un préstamo RECIBIDO desde cero
+# ═════════════════════════════════════════════════════════════════════════════
+# El camino feliz de la UI de préstamos (Fase 4 ronda 2), dirección "recibí":
+# alta guiada → DESEMBOLSO como paso explícito → tarjeta con aviso/estado →
+# guardar la cuota 1 (vencida) → progreso actualizado → cancelación anticipada
+# en dos pasos en línea. El sentido "presté" vive en el 22 (corto).
+#
+# Lo que el flujo cuida:
+#
+#   1. EL DESEMBOLSO ES UN PASO, no un check perdido: al confirmar el alta el
+#      modal pasa al paso 2 con todo cargado y registra la transferencia. Sin
+#      ella la tarjeta queda con el aviso ("falta registrar el desembolso") y
+#      la deuda viva miente — el flujo exige que el aviso NO esté.
+#   2. LA FECHA DE LA PRIMERA CUOTA se calcula (nunca "hoy" literal): al 20 del
+#      mes ANTERIOR. Así la cuota 1 siempre está vencida (1 sola), la 2 cae
+#      SIEMPRE en el mes en curso — nunca en un mes pasado aunque el flow corra
+#      un día 3 — y las aserciones de "vencido" y "sin cuotas vencidas" son
+#      estables cualquier día del año.
+#   3. EL SPLIT EXACTO antes de confirmar: cuota 1 = interés 25.000,00 +
+#      capital 31.412,71 (francés 500.000 al 60% en 12). El flujo lo exige en
+#      el bloque de pago ANTES de tocar "Confirmar pago".
+#   4. LA CANCELACIÓN muestra el capital pendiente (468.587,29 después de la
+#      cuota 1) calculado en centavos, y se confirma en línea (trampa 16: nada
+#      de `window.confirm`).
+#   5. EL CRONOGRAMA rotula bien los estados: la cuota 1 queda PAGADA, las
+#      futuras CUBIERTAS tras la cancelación ("Pagada" y "Cubierta" no son lo
+#      mismo: una venció, la otra es un adelanto).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# CÓMO SE ANCLA ESTE FLOW (trampas 6, 7 y 12)
+# ─────────────────────────────────────────────────────────────────────────────
+# · El flash de la acción CONTIENE el nombre del préstamo recién creado («…
+#   del flow 21»): mientras ese flash esté en pantalla el nombre NO es ancla
+#   única. Por eso, entre el alta y el primer pago, se ancla al DATO de la
+#   tarjeta (la deuda de 500.000,00, único en la página) y al botón de pago
+#   (único: el del seed dice "Pagar cuota 2"). Recién cuando el flash cambia a
+#   "Pagaste la cuota 1…" (sin nombre) el nombre vuelve a ser ancla.
+# · Los patrones van con COMILLA SIMPLE (trampa 6): en doble comilla `\.` no es
+#   una secuencia de escape válida y YAML corta el flow ANTES de arrancar.
+# · Los scrolls hacia ARRIBA van SIN `centerElement`: "Vencido:" vive pegado al
+#   tope y el centro no es alcanzable (trampa 12, corolario del techo).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO (francés 500.000 · TNA 60% · 12 cuotas)
+# ─────────────────────────────────────────────────────────────────────────────
+#   cuota              56.412,71
+#   cuota 1            interés 25.000,00 (500.000 × 5%) + capital 31.412,71
+#   tras la cuota 1    deuda 468.587,29 · "Cubriste 1 de 12" · capital 31.412,71
+#   cancelación        capital pendiente 468.587,29, sin interés
+#   tras cancelar      deuda 0,00 · "Cubierto" · "Cubriste 12 de 12" · 100,00 %
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+#     node scripts/smoke.mjs --reset
+# Corre AL FINAL de la suite (después del 20), junto con el 22. Deja su
+# préstamo cancelado a la vista (como el 20 deja "Alfa Test"): es la foto que
+# documenta el flujo. No tiene límite de calendario propio: la fecha de la
+# primera cuota se calcula en el momento (los límites de la suite siguen
+# siendo los del 20/02b/14).
+# ─────────────────────────────────────────────────────────────────────────────
+url: http://127.0.0.1:3000
+name: "21 · Prestamos — un prestamo recibido desde cero"
+tags:
+  - smoke
+  - prestamos
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# La primera cuota: día 20 del mes ANTERIOR (ver el encabezado). Sin `padStart`
+# a propósito: el motor de evalScript de Maestro no garantiza ES2015+.
+- evalScript: ${output.d = new Date(); output.d.setDate(1); output.d.setMonth(output.d.getMonth() - 1); output.d.setDate(20); output.mm = ("0" + (output.d.getMonth() + 1)).slice(-2); output.iso = output.d.getFullYear() + "-" + output.mm + "-20"}
+
+# ── La pantalla: secciones, compromisos y el seed ────────────────────────────
+- tapOn:
+    id: "nav-loans"
+
+- extendedWaitUntil:
+    visible: ".*Compromisos próximos.*"
+    timeout: 30000
+
+- assertVisible: "Sin cuotas vencidas.*"
+- assertVisible: "Próximos 6 meses.*"
+- assertVisible: "Próximos 12 meses.*"
+- assertVisible:
+    id: "loans-new"
+
+# ── El alta guiada: recibí (la dirección por defecto) ────────────────────────
+- tapOn:
+    id: "loans-new"
+
+- extendedWaitUntil:
+    visible:
+      id: "loanalta-name"
+    timeout: 30000
+
+- tapOn:
+    id: "loanalta-name"
+- inputText: "Crédito del flow 21"
+
+- tapOn:
+    id: "loanalta-principal"
+- inputText: "500000"
+- assertVisible: '.*500\.000,00.*'
+
+- tapOn:
+    id: "loanalta-tna"
+- inputText: "60"
+
+- tapOn:
+    id: "loanalta-count"
+- inputText: "12"
+
+- tapOn:
+    id: "loanalta-first"
+- inputText: "${output.iso}"
+- assertVisible: ".*${output.iso}.*"
+
+# La vista previa sale del servidor (`/api/loans/preview`), nunca de una
+# fórmula reimplementada en el formulario.
+- extendedWaitUntil:
+    visible: '.*12 cuotas de.*56\.412,71.*'
+    timeout: 15000
+
+- tapOn:
+    id: "loanalta-submit"
+
+# ── Paso 2: el desembolso, explícito (y una sola vez) ────────────────────────
+- extendedWaitUntil:
+    visible: ".*Un último paso.*registrar el desembolso.*"
+    timeout: 30000
+
+- assertVisible: ".*La plata entró a tu cuenta.*deuda viva no mienta.*"
+
+- tapOn:
+    id: "loanalta-disburse-go"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "loanalta-disburse-go"
+    timeout: 30000
+
+- extendedWaitUntil:
+    visible:
+      id: "loans-flash"
+    timeout: 30000
+
+- assertVisible: '.*la plata entró a.*la deuda ya está registrada\..*'
+
+# ── La tarjeta: deuda 500.000, vencida. Sin anclar al nombre todavía: el flash
+#    de arriba lo contiene. Se baja hasta el BOTÓN de pago (único: el del seed
+#    dice "Pagar cuota 2"), y sin centerElement — con la tarjeta entrando
+#    entera en pantalla alcanza, y el centro de una tarjeta del medio no
+#    siempre es alcanzable.
+- scrollUntilVisible:
+    element:
+      text: '.*Pagar cuota 1.*56\.412,71.*'
+    direction: DOWN
+    timeout: 20000
+
+# El desembolso quedó registrado: el aviso NO tiene que estar (la tarjeta está
+# en pantalla: si existiera, estaría visible).
+- assertNotVisible:
+    id: "loan-warning-.*"
+
+- assertVisible: '.*debe.*500\.000,00.*'
+- assertVisible: "Vencida"
+- assertVisible:
+    text: '.*Cubriste 0 de 12.*'
+    below: '.*debe.*500\.000,00.*'
+- assertVisible:
+    text: '.*Próxima cuota 1 de 12.*56\.412,71.*ya venció.*'
+    below: '.*debe.*500\.000,00.*'
+- assertVisible:
+    text: '.*Pagar cuota 1.*56\.412,71.*'
+    below: '.*debe.*500\.000,00.*'
+
+# ── El compromiso vencido vive ARRIBA, en "Compromisos próximos" ─────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Vencido:.*'
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Vencido:.*56\.412,71.*cuota ya pasada.*'
+
+# ── Pagar la cuota 1: split exacto y confirmación ────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: '.*Pagar cuota 1.*56\.412,71.*'
+    direction: DOWN
+    timeout: 20000
+
+- tapOn: '.*Pagar cuota 1.*56\.412,71.*'
+
+- scrollUntilVisible:
+    element:
+      text: '.*Cuota 1 de 12.*interés.*25\.000,00.*capital.*31\.412,71.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertVisible: '.*Cuota 1 de 12.*interés.*25\.000,00.*capital.*31\.412,71.*'
+- assertVisible: '.*Se transfiere el capital.*baja la deuda.*interés como gasto.*'
+
+- scrollUntilVisible:
+    element:
+      id: 'loan-pay-go-.*'
+    direction: DOWN
+    timeout: 20000
+
+- tapOn:
+    id: "loan-pay-go-.*"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "loan-pay-confirm-.*"
+    timeout: 30000
+
+# El refetch deja la página en el tope: el flash vive de nuevo a la vista.
+- extendedWaitUntil:
+    visible:
+      id: "loans-flash"
+    timeout: 30000
+
+- assertVisible: '.*Pagaste la cuota 1.*capital.*31\.412,71.*interés.*25\.000,00.*'
+
+# ── El progreso quedó actualizado en la tarjeta (el flash ya no tiene el
+#    nombre: el nombre vuelve a ser ancla única) ─────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: ".*Crédito del flow 21.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+# El seed muestra los MISMOS textos ("debe 468.587,29", "Cubriste 1 de 12",
+# "Próxima cuota 2 de 12"): por eso todo va scopeado debajo del nombre.
+- assertVisible:
+    text: '.*debe.*468\.587,29.*'
+    below: ".*Crédito del flow 21.*"
+- assertVisible:
+    text: '.*Cubriste 1 de 12.*'
+    below: ".*Crédito del flow 21.*"
+- assertVisible:
+    text: '.*Próxima cuota 2 de 12.*56\.412,71.*'
+    below: ".*Crédito del flow 21.*"
+
+# La cuota 2 cae en el mes en curso: la vencida se limpió.
+- scrollUntilVisible:
+    element:
+      text: '.*Sin cuotas vencidas.*'
+    direction: UP
+    timeout: 20000
+
+- assertVisible: '.*Sin cuotas vencidas.*'
+
+# ── Cancelación anticipada: dos pasos EN LÍNEA (trampa 16) ───────────────────
+- scrollUntilVisible:
+    element:
+      text: ".*Crédito del flow 21.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+# "Cancelar el préstamo" existe también en la tarjeta del seed: se toca el de
+# ABAJO del nombre del 21.
+- tapOn:
+    text: "Cancelar el préstamo"
+    below: ".*Crédito del flow 21.*"
+
+- scrollUntilVisible:
+    element:
+      text: '.*Vas a cancelar todo el capital pendiente.*468\.587,29.*'
+    direction: DOWN
+    timeout: 20000
+
+- assertVisible: '.*Vas a cancelar todo el capital pendiente.*468\.587,29.*'
+- assertVisible: '.*Sólo se mueve el capital.*sin interés de las cuotas que faltan.*'
+
+- scrollUntilVisible:
+    element:
+      id: 'loan-cancel-go-.*'
+    direction: DOWN
+    timeout: 20000
+
+- tapOn:
+    id: "loan-cancel-go-.*"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "loan-cancel-confirm-.*"
+    timeout: 30000
+
+- extendedWaitUntil:
+    visible:
+      id: "loans-flash"
+    timeout: 30000
+
+- assertVisible: '.*Préstamo cancelado.*468\.587,29.*quedó saldado.*'
+
+# ── Quedó saldado: 0,00, cubierto, sin próxima y con TODO cubierto ───────────
+- scrollUntilVisible:
+    element:
+      text: ".*Crédito del flow 21.*"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+
+- assertVisible:
+    text: '.*debe.*[^0-9]0,00.*'
+    below: ".*Crédito del flow 21.*"
+# El chip de estado va en la MISMA fila que el nombre, al extremo derecho: su
+# centro queda a la misma altura o más arriba que el del título, así que un
+# `below:` contra el nombre nunca lo encuentra. Sin scoping no hay ambigüedad:
+# el préstamo del seed queda en «Al día», así que el único «Cubierto» de la
+# página es el de este flow (y la tarjeta ya está a la vista: el scroll de
+# arriba la centró).
+- assertVisible: "Cubierto"
+- assertVisible:
+    text: '.*Cubriste 12 de 12.*100,00.*'
+    below: ".*Crédito del flow 21.*"
+- assertVisible:
+    text: ".*No queda ninguna cuota por pagar.*"
+    below: ".*Crédito del flow 21.*"
+
+# ── El cronograma: PAGADA la que venció, CUBIERTAS las adelantadas ───────────
+- tapOn:
+    text: '.*Cronograma \(12 cuotas\).*'
+    below: ".*Crédito del flow 21.*"
+
+- assertVisible:
+    text: "Pagada"
+    below: ".*Crédito del flow 21.*"
+- assertVisible:
+    text: "Cubierta"
+    below: ".*Crédito del flow 21.*"
+
+# ── La sección "Debo" vuelve al seed: 468.587,29 ─────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "loans-total-debt"
+    direction: UP
+    timeout: 20000
+
+- assertVisible:
+    id: "loans-total-debt"
+    containsChild: '.*468\.587,29.*'
