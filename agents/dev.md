@@ -109,10 +109,19 @@ acá va solo lo generalizable.
   usan el helper de `lib/date-input.ts` (si agregás uno nuevo, mismo helper); si
   hay aritmética de fechas, probá los bordes (fin de mes, meses cortos, años
   bisiestos).
+- **Fecha "hoy" en tests o flows** → nunca literal: calculala y elegí fechas
+  lejos del borde del mes/cierre — una fecha fija deja de ser válida al día
+  siguiente (clase B3 de la Fase 5 r2; hay límites de calendario anotados por
+  flow en `flows/README.md`).
 - **Plata** → Decimal en todo el camino; una transferencia entre cuentas no
   infla ingresos ni gastos; probá montos de un centavo y montos enormes.
 - **UI nueva** → estados vacíos y de error que expliquen qué hacer; y un flow de
   Maestro propio del camino feliz (el tester después hace lo adversarial).
+- **Diálogo nativo del navegador** (`window.confirm` / `alert` / `prompt`) → no:
+  el driver web no tiene nodo que contestar, el hilo de JS se bloquea y muere el
+  paso SIGUIENTE con un error que no lo menciona. Confirmá en línea, en la propia
+  fila (patrón `mov-delete-*` de `/inicio` y `/tarjetas`); el error va en franja
+  inline, no en `window.alert`. (Trampa 16 de `flows/README.md`.)
 - **Migración nueva** → seguí el patrón de las existentes; si la ronda introduce
   una invariante, agregá su candado (CHECK/índice) en la misma migración.
 - **Zona compartida** (seed, navegación, ids de flows, números de smoke) → corré
