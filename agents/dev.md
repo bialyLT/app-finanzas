@@ -95,7 +95,9 @@ acá va solo lo generalizable.
 - **Ruta API nueva** → batería mínima antes de cerrar: sin sesión 401; origen
   ajeno 403; cuerpos hostiles (`null`, string, array, número) 400 y **nunca un
   500**; validar antes de tocar la base, diciendo QUÉ falta; cuando una regla de
-  dominio impida la operación, 4xx con mensaje accionable.
+  dominio impida la operación, 4xx con mensaje accionable — y esa misma regla en
+  TODAS las variantes de la operación (colección y por id), no solo donde
+  apareció.
 - **Cuerpo JSON en el servidor** → guard de objeto (`typeof body === 'object'`)
   antes de leer cualquier propiedad. Sin guard, aparece el 500.
 - **Operación que puede correr dos veces** (generadores, doble clic, reintentos)
@@ -115,6 +117,14 @@ acá va solo lo generalizable.
   una invariante, agregá su candado (CHECK/índice) en la misma migración.
 - **Zona compartida** (seed, navegación, ids de flows, números de smoke) → corré
   la batería completa: romper un flujo viejo también es un bug de tu ronda.
+- **Documento persistido + proyección/agregado** (resúmenes, liquidaciones,
+  cierres) → la misma unidad no se cuenta dos veces: definí la exclusión
+  explícita entre documento y agregado —sobre todo para el período en curso— y
+  probá el borde impago vs pagado.
+- **Configuración que re-particiona períodos ya emitidos** (día de cierre, ancla,
+  redondeo) → contra un documento **pagado** el recálculo re-factura (doble
+  cobro): bloqueá el cambio con 4xx accionable que explique el escape, o congelá
+  explícitamente; probalo con un documento pagado ya existente.
 
 ---
 
