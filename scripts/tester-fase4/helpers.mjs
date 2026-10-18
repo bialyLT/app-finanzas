@@ -112,6 +112,25 @@ export async function apiForeignOrigin(path, rawBody) {
   return readResponse(response);
 }
 
+/**
+ * Fetch crudo CON la sesión actual (devuelve el `Response`, sin parsear).
+ *
+ * Para MEDIR bloqueos de verdad: un fetch con la cookie vacía NO sirve como
+ * "bloqueador" — la ruta responde 401 al instante, sin abrir conexión contra la
+ * base. Con la cookie de la sesión, la consulta llega a Postgres y la conexión
+ * del pool queda OCUPADA hasta que la consulta termina.
+ */
+export function fetchConSesion(path, options = {}) {
+  const url = path.startsWith("http") ? path : `${BASE_URL}${path}`;
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...(options.headers ?? {}),
+    },
+  });
+}
+
 /* ────────────────────────────────────────────────────────────────────────────
  * Contadores y aserciones
  * ──────────────────────────────────────────────────────────────────────────── */
