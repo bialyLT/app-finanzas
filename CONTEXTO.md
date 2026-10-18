@@ -1,6 +1,6 @@
 # Contexto del proyecto
 
-Documento de traspaso para continuar el trabajo desde otro agente o desde otra máquina. Última actualización: 2026-10-17.
+Documento de traspaso para continuar el trabajo desde otro agente o desde otra máquina. Última actualización: 2026-10-18.
 
 ## Qué es
 
@@ -9,16 +9,16 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-17)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: **262 tests** de vitest (179 unitarios + 83 de integración), **431 aserciones** de smoke, **582 checks** de la batería adversarial server-side (`scripts/tester-fase5/`), **16 flows** de Maestro (suite completa en 33m 18s), build de producción limpio (24 entradas de ruta).
-- Fases 0, 1, 2, 3 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3 en dos rondas, núcleo server-side + UI, con el fix U1 del input de fecha incluido); **la 5 tiene la ronda 1 cerrada** (núcleo server-side de tarjetas y cuotas, 2026-10-17) y la ronda 2 (UI) pendiente; fases 4, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
+- Batería verde: **267 tests** de vitest (8 archivos, unitarios + integración), **431 aserciones** de smoke, **582 checks** de la batería adversarial server-side (`scripts/tester-fase5/`, ronda 1), **21 flows** de Maestro (suite completa en 47m 30s), build de producción limpio con `/tarjetas`. (Anotado: una corrida de `npm test` salió flaky bajo presión de RAM al cerrar la ronda 2 — 2 fallos no reproducidos en 5 corridas posteriores.)
+- Fases 0, 1, 2, 3, 5 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3 y la 5 en dos rondas cada una, núcleo server-side + UI; la 5 cerró el 2026-10-18 con la suite en 21/21); fases 4, 7 y 9 parciales (con desvíos documentados); fase 8 (migración de datos viejos) sin empezar.
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
 
-- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las catorce trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
+- `ROADMAP.md` — el documento maestro: fases, criterios de aceptación, decisiones tomadas, las dieciséis trampas de Maestro y una tabla de estado real. **Es local y está en `.gitignore`**: si no está en tu copia, pedilo; este documento resume lo indispensable.
 - `README.md` — arquitectura, capas de test y cómo correr todo.
 - `agents/dev.md`, `agents/ui-tester.md` y `agents/security-auditor.md` — prompts de los subagentes autónomos (dev de ronda, tester de UI con Maestro y auditor de seguridad).
-- `flows/README.md` — las **catorce trampas** de Maestro. Leer antes de tocar los flows.
+- `flows/README.md` — las **dieciséis trampas** de Maestro. Leer antes de tocar los flows.
 - Memoria persistente **Engram** (si está disponible en la máquina): buscar por proyecto; hay observaciones de arquitectura, bugs y decisiones.
 
 ## Decisiones que no se negocian
@@ -47,10 +47,10 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 262 tests (unitarios + integración contra finanzas_test)
+npm test                  # 267 tests (unitarios + integración contra finanzas_test)
 npm run smoke             # 431 aserciones end-to-end (servidor arriba)
 node scripts/tester-fase5/NN-*.mjs  # 582 checks adversariales server-side (ronda 1 de la Fase 5; servidor arriba)
-npm run flows             # 16 flows de Maestro: siembra la base y corre; ~33m
+npm run flows             # 21 flows de Maestro: siembra la base y corre; ~47m
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -64,9 +64,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 5 (tarjetas y cuotas) — ronda 1 (núcleo server-side) completa; sigue la ronda 2 (UI).** El 2026-10-17 cerró el núcleo: `closingDay`/`dueDay`/`creditLimit` en las cuentas `CREDIT_CARD`, `CardPlan`/`CardPlanItem`/`Statement` (12 CHECKs, migración `20261017233037_tarjetas_y_cuotas`), dominio `lib/cards.ts` + servicio `lib/card-service.ts`, 5 rutas nuevas (`/api/cards`, `statements`, `statements/pay`, `plans`, `plans/preview`): resúmenes idempotentes (impago recalcula / pagado congela), pago = TRANSFER con claim atómico, compromisos 6/12 meses, preview con TEA implícita (21,83%). La ronda del tester dejó la batería durable **582 checks** (`scripts/tester-fase5/`) y arregló 4 bugs (B1/B2 de semántica de dominio; F2/F3 de pre-vuelo — las dos clases nuevas quedaron abstraídas en `agents/dev.md`). Cierre: typecheck 0 · 262/262 · 431/431 · build 24 rutas. **La ronda 2 es la UI**: pantalla de tarjetas, formulario de cuotas, correr el cierre, pagar el resumen — con sus flows de Maestro.
+**Fase 5 (tarjetas y cuotas) — completa (rondas 1 y 2).** El 2026-10-17 cerró el núcleo: `closingDay`/`dueDay`/`creditLimit` en las cuentas `CREDIT_CARD`, `CardPlan`/`CardPlanItem`/`Statement` (12 CHECKs, migración `20261017233037_tarjetas_y_cuotas`), dominio `lib/cards.ts` + servicio `lib/card-service.ts`, 5 rutas nuevas (`/api/cards`, `statements`, `statements/pay`, `plans`, `plans/preview`): resúmenes idempotentes (impago recalcula / pagado congela), pago = TRANSFER con claim atómico, compromisos 6/12 meses, preview con TEA implícita (21,83%). La ronda del tester dejó la batería durable **582 checks** (`scripts/tester-fase5/`) y arregló 4 bugs (B1/B2 de semántica de dominio; F2/F3 de pre-vuelo — las dos clases nuevas quedaron abstraídas en `agents/dev.md`). Cierre: typecheck 0 · 262/262 · 431/431 · build 24 rutas. **La ronda 2 (UI) cerró el 2026-10-18:** pantalla `/tarjetas` (config del par cierre/vencimiento y el límite, período en curso, resumen con pago en dos pasos, cuotas y compromisos 6/12), modal de compra en cuotas con TEA implícita, alta de tarjeta desde el formulario de cuentas y borrado de movimientos en línea. Suite **21/21 en 47m 30s**; 1 bug de app arreglado (`window.confirm` tumbaba al driver — trampa 16) y 2 del arnés (orden de flows; fecha fija). Diferidos: reabrir un resumen pagado, rubros del resumen, planes `IMPORTED` de tarjeta y pago parcial de resumen.
 
-La Fase 3 (recurrencia) quedó completa antes, en dos rondas (ronda 1 `2aa08c4`; ronda 2 `9fd6271`, suite 16/16 en 33m 18s). Después de la ronda 2 de la Fase 5: lo que quede de las fases 4/7 y la Fase 9 (endurecimiento) para producción.
+La Fase 3 (recurrencia) quedó completa antes, en dos rondas (ronda 1 `2aa08c4`; ronda 2 `9fd6271`, suite 16/16 en 33m 18s). Sigue la **Fase 4 (deudas y préstamos) en dos rondas**: ronda 1 server-side en curso (`Installment` + sistemas de amortización alemán/americano/solo interés/importado, `OWED_TO_ME`+`RECEIVABLE`, pago parcial y cancelación anticipada, datos de "Compromisos próximos") y ronda 2 la UI guiada con el progreso de deuda. Después: lo que quede de la Fase 7 y la Fase 9 (endurecimiento) para producción.
 
 ## Bloqueos que necesitan a la persona
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { cardDaysError } from "@/lib/card-form";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
 import {
   ACCOUNT_KIND_LABEL,
@@ -37,12 +38,18 @@ export default function AccountForm({ onClose, onSaved }: Props) {
   const [installmentCount, setInstallmentCount] = useState("");
   const [firstInstallmentDate, setFirstInstallmentDate] = useState("");
 
+  // Parámetros de la tarjeta (sólo si kind = CREDIT_CARD).
+  const [closingDay, setClosingDay] = useState("");
+  const [dueDay, setDueDay] = useState("");
+  const [creditLimit, setCreditLimit] = useState("");
+
   const [preview, setPreview] = useState<LoanPreviewDTO | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const isLoan = kind === "LOAN";
+  const isCard = kind === "CREDIT_CARD";
 
   // ── Vista previa del préstamo ──────────────────────────────────────────────
   // Se pide al servidor DESPUÉS de que la persona deja de escribir (300 ms), no
@@ -111,6 +118,14 @@ export default function AccountForm({ onClose, onSaved }: Props) {
       }
     }
 
+    if (isCard) {
+      const daysError = cardDaysError(closingDay, dueDay);
+      if (daysError) {
+        setError(daysError);
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       const response = await fetch("/api/accounts", {
@@ -128,6 +143,12 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 ...(firstInstallmentDate ? { firstInstallmentDate } : {}),
               }
             : {}),
+          // Sólo si la tarjeta tiene los dos días: la API exige el par completo
+          // (o ninguno). El límite viaja solo y es opcional.
+          ...(isCard && closingDay.trim() && dueDay.trim()
+            ? { closingDay: Number(closingDay), dueDay: Number(dueDay) }
+            : {}),
+          ...(isCard && creditLimit.trim() ? { creditLimit } : {}),
         }),
       });
 
@@ -146,6 +167,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
   }
 
   const openingPreview = formatAmountInput(openingBalance);
+  const limitPreview = formatAmountInput(creditLimit);
 
   return (
     <div
@@ -313,31 +335,106 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               </p>
             </>
           ) : (
-            <div>
-              <label htmlFor="acc-opening" className="text-sm font-medium">
-                Cuánta plata tiene hoy{" "}
-                <span className="font-normal text-zinc-500">(opcional)</span>
-              </label>
-              <input
-                id="acc-opening"
-                type="text"
-                inputMode="decimal"
-                autoComplete="off"
-                value={openingBalance}
-                onChange={(e) => setOpeningBalance(e.target.value)}
-                placeholder="0,00"
-                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
-              />
-              <p className="mt-1 text-xs text-zinc-500">
-                {openingPreview ? (
-                  <>
-                    Arranca con <b>{openingPreview}</b>.
-                  </>
-                ) : (
-                  "Sirve para empezar hoy sin cargar meses de movimientos viejos."
-                )}
-              </p>
-            </div>
+            <>
+              {/* ── Parámetros de la tarjeta ─────────────────────────────── */}
+              {/* Cierre y vencimiento viajan JUNTOS (contrato de la API). El
+                  límite es opcional y puede llegar después: la tarjeta puede
+                  existir sin límite cargado (la utilización dice "no se sabe"
+                  en vez de inventar un 0%). */}
+              {isCard && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="acc-card-closing" className="text-sm font-medium">
+                        Día de cierre
+                      </label>
+                      <input
+                        id="acc-card-closing"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={closingDay}
+                        onChange={(e) => setClosingDay(e.target.value)}
+                        placeholder="15"
+                        className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="acc-card-due" className="text-sm font-medium">
+                        Día de vencimiento
+                      </label>
+                      <input
+                        id="acc-card-due"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={dueDay}
+                        onChange={(e) => setDueDay(e.target.value)}
+                        placeholder="5"
+                        className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label htmlFor="acc-card-limit" className="text-sm font-medium">
+                      Límite de la tarjeta{" "}
+                      <span className="font-normal text-zinc-500">(opcional)</span>
+                    </label>
+                    <input
+                      id="acc-card-limit"
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={creditLimit}
+                      onChange={(e) => setCreditLimit(e.target.value)}
+                      placeholder="500.000"
+                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                    {limitPreview && (
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Hasta <b>{limitPreview}</b>.
+                      </p>
+                    )}
+                  </div>
+
+                  <p className="text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-zinc-600 dark:text-zinc-400">
+                    Con el cierre y el vencimiento cargados, la app puede emitir
+                    resúmenes y repartir las cuotas. Si los dejás vacíos, la
+                    tarjeta existe pero no se pueden correr resúmenes — los
+                    podés cargar después desde <b>💳 Tarjetas</b>.
+                  </p>
+                </>
+              )}
+
+              <div>
+                <label htmlFor="acc-opening" className="text-sm font-medium">
+                  {isCard ? "Saldo inicial" : "Cuánta plata tiene hoy"}{" "}
+                  <span className="font-normal text-zinc-500">(opcional)</span>
+                </label>
+                <input
+                  id="acc-opening"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={openingBalance}
+                  onChange={(e) => setOpeningBalance(e.target.value)}
+                  placeholder="0,00"
+                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  {openingPreview ? (
+                    <>
+                      Arranca con <b>{openingPreview}</b>.
+                    </>
+                  ) : isCard ? (
+                    "Ojo: en una tarjeta el saldo negativo es deuda. Si ya debés $ 50.000, escribí -50.000."
+                  ) : (
+                    "Sirve para empezar hoy sin cargar meses de movimientos viejos."
+                  )}
+                </p>
+              </div>
+            </>
           )}
 
           {/* Pie fijo: mismo motivo que en TransactionForm — en una pantalla
