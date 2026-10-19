@@ -138,7 +138,7 @@ Resumen de lo que no podés olvidarte:
     el error aparece en el PASO SIGUIENTE. Anclá el scroll en una línea ARRIBA del
     objetivo con `centerElement: true` (trampa 12 de `flows/README.md`).
 
-### Trampas de la MEDICIÓN (no del driver) — de la ronda F7 r1
+### Trampas de la MEDICIÓN (no del driver) — de las rondas F7
 
 No son de Maestro, pero ya costaron una ronda: artefactos del entorno de sondas o
 datos del escenario que se leen como fallas del producto.
@@ -158,6 +158,17 @@ datos del escenario que se leen como fallas del producto.
 - **El generador de recurrencia materializa vencimientos en cualquier `load()`
   del panel** (dato de negocio, no contaminación): no asertes igualdad de tarjeta
   entre recargas; la evidencia de un cambio es el **diff por id** contra la API.
+- **La posición de un flow es parte de su contrato.** Un flow que corre al final
+  hereda el estado de TODOS los anteriores, y el estado del seed caduca: los
+  préstamos `21`/`22` crean sus propias transfers «Cuota 1 · capital» y el
+  desempate del autocompletado ya no da el par esperado. Validá la posición en la
+  suite COMPLETA, no sólo aislado; si el flow necesita el seed, correlo pegado al
+  seed (`04b-carga-inteligente`, ex `23`) o usá marcadores únicos que nadie más
+  escriba. (F7 r2: la primera suite completa falló 24/25 por esto.)
+- **Las precondiciones sobre «hoy» caducan después de la suite.** Los flows
+  cargan fixtures fechadas hoy por diseño: no asertes «hoy arranca vacío»;
+  capturá una línea base y medí deltas, y limpiá por id lo tuyo. (F7 r2: `ui-05`
+  exigía vacío y era falso después de una corrida completa.)
 
 ### Los datos de partida
 

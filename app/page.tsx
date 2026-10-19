@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import AccountForm from "@/components/AccountForm";
+import CommandPalette from "@/components/CommandPalette";
+import CsvImportModal from "@/components/CsvImportModal";
 import TransactionForm from "@/components/TransactionForm";
 import {
   formatCalendar,
@@ -17,6 +19,8 @@ import {
   type AccountBalanceDTO,
   type CategoryDTO,
   type DebtReportDTO,
+  type FavoriteDTO,
+  type FavoritesResponse,
   type MovementDTO,
   type MovementKindDTO,
   type MovementsResponse,
@@ -35,6 +39,7 @@ import {
   toCents,
 } from "@/lib/format";
 import { shortcutMovementKind } from "@/lib/quick-entry";
+import { isPaletteShortcut } from "@/lib/command-palette";
 
 /** Lo que se abre en el modal. */
 type Modal = MovementKindDTO | "ACCOUNT" | null;
@@ -126,6 +131,30 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [modal, setModal] = useState<Modal>(null);
+
+  /**
+   * La plantilla con la que se abrió el formulario, si vino de un favorito.
+   * Se limpia al cerrar: abrir un movimiento normal no debe heredar la anterior.
+   */
+  const [favoriteForForm, setFavoriteForForm] = useState<FavoriteDTO | null>(null);
+  const [favorites, setFavorites] = useState<FavoriteDTO[]>([]);
+  const [favoritesMax, setFavoritesMax] = useState(24);
+
+  /** Paleta `Ctrl+K` e importación CSV: dos overlays que no conviven con el form. */
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [csvOpen, setCsvOpen] = useState(false);
+
+  /**
+   * Borrado de plantillas en DOS pasos inline, como el resto de la app: el
+   * driver de Maestro no puede contestar `window.confirm`.
+   */
+  const [confirmFavoriteDeleteId, setConfirmFavoriteDeleteId] = useState<
+    string | null
+  >(null);
+  const [favoriteDeleteBusyId, setFavoriteDeleteBusyId] = useState<string | null>(
+    null,
+  );
+  const [favoriteDeleteNotice, setFavoriteDeleteNotice] = useState("");
 
   /**
    * Aviso del generador de recurrencia.
@@ -234,6 +263,7 @@ export default function Home() {
         reconciliationRes,
         debtRes,
         recurrenceRes,
+        favoritesRes,
       ] = await Promise.all([
         fetch(`/api/transactions?from=${range.from}&to=${range.to}`),
         fetch("/api/categories"),
@@ -243,6 +273,9 @@ export default function Home() {
         // Sólo para el banner de pendientes. Con `catch` propio: un fallo de
         // ESTE pedido no puede tumbar un panel que por lo demás cargó bien.
         fetch("/api/recurrence").catch(() => null),
+        // Las plantillas tampoco son críticas para el panel: si fallan, la
+        // pantalla sigue mostrando movimientos y el formulario normal.
+        fetch("/api/favorites").catch(() => null),
       ]);
 
       if (
@@ -274,6 +307,10 @@ export default function Home() {
         recurrenceRes && recurrenceRes.ok
           ? ((await recurrenceRes.json()) as { pending: unknown[] })
           : null;
+      const favoritesData =
+        favoritesRes && favoritesRes.ok
+          ? ((await favoritesRes.json()) as FavoritesResponse)
+          : null;
 
       setMovements(movementsData.movements);
       setTruncated(movementsData.truncated);
@@ -285,6 +322,10 @@ export default function Home() {
       setReconciliation(reconciliationData.reconciliation);
       setDebtReport(debtData.debtReport);
       setPendingCount(recurrenceData?.pending.length ?? 0);
+      if (favoritesData) {
+        setFavorites(favoritesData.favorites);
+        setFavoritesMax(favoritesData.max);
+      }
     } catch {
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
@@ -297,6 +338,79 @@ export default function Home() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Abre el formulario, opcionalmente precargado con una plantilla.
+   *
+   * Un solo camino para los tres botones, la paleta y los chips: si cada uno
+   * armara su propio estado, cerrar el modal dejaría la plantilla anterior
+   * pegada al próximo "Nuevo gasto".
+   */
+  function openMovement(kind: MovementKindDTO, favorite: FavoriteDTO | null = null) {
+    setFavoriteForForm(favorite);
+    setModal(kind);
+  }
+
+  /** Cierra el form y descarta la plantilla de origen (no queda pegada al próximo). */
+  function closeMovement() {
+    setModal(null);
+    setFavoriteForForm(null);
+  }
+
+  /** Recarga sólo las plantillas (guardar una nueva no exige recargar el panel). */
+  const refreshFavorites = useCallback(async () => {
+    try {
+      const response = await fetch("/api/favorites");
+      if (!response.ok) return;
+      const data = (await response.json()) as FavoritesResponse;
+      setFavorites(data.favorites);
+      setFavoritesMax(data.max);
+    } catch {
+      // Best-effort: el panel sigue funcionando sin la lista de plantillas.
+    }
+  }, []);
+
+  async function deleteFavorite(id: string) {
+    if (favoriteDeleteBusyId) return;
+    setFavoriteDeleteBusyId(id);
+    setFavoriteDeleteNotice("");
+    try {
+      const response = await fetch(
+        `/api/favorites?id=${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
+      if (response.ok || response.status === 404) {
+        // 404 también es final feliz: la plantilla ya no está.
+        setFavorites((current) => current.filter((item) => item.id !== id));
+        setConfirmFavoriteDeleteId(null);
+        return;
+      }
+      const data = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      setFavoriteDeleteNotice(data.error ?? "No se pudo borrar la plantilla.");
+      setConfirmFavoriteDeleteId(null);
+    } catch {
+      setFavoriteDeleteNotice("No se pudo borrar la plantilla.");
+      setConfirmFavoriteDeleteId(null);
+    } finally {
+      setFavoriteDeleteBusyId(null);
+    }
+  }
+
+  /** Orden de la lista de plantillas: último usado, después las más nuevas. */
+  const orderedFavorites = useMemo(
+    () =>
+      [...favorites].sort((a, b) => {
+        if (a.lastUsedAt && b.lastUsedAt) {
+          return b.lastUsedAt.localeCompare(a.lastUsedAt);
+        }
+        if (a.lastUsedAt) return -1;
+        if (b.lastUsedAt) return 1;
+        return 0;
+      }),
+    [favorites],
+  );
 
   /**
    * Atajos de teclado: T abre gasto, I abre ingreso.
@@ -324,7 +438,7 @@ export default function Home() {
                 }
               : null,
         },
-        { modalOpen: modal !== null },
+        { modalOpen: modal !== null || paletteOpen || csvOpen },
       );
       if (!next) return;
       event.preventDefault();
@@ -333,7 +447,34 @@ export default function Home() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [modal]);
+  }, [modal, paletteOpen, csvOpen]);
+
+  /**
+   * `Ctrl+K` / `Cmd+K`: abre la paleta. Con un formulario o el importador
+   * abierto NO se dispara: abrir la paleta encima perdería de vista (o
+   * descartaría) lo que la persona ya cargó. Segundo `Ctrl+K` la cierra.
+   */
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const shortcut = isPaletteShortcut({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        isComposing: event.isComposing,
+      });
+      if (!shortcut) return;
+
+      if (modal !== null || csvOpen) return;
+
+      event.preventDefault();
+      setPaletteOpen((current) => !current);
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [modal, csvOpen]);
 
   /**
    * Deshace el último guardado: reutiliza el DELETE de movimientos que ya
@@ -1043,7 +1184,7 @@ export default function Home() {
       <div className="grid grid-cols-3 gap-3">
         <button
           id="btn-income"
-          onClick={() => setModal("INCOME")}
+          onClick={() => openMovement("INCOME")}
           className="rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ＋ Ingreso
@@ -1053,7 +1194,7 @@ export default function Home() {
         </button>
         <button
           id="btn-expense"
-          onClick={() => setModal("EXPENSE")}
+          onClick={() => openMovement("EXPENSE")}
           className="rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           － Gasto
@@ -1063,7 +1204,7 @@ export default function Home() {
         </button>
         <button
           id="btn-transfer"
-          onClick={() => setModal("TRANSFER")}
+          onClick={() => openMovement("TRANSFER")}
           className="rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ⇄ Transferir
@@ -1071,6 +1212,142 @@ export default function Home() {
             Entre tus cuentas
           </span>
         </button>
+      </div>
+
+      {/* ── Plantillas y entrada a la carga inteligente ──────────────────── */}
+      {/* No entran en el formulario de carga rápida: son un punto de entrada
+          propio. Una plantilla no es un movimiento y un CSV no es una carga
+          manual; mezclarlos haría más lento el camino típico. */}
+      <div
+        id="quick-extras"
+        className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-4 shadow-sm"
+      >
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div>
+            <h2 className="font-bold">Plantillas</h2>
+            <p className="text-[11px] text-zinc-500">
+              {orderedFavorites.length} de {favoritesMax} · un toque para
+              precargar el formulario
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              id="btn-import-csv"
+              type="button"
+              onClick={() => setCsvOpen(true)}
+              className="rounded-xl border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
+              📥 Importar CSV
+            </button>
+            <button
+              id="btn-palette"
+              type="button"
+              onClick={() => setPaletteOpen(true)}
+              className="rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black px-3 py-1.5 text-xs font-bold"
+            >
+              ⌘ Buscar
+            </button>
+          </div>
+        </div>
+
+        {favoriteDeleteNotice && (
+          <p
+            id="favorite-delete-notice"
+            role="alert"
+            className="mt-2 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+          >
+            {favoriteDeleteNotice}
+          </p>
+        )}
+
+        {orderedFavorites.length === 0 ? (
+          <p id="favorites-empty" className="mt-3 text-xs text-zinc-500">
+            Todavía no hay plantillas. Abrí un movimiento y usá “☆ Guardar como
+            plantilla” para guardar el formulario completo.
+          </p>
+        ) : (
+          <div id="favorites-list" className="mt-3 flex flex-wrap gap-2">
+            {orderedFavorites.map((favorite) => {
+              const blocked =
+                favorite.account.archived ||
+                (favorite.kind === "TRANSFER" &&
+                  (favorite.toAccount?.archived ?? true));
+
+              if (confirmFavoriteDeleteId === favorite.id) {
+                return (
+                  <div
+                    key={favorite.id}
+                    id={`favorite-delete-panel-${favorite.id}`}
+                    className="flex items-center gap-2 rounded-full bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-1.5 text-xs"
+                  >
+                    <span>¿Borrar “{favorite.name}”?</span>
+                    <button
+                      id={`favorite-delete-confirm-${favorite.id}`}
+                      type="button"
+                      onClick={() => void deleteFavorite(favorite.id)}
+                      disabled={favoriteDeleteBusyId !== null}
+                      className="rounded-full bg-rose-600 hover:bg-rose-700 text-white px-2 py-0.5 font-bold disabled:opacity-50"
+                    >
+                      {favoriteDeleteBusyId === favorite.id ? "…" : "Sí"}
+                    </button>
+                    <button
+                      id={`favorite-delete-cancel-${favorite.id}`}
+                      type="button"
+                      onClick={() => setConfirmFavoriteDeleteId(null)}
+                      disabled={favoriteDeleteBusyId !== null}
+                      className="rounded-full border border-amber-300 dark:border-amber-800 px-2 py-0.5 font-medium disabled:opacity-50"
+                    >
+                      No
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={favorite.id}
+                  className={`flex items-stretch rounded-full border border-zinc-200 dark:border-zinc-700 overflow-hidden ${
+                    blocked ? "opacity-50" : ""
+                  }`}
+                >
+                  <button
+                    id={`favorite-${favorite.id}`}
+                    type="button"
+                    disabled={blocked}
+                    onClick={() => openMovement(favorite.kind, favorite)}
+                    title={
+                      blocked
+                        ? "La cuenta de esta plantilla está archivada"
+                        : `Usar plantilla ${favorite.name}`
+                    }
+                    className="px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:cursor-not-allowed"
+                  >
+                    <span className="block text-xs font-semibold">
+                      {favorite.name}
+                    </span>
+                    <span className="block text-[10px] text-zinc-500">
+                      {MOVEMENT_KIND_LABEL[favorite.kind]}
+                      {favorite.amount ? ` · ${formatMoney(favorite.amount)}` : ""}
+                      {blocked ? " · cuenta archivada" : ""}
+                    </span>
+                  </button>
+                  <button
+                    id={`favorite-delete-${favorite.id}`}
+                    type="button"
+                    onClick={() => {
+                      setConfirmFavoriteDeleteId(favorite.id);
+                      setFavoriteDeleteNotice("");
+                    }}
+                    aria-label={`Borrar plantilla ${favorite.name}`}
+                    className="px-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Los atajos se anuncian acá para que existan para quien no los conoce;
@@ -1085,7 +1362,15 @@ export default function Home() {
         <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
           I
         </kbd>{" "}
-        ingreso
+        ingreso ·{" "}
+        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+          Ctrl
+        </kbd>{" "}
+        +{" "}
+        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+          K
+        </kbd>{" "}
+        buscar
       </p>
 
       {/* ── Lista de movimientos ─────────────────────────────────────────── */}
@@ -1377,6 +1662,35 @@ export default function Home() {
         </div>
       )}
 
+      {paletteOpen && (
+        <CommandPalette
+          favorites={orderedFavorites}
+          onClose={() => setPaletteOpen(false)}
+          onNewMovement={(kind) => {
+            setPaletteOpen(false);
+            openMovement(kind);
+          }}
+          onUseFavorite={(favorite) => {
+            setPaletteOpen(false);
+            openMovement(favorite.kind, favorite);
+          }}
+          onOpenCsv={() => {
+            setPaletteOpen(false);
+            setCsvOpen(true);
+          }}
+        />
+      )}
+
+      {csvOpen && (
+        <CsvImportModal
+          onClose={() => setCsvOpen(false)}
+          onImported={() => {
+            load();
+            refreshFavorites();
+          }}
+        />
+      )}
+
       {modal === "ACCOUNT" ? (
         <AccountForm onClose={() => setModal(null)} onSaved={load} />
       ) : modal ? (
@@ -1386,10 +1700,15 @@ export default function Home() {
           // TODAS las categorías: el formulario cambia de tipo sin cerrarse y
           // necesita las dos listas para filtrar adentro por tipo activo.
           categories={categories}
-          onClose={() => setModal(null)}
+          favorite={favoriteForForm}
+          onFavoriteSaved={() => void refreshFavorites()}
+          onClose={closeMovement}
           onSaved={(movement) => {
             setUndoToast({ movement, error: "", busy: false });
             load();
+            // Si el movimiento usó una plantilla, `lastUsedAt` cambió: el orden
+            // de los chips se actualiza sin esperar a la próxima recarga.
+            refreshFavorites();
           }}
         />
       ) : null}

@@ -1,0 +1,282 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 04b · Carga inteligente — autocompletado, plantillas y entradas nuevas
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# La segunda capa de la Fase 7, recorrida como la usaría una persona:
+#
+#   1. Abrir una transferencia y escribir "Cuota 1" en la nota.
+#   2. Aceptar la sugerencia "Cuota 1 · capital": la app precarga el monto
+#      típico (31.412,71), la cuenta de origen y el destino. No guarda nada.
+#   3. Guardar ese formulario como plantilla y cancelar el movimiento.
+#   4. Usar la plantilla desde el chip: abre el form YA precargado; guardar y
+#      deshacer deja todo como estaba (flujo NETO CERO).
+#   5. Borrar la plantilla en dos pasos inline (sin diálogo nativo).
+#   6. Abrir el importador CSV: el formato y el paso de preview están a la
+#      vista; no se importa nada en este flow (los datos históricos no tienen
+#      que ensuciar el mes que miran los demás).
+#   7. Abrir la paleta desde el botón "⌘ Buscar", buscar "gasto" y entrar al
+#      formulario de gasto. El atajo Ctrl+K se cubre con la sonda CDP
+#      scripts/probe-palette.mjs: Maestro web no emite combinaciones de teclas.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ TRANSFER Y NO GASTO
+# ─────────────────────────────────────────────────────────────────────────────
+# En una transferencia la nota va ARRIBA, junto al monto: el flow la puede
+# tocar sin acercarse a la banda del pie fijo (~y≈441 en la ventana real de
+# 1019×557). En gasto/ingreso la nota es el último campo y un desplegable
+# abierto ahí es justo la geometría de la trampa 15.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO Y LÍMITE DE CALENDARIO
+# ─────────────────────────────────────────────────────────────────────────────
+# Necesita el seed del smoke ("Cuota 1 · capital" del 15/10). No verifica
+# totales del mes: guarda y deshace el mismo movimiento, así que no tiene límite
+# de calendario propio.
+#
+# Corre como `04b`, justo después del 04 (antes era el `23`, último de la
+# suite). El nombre 23 lo dejaba DETRÁS de los préstamos 21/22, que también
+# crean transfers "Cuota 1 · capital" (los pagos de sus cuotas): con esos pares
+# extra en el grupo, el destino más reciente le gana el desempate al del seed y
+# la precarga esperada ("Préstamo personal") ya no aparece. La corrida completa
+# r2 lo falló exactamente así (step 22: assert de "Préstamo personal"). Como el
+# flow es neto cero (guarda y deshace, borra su plantilla), correr temprano no
+# cambia el estado que miran los demás flows.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ NO SE IMPORTAN FILAS DE VERDAD
+# ─────────────────────────────────────────────────────────────────────────────
+# Un CSV importado no tiene "deshacer" en la UI. Importar en octubre movería
+# los totales del estado que la suite viene acumulando; importar en un mes
+# viejo dejaría datos que nadie vuelve a mirar. El commit real (reconciliación
+# al centavo, duplicados, rollback) está cubierto por el smoke y por la suite
+# de integración; acá se verifica el camino de entrada y el preview.
+
+url: http://127.0.0.1:3000
+name: "04b · Carga inteligente — autocompletado y plantillas"
+tags:
+  - smoke
+  - movimientos
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# ── Abrir una transferencia ──────────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "btn-transfer"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "btn-transfer"
+
+- extendedWaitUntil:
+    visible: ".*Nueva transferencia.*"
+    timeout: 30000
+
+# ── Autocompletado de descripción ────────────────────────────────────────────
+# Se escribe una parte del texto; el desplegable se pide al servidor después de
+# un debounce corto y se dibuja como capa absoluta (no empuja campos).
+- tapOn:
+    id: "tx-description"
+- inputText: "Cuota 1"
+
+- extendedWaitUntil:
+    visible:
+      id: "tx-description-suggestions"
+    timeout: 30000
+
+- assertVisible: ".*Cuota 1 · capital.*"
+
+# Aceptar la primera sugerencia: precarga monto típico, origen y destino.
+- tapOn:
+    id: "tx-description-suggestion-0"
+
+# El monto típico es la mediana del seed (31.412,71) y queda en el campo.
+- assertVisible: '.*31\.412,71.*'
+# La cuenta de origen del movimiento histórico y el destino también.
+- assertVisible: ".*Banco Galicia.*"
+- assertVisible: ".*Préstamo personal.*"
+
+# ── Guardar el formulario como plantilla ─────────────────────────────────────
+# La acción vive arriba, junto al selector de tipo: en la ventana de tests
+# (1019×557) el formulario no entra completo y un enlace al final quedaría
+# detrás del pie fijo. Acá está a la vista sin scrollear el modal.
+- tapOn:
+    id: "tx-save-favorite"
+
+- extendedWaitUntil:
+    visible:
+      id: "tx-favorite-panel"
+    timeout: 30000
+
+- tapOn:
+    id: "tx-favorite-name"
+- inputText: "Flow 23 transferencia"
+
+- tapOn:
+    id: "tx-favorite-save"
+
+- extendedWaitUntil:
+    visible:
+      id: "tx-favorite-notice"
+    timeout: 30000
+
+# Cancelar el movimiento: la plantilla ya está guardada, el movimiento NO.
+- tapOn:
+    id: "tx-cancel"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000
+
+# ── La plantilla aparece en la pantalla principal ────────────────────────────
+- scrollUntilVisible:
+    element:
+      text: "Flow 23 transferencia"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- assertVisible: "Flow 23 transferencia"
+
+# ── Usarla: abre el form precargado ──────────────────────────────────────────
+- tapOn: "Flow 23 transferencia"
+
+- extendedWaitUntil:
+    visible:
+      id: "tx-favorite-banner"
+    timeout: 30000
+
+- assertVisible: '.*31\.412,71.*'
+- assertVisible: ".*Cuota 1 · capital.*"
+- assertVisible: ".*Préstamo personal.*"
+
+# Guardar y deshacer: el flow no deja rastro en los totales.
+- tapOn:
+    id: "tx-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "undo-toast"
+    timeout: 30000
+
+- tapOn:
+    id: "undo-button"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "undo-toast"
+    timeout: 30000
+
+# ── Borrar la plantilla en dos pasos inline ──────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "favorite-delete-.*"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "favorite-delete-.*"
+
+- extendedWaitUntil:
+    visible:
+      id: "favorite-delete-confirm-.*"
+    timeout: 30000
+
+- tapOn:
+    id: "favorite-delete-confirm-.*"
+
+- extendedWaitUntil:
+    notVisible: "Flow 23 transferencia"
+    timeout: 30000
+
+# ── Importador CSV: entrada y preview a la vista, sin escribir ───────────────
+- scrollUntilVisible:
+    element:
+      id: "btn-import-csv"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "btn-import-csv"
+
+- extendedWaitUntil:
+    visible:
+      id: "csv-text"
+    timeout: 30000
+
+- assertVisible:
+    id: "csv-preview-button"
+- assertVisible: ".*fecha.*tipo.*monto.*cuenta.*"
+- assertVisible: ".*nada se guarda hasta confirmar.*"
+
+- tapOn:
+    id: "csv-close"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "csv-text"
+    timeout: 30000
+
+# ── Paleta: entrada visible y búsqueda por texto ─────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "btn-palette"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "btn-palette"
+
+- extendedWaitUntil:
+    visible:
+      id: "palette-input"
+    timeout: 30000
+
+- tapOn:
+    id: "palette-input"
+- inputText: "gasto"
+
+- assertVisible: "Nuevo gasto"
+
+- tapOn: "Nuevo gasto"
+
+- extendedWaitUntil:
+    visible: ".*Nuevo gasto.*"
+    timeout: 30000
+
+- tapOn:
+    id: "tx-cancel"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000

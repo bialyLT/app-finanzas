@@ -69,6 +69,16 @@ import {
   movementTotals,
   DUPLICATES_MAX_ROWS,
 } from "./queries";
+import {
+  FAVORITES_MAX,
+  FavoriteError,
+  createFavorite,
+  deleteFavorite,
+  listFavorites,
+  parseFavoriteInput,
+  touchFavorite,
+} from "./favorites";
+import { analyzeCsv, importCsv, parseCsvExpected } from "./csv-import";
 
 const TEST_DATABASE_URL = process.env.DATABASE_URL_TEST;
 
@@ -98,6 +108,7 @@ async function resetDatabase() {
   // Orden FK: los resúmenes referencian movimientos (SetNull) y cuentas
   // (Restrict); los planes referencian su gasto (Restrict). Van antes que los
   // movimientos, o el delete de un movimiento con plan fallaría.
+  await db.favoriteTemplate.deleteMany();
   await db.statement.deleteMany();
   await db.cardPlan.deleteMany();
   await db.recurrenceOccurrence.deleteMany();
@@ -5357,5 +5368,475 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       },
     });
     expect(receivable.id).toBeTruthy();
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * FASE 7 RONDA 2 · PLANTILLAS Y CSV
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+describeDb("Plantillas favoritas y plantillas · Fase 7 r2", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  async function seedBase() {
+    const { gastos, sueldo } = await seedCategories();
+    const [bank, cash, card] = await Promise.all([
+      db.account.create({
+        data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+      }),
+      db.account.create({ data: { name: "Efectivo", kind: "CASH" } }),
+      db.account.create({ data: { name: "Visa", kind: "CREDIT_CARD" } }),
+    ]);
+    return { gastos, sueldo, bank, cash, card };
+  }
+
+  function expenseFavorite(accountId: string, overrides: Record<string, unknown> = {}) {
+    return parseFavoriteInput({
+      name: "Café",
+      kind: "EXPENSE",
+      amount: "1500",
+      description: "Café con leche",
+      categoryName: "Comida",
+      accountId,
+      toAccountId: null,
+      ...overrides,
+    });
+  }
+
+  it("guarda, lista por último uso y borra sin tocar la historia", async () => {
+    const { bank } = await seedBase();
+
+    const first = await createFavorite(db, expenseFavorite(bank.id, { name: "Café" }));
+    const second = await createFavorite(
+      db,
+      expenseFavorite(bank.id, { name: "Súper", amount: null }),
+    );
+
+    expect(first.amount).toBe("1500.00");
+    expect(second.amount).toBeNull();
+    // La categoría se creó con el tipo de la plantilla, una sola vez.
+    expect(
+      await db.category.count({ where: { normalizedName: "comida" } }),
+    ).toBe(1);
+
+    let list = await listFavorites(db);
+    expect(list.map((favorite) => favorite.name)).toEqual(["Súper", "Café"]);
+    expect(list.every((favorite) => favorite.lastUsedAt === null)).toBe(true);
+
+    await touchFavorite(db, first.id);
+    list = await listFavorites(db);
+    expect(list[0].name).toBe("Café");
+    expect(list[0].lastUsedAt).toBeTruthy();
+
+    // Un movimiento cargado con la plantilla es historia propia: borrar la
+    // plantilla no lo borra.
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "1500",
+        date: calendarToDb("2026-08-01"),
+        description: "Café con leche",
+        accountId: bank.id,
+      },
+    });
+    await deleteFavorite(db, first.id);
+    expect(await db.movement.count()).toBe(1);
+    expect((await listFavorites(db)).map((favorite) => favorite.name)).toEqual([
+      "Súper",
+    ]);
+  });
+
+  it("rechaza nombres duplicados sin importar acentos ni mayúsculas", async () => {
+    const { bank } = await seedBase();
+    await createFavorite(db, expenseFavorite(bank.id, { name: "Café" }));
+
+    await expect(
+      createFavorite(db, expenseFavorite(bank.id, { name: "cafe" })),
+    ).rejects.toMatchObject({ code: "P2002" });
+  });
+
+  it("aplica el tope de plantillas", async () => {
+    const { bank } = await seedBase();
+
+    for (let index = 0; index < FAVORITES_MAX; index += 1) {
+      await createFavorite(
+        db,
+        expenseFavorite(bank.id, { name: `Plantilla ${index + 1}`, amount: null }),
+      );
+    }
+
+    await expect(
+      createFavorite(db, expenseFavorite(bank.id, { name: "Una más" })),
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("valida monto, nombre, destino y tipo antes de escribir", async () => {
+    const { bank, cash } = await seedBase();
+
+    expect(() => expenseFavorite(bank.id, { amount: "0" })).toThrow(/mayor a cero/);
+    expect(() => expenseFavorite(bank.id, { amount: "-5" })).toThrow(/mayor a cero/);
+    expect(() => expenseFavorite(bank.id, { amount: "1,999" })).toThrow(/dos decimales/);
+    expect(() => expenseFavorite(bank.id, { name: "   " })).toThrow(/nombre/);
+    expect(() => expenseFavorite(bank.id, { name: "x".repeat(41) })).toThrow(/40/);
+    expect(() =>
+      expenseFavorite(bank.id, { description: "x".repeat(201) }),
+    ).toThrow(/200/);
+
+    expect(() =>
+      parseFavoriteInput({
+        name: "Transfer",
+        kind: "TRANSFER",
+        amount: null,
+        description: "",
+        categoryName: null,
+        accountId: bank.id,
+        toAccountId: bank.id,
+      }),
+    ).toThrow(/distinta/);
+    expect(() =>
+      parseFavoriteInput({
+        name: "Transfer",
+        kind: "TRANSFER",
+        amount: null,
+        description: "",
+        categoryName: null,
+        accountId: bank.id,
+        toAccountId: null,
+      }),
+    ).toThrow(/destino/);
+    expect(() =>
+      parseFavoriteInput({
+        name: "Gasto",
+        kind: "EXPENSE",
+        amount: null,
+        description: "",
+        categoryName: null,
+        accountId: bank.id,
+        toAccountId: cash.id,
+      }),
+    ).toThrow(/no lleva cuenta de destino/);
+  });
+
+  it("rechaza cuentas archivadas, ingresos a tarjeta y categorías del tipo contrario", async () => {
+    const { bank, cash, card, gastos } = await seedBase();
+
+    await db.account.update({
+      where: { id: cash.id },
+      data: { archived: true },
+    });
+    await expect(
+      createFavorite(db, expenseFavorite(cash.id)),
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      createFavorite(
+        db,
+        expenseFavorite(card.id, {
+          name: "Ingreso a tarjeta",
+          kind: "INCOME",
+          categoryName: "Sueldo",
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      createFavorite(
+        db,
+        expenseFavorite(bank.id, {
+          name: "Categoría cruzada",
+          categoryName: gastos.name,
+          kind: "INCOME",
+        }),
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("la base hace cumplir la forma, el monto y el nombre de la plantilla", async () => {
+    const { bank, cash } = await seedBase();
+
+    await expect(
+      db.favoriteTemplate.create({
+        data: {
+          name: "Misma cuenta",
+          normalizedName: "misma cuenta",
+          kind: "TRANSFER",
+          accountId: bank.id,
+          toAccountId: bank.id,
+        },
+      }),
+    ).rejects.toThrow(/favorite_shape_by_kind/);
+
+    await expect(
+      db.favoriteTemplate.create({
+        data: {
+          name: "Monto cero",
+          normalizedName: "monto cero",
+          kind: "EXPENSE",
+          amount: "0",
+          accountId: bank.id,
+        },
+      }),
+    ).rejects.toThrow(/favorite_amount_positive/);
+
+    await expect(
+      db.favoriteTemplate.create({
+        data: {
+          name: "   ",
+          normalizedName: "   ",
+          kind: "EXPENSE",
+          accountId: bank.id,
+        },
+      }),
+    ).rejects.toThrow(/favorite_name_valid/);
+
+    await db.favoriteTemplate.create({
+      data: {
+        name: "Válida",
+        normalizedName: "valida",
+        kind: "TRANSFER",
+        accountId: bank.id,
+        toAccountId: cash.id,
+      },
+    });
+    await expect(
+      db.favoriteTemplate.create({
+        data: {
+          name: "Otra",
+          normalizedName: "valida",
+          kind: "EXPENSE",
+          accountId: bank.id,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("borrar la categoría deja la plantilla sin categoría; borrar la cuenta la elimina", async () => {
+    const { bank, gastos } = await seedBase();
+    const favorite = await createFavorite(db, expenseFavorite(bank.id));
+
+    await db.category.delete({ where: { normalizedName: "comida" } });
+    expect(
+      (await db.favoriteTemplate.findUnique({ where: { id: favorite.id } }))
+        ?.categoryId,
+    ).toBeNull();
+
+    await db.account.delete({ where: { id: bank.id } });
+    expect(
+      await db.favoriteTemplate.findUnique({ where: { id: favorite.id } }),
+    ).toBeNull();
+  });
+});
+
+describeDb("Importación CSV · Fase 7 r2", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await db.$disconnect();
+  });
+
+  async function seedBase() {
+    const { gastos, sueldo } = await seedCategories();
+    const [bank, cash] = await Promise.all([
+      db.account.create({
+        data: { name: "Banco", kind: "BANK", openingBalance: "100000" },
+      }),
+      db.account.create({ data: { name: "Efectivo", kind: "CASH" } }),
+    ]);
+    return { gastos, sueldo, bank, cash };
+  }
+
+  function csv(rows: string[]) {
+    return [
+      "fecha,tipo,monto,cuenta,cuenta_destino,categoria,descripcion",
+      ...rows,
+    ].join("\n");
+  }
+
+  it("clasifica filas y calcula totales sólo de las importables", async () => {
+    await seedBase();
+    const text = csv([
+      "2026-08-01,ingreso,1000,Banco,,Sueldo,Agosto",
+      '2026-08-02,gasto,"1.234,56",Banco,,Comida,Súper',
+      "2026-08-03,transferencia,500,Banco,Efectivo,,Cajero",
+      "2026-08-04,gasto,0,Banco,,Comida,Monto inválido",
+      ",,,,,",
+    ]);
+
+    const { preview } = await analyzeCsv(db, text);
+
+    expect(preview.totalRows).toBe(5);
+    expect(preview.importableRows).toBe(3);
+    expect(preview.invalidRows).toBe(1);
+    expect(preview.duplicateRows).toBe(0);
+    expect(preview.emptyRows).toBe(1);
+    expect(preview.totals).toEqual({
+      income: "1000.00",
+      expenses: "1234.56",
+      transfers: "500.00",
+      count: 3,
+    });
+    expect(preview.categoriesToCreate).toEqual([
+      { name: "Comida", kind: "EXPENSE" },
+    ]);
+  });
+
+  it("importa todo en una transacción y concilia al centavo", async () => {
+    const { bank, cash } = await seedBase();
+    const text = csv([
+      "2026-08-01,ingreso,1000,Banco,,Sueldo,Agosto",
+      '2026-08-02,gasto,"1.234,56",Banco,,Comida,Súper',
+      "2026-08-03,transferencia,500,Banco,Efectivo,,Cajero",
+    ]);
+
+    const { preview } = await analyzeCsv(db, text);
+    const result = await importCsv(db, text, parseCsvExpected(preview.totals));
+
+    expect(result.imported).toBe(3);
+    expect(result.skippedDuplicates).toBe(0);
+    expect(result.totals).toEqual({
+      income: "1000.00",
+      expenses: "1234.56",
+      transfers: "500.00",
+      count: 3,
+    });
+    expect(result.categoriesCreated).toHaveLength(1);
+    expect(await db.movement.count()).toBe(3);
+
+    const expenses = await db.movement.aggregate({
+      where: { kind: "EXPENSE" },
+      _sum: { amount: true },
+    });
+    expect(expenses._sum.amount?.toFixed(2)).toBe("1234.56");
+    expect(
+      await db.category.count({ where: { normalizedName: "comida" } }),
+    ).toBe(1);
+
+    // Reimportar el mismo archivo: todas duplicadas, no se escribe nada.
+    const again = await analyzeCsv(db, text);
+    expect(again.preview.duplicateRows).toBe(3);
+    expect(again.preview.importableRows).toBe(0);
+    await expect(
+      importCsv(db, text, parseCsvExpected(again.preview.totals)),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(await db.movement.count()).toBe(3);
+  });
+
+  it("avisa y omite duplicados dentro del mismo archivo", async () => {
+    await seedBase();
+    const text = csv([
+      "2026-08-05,gasto,300,Banco,,Comida,Una vez",
+      "2026-08-05,gasto,300,Banco,,Comida,Una vez",
+    ]);
+
+    const { preview } = await analyzeCsv(db, text);
+    expect(preview.importableRows).toBe(1);
+    expect(preview.duplicateRows).toBe(1);
+
+    const result = await importCsv(db, text, parseCsvExpected(preview.totals));
+    expect(result.imported).toBe(1);
+    expect(result.skippedDuplicates).toBe(1);
+    expect(await db.movement.count()).toBe(1);
+  });
+
+  it("no importa nada si una fila no valida", async () => {
+    await seedBase();
+    const text = csv([
+      "2026-08-06,gasto,100,Banco,,Comida,Bien",
+      "2026-02-31,gasto,200,Banco,,Comida,Fecha imposible",
+    ]);
+
+    const { preview } = await analyzeCsv(db, text);
+    expect(preview.invalidRows).toBe(1);
+    expect(preview.importableRows).toBe(1);
+
+    await expect(
+      importCsv(db, text, parseCsvExpected(preview.totals)),
+    ).rejects.toMatchObject({ status: 422 });
+    expect(await db.movement.count()).toBe(0);
+  });
+
+  it("rechaza un preview que no coincide con el archivo", async () => {
+    await seedBase();
+    const original = csv(["2026-08-07,gasto,100,Banco,,Comida,Uno"]);
+    const { preview } = await analyzeCsv(db, original);
+    const expected = parseCsvExpected(preview.totals);
+
+    const changed = csv(["2026-08-07,gasto,999,Banco,,Comida,Uno"]);
+    await expect(importCsv(db, changed, expected)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(await db.movement.count()).toBe(0);
+  });
+
+  it("valida cuentas, destinos y categorías contra la base", async () => {
+    const { cash, gastos } = await seedBase();
+    await db.account.update({
+      where: { id: cash.id },
+      data: { archived: true },
+    });
+
+    const text = csv([
+      "2026-08-08,gasto,100,NoExiste,,Comida,Sin cuenta",
+      "2026-08-09,gasto,100,Efectivo,,Comida,Archivada",
+      "2026-08-10,transferencia,100,Banco,Banco,,Mismo destino",
+      `2026-08-11,ingreso,100,Banco,,${gastos.name},Categoría de gasto`,
+    ]);
+
+    const { preview } = await analyzeCsv(db, text);
+    expect(preview.importableRows).toBe(0);
+    expect(preview.invalidRows).toBe(4);
+    const errors = preview.rows.flatMap((row) => row.errors).join(" ");
+    expect(errors).toMatch(/no existe/);
+    expect(errors).toMatch(/archivada/);
+    expect(errors).toMatch(/distinta/);
+    expect(errors).toContain(gastos.name);
+  });
+
+  it("rechaza el mismo nombre de categoría como ingreso y gasto en el archivo", async () => {
+    await seedBase();
+    const text = csv([
+      "2026-08-12,ingreso,100,Banco,,Varios,Ingreso",
+      "2026-08-13,gasto,100,Banco,,Varios,Gasto",
+    ]);
+
+    const { preview } = await analyzeCsv(db, text);
+    expect(preview.importableRows).toBe(1);
+    expect(preview.invalidRows).toBe(1);
+    expect(preview.rows[1].errors.join(" ")).toMatch(/nombres distintos/);
+  });
+
+  it("permite un ingreso a una cuenta de dinero y lo rechaza en una de deuda", async () => {
+    const { bank } = await seedBase();
+    const card = await db.account.create({
+      data: { name: "Visa", kind: "CREDIT_CARD" },
+    });
+
+    const text = csv([
+      "2026-08-14,ingreso,100,Banco,,Sueldo,Bien",
+      "2026-08-15,ingreso,100,Visa,,Sueldo,Mal",
+    ]);
+    const { preview } = await analyzeCsv(db, text);
+    expect(preview.importableRows).toBe(1);
+    expect(preview.invalidRows).toBe(1);
+    expect(preview.rows[1].errors.join(" ")).toMatch(/cuenta de dinero/);
+
+    const result = await importCsv(db, text.replace(/.*Visa.*\n?/, ""), {
+      count: 1,
+      income: "100.00",
+      expenses: "0.00",
+      transfers: "0.00",
+    });
+    expect(result.imported).toBe(1);
+    expect(await db.movement.count({ where: { accountId: bank.id } })).toBe(1);
   });
 });

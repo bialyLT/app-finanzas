@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { findCategoryByName, searchCategories } from "@/lib/category-search";
+import { movePaletteIndex } from "@/lib/command-palette";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { addDays, todayCalendar } from "@/lib/dates";
+import type { DescriptionSuggestionDTO } from "@/lib/description-suggestions";
 import {
   type AccountBalanceDTO,
   type CategoryDTO,
+  type FavoriteDTO,
   type MovementDTO,
   type MovementKindDTO,
 } from "@/lib/finance";
@@ -27,6 +30,14 @@ interface Props {
   categories: CategoryDTO[];
   /** Cuenta preseleccionada, si la pantalla viene de "cargar un gasto acá". */
   defaultAccountId?: string;
+  /**
+   * Plantilla desde la que se abrió el formulario, si la pantalla viene de un
+   * favorito. Precarga el formulario; NO guarda nada hasta que la persona
+   * confirma.
+   */
+  favorite?: FavoriteDTO | null;
+  /** Se llama cuando se guarda una plantilla nueva desde el formulario. */
+  onFavoriteSaved?: (favorite: FavoriteDTO) => void;
   onClose: () => void;
   /** Recibe el movimiento guardado: el panel lo usa para el "Deshacer". */
   onSaved: (movement: MovementDTO) => void;
@@ -106,11 +117,48 @@ function pickDestinationAccount(
   return accounts.find((account) => account.id !== sourceId)?.id ?? "";
 }
 
+/**
+ * La cuenta de origen con la que abre el formulario.
+ *
+ * La plantilla gana sobre `defaultAccountId`: abrir un favorito es una acción
+ * explícita y su cuenta es parte de lo guardado. `resolveSourceAccount` vuelve
+ * a validar que la cuenta siga existiendo y sirva para el tipo, así que un
+ * favorito viejo no puede dejar el select en un estado inválido.
+ */
+function resolveInitialSource(
+  kind: MovementKindDTO,
+  accounts: AccountBalanceDTO[],
+  defaultAccountId: string | undefined,
+  favorite: FavoriteDTO | null,
+): string {
+  return resolveSourceAccount(kind, accounts, {
+    preferred: favorite?.account.id ?? defaultAccountId,
+    lastUsedId: readLastAccountId(browserStorage(), kind),
+  });
+}
+
+/** Cuenta de destino inicial de un favorito de transferencia, si sigue válida. */
+function resolveInitialDestination(
+  accounts: AccountBalanceDTO[],
+  sourceId: string,
+  favorite: FavoriteDTO | null,
+): string {
+  const saved = favorite?.toAccount
+    ? accounts.find(
+        (account) =>
+          account.id === favorite.toAccount?.id && account.id !== sourceId,
+      )
+    : null;
+  return saved?.id ?? pickDestinationAccount(accounts, sourceId);
+}
+
 export default function TransactionForm({
   kind: initialKind,
   accounts,
   categories,
   defaultAccountId,
+  favorite = null,
+  onFavoriteSaved,
   onClose,
   onSaved,
 }: Props) {
@@ -135,10 +183,7 @@ export default function TransactionForm({
   // tolerancia a ids borrados o inválidos— vive en `resolveSourceAccount`
   // (lib/quick-entry.ts), que es pura y está testeada.
   const [accountId, setAccountId] = useState(() =>
-    resolveSourceAccount(kind, accounts, {
-      preferred: defaultAccountId,
-      lastUsedId: readLastAccountId(browserStorage(), kind),
-    }),
+    resolveInitialSource(initialKind, accounts, defaultAccountId, favorite),
   );
 
   // ── Cuenta de destino (sólo transferencias) ────────────────────────────────
@@ -149,19 +194,26 @@ export default function TransactionForm({
   // caso más común —pasar plata del banco al efectivo— y deja el formulario en
   // un estado inválido que la validación tiene que rechazar después. Con un
   // destino válido preseleccionado, guardar funciona en un solo toque.
-  const [toAccountId, setToAccountId] = useState(() =>
-    pickDestinationAccount(
+  const [toAccountId, setToAccountId] = useState(() => {
+    const sourceId = resolveInitialSource(
+      initialKind,
       accounts,
-      resolveSourceAccount(kind, accounts, {
-        preferred: defaultAccountId,
-        lastUsedId: readLastAccountId(browserStorage(), kind),
-      }),
-    ),
-  );
+      defaultAccountId,
+      favorite,
+    );
+    return resolveInitialDestination(accounts, sourceId, favorite);
+  });
 
   const [date, setDate] = useState(() => todayCalendar());
-  const [amount, setAmount] = useState("");
-  const [categoryName, setCategoryName] = useState("");
+  // La plantilla guarda el monto normalizado ("1234.56") y el campo muestra
+  // coma decimal, igual que al tipear y que la precarga de sugerencias: un solo
+  // formato visible para el mismo dato.
+  const [amount, setAmount] = useState(() =>
+    favorite?.amount ? favorite.amount.replace(".", ",") : "",
+  );
+  const [categoryName, setCategoryName] = useState(
+    () => favorite?.category?.name ?? "",
+  );
   /**
    * Si la persona ya tocó el campo de categoría.
    *
@@ -186,7 +238,36 @@ export default function TransactionForm({
    * nuevo la reabre (se está eligiendo otra vez).
    */
   const [categoryDismissed, setCategoryDismissed] = useState(false);
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(
+    () => favorite?.description ?? "",
+  );
+
+  // ── Autocompletado de descripción ──────────────────────────────────────────
+  // Las sugerencias se piden al servidor (ventana acotada, no el histórico) y
+  // se dibujan en un desplegable ABSOLUTO: abrirlo no empuja ningún campo hacia
+  // la banda del pie fijo (trampa 15). `dismissed` evita que el desplegable se
+  // reabra solo justo después de aceptar una sugerencia: el texto aceptado
+  // vuelve a matchear consigo mismo.
+  const [descriptionSuggestions, setDescriptionSuggestions] = useState<
+    DescriptionSuggestionDTO[]
+  >([]);
+  const [descriptionFocused, setDescriptionFocused] = useState(false);
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
+
+  // ── Plantilla desde la que se abrió, y "guardar como plantilla" ────────────
+  const [favoriteId, setFavoriteId] = useState<string | null>(
+    () => favorite?.id ?? null,
+  );
+  const [favoriteSourceName, setFavoriteSourceName] = useState(
+    () => favorite?.name ?? "",
+  );
+  const [favoriteOpen, setFavoriteOpen] = useState(false);
+  const [favoriteName, setFavoriteName] = useState("");
+  const [favoriteSaving, setFavoriteSaving] = useState(false);
+  const [favoriteError, setFavoriteError] = useState("");
+  const [favoriteNotice, setFavoriteNotice] = useState("");
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -217,8 +298,66 @@ export default function TransactionForm({
     description.trim() !== "";
 
   useEffect(() => {
+    if (suggestionDismissed) {
+      setDescriptionSuggestions([]);
+      setActiveSuggestion(-1);
+      return;
+    }
+
+    const query = description.trim();
+    if (query.length < 2) {
+      setDescriptionSuggestions([]);
+      setActiveSuggestion(-1);
+      return;
+    }
+
+    // AbortController + debounce: tipear rápido no dispara un pedido por tecla
+    // ni deja que una respuesta vieja pise a la nueva.
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ kind, q: query, limit: "6" });
+        const response = await fetch(
+          `/api/transactions/suggestions?${params.toString()}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error("suggestions");
+        const data = (await response.json()) as {
+          suggestions?: DescriptionSuggestionDTO[];
+        };
+        if (controller.signal.aborted) return;
+        setDescriptionSuggestions(data.suggestions ?? []);
+        setActiveSuggestion(-1);
+      } catch {
+        if (!controller.signal.aborted) {
+          setDescriptionSuggestions([]);
+          setActiveSuggestion(-1);
+        }
+      }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [description, kind, suggestionDismissed]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+
+      // Un control de adentro que YA consumió el Escape lo marca con
+      // `preventDefault` (el autocompletado de descripción cierra su
+      // desplegable así). Acá se respeta: sin esta guarda, Escape con el
+      // desplegable abierto abría el aviso de descarte y el formulario
+      // parecía pedir "descartar" cuando sólo se cerró la lista.
+      //
+      // La guarda es por `defaultPrevented` y NO por `stopPropagation`: en
+      // Next.js el contenedor raíz de React es el propio `document`, así que
+      // este listener y el delegado de React viven en el MISMO nodo y
+      // `stopPropagation` no detiene a los demás listeners del nodo. El flag
+      // de `preventDefault`, en cambio, queda puesto para todos.
+      if (event.defaultPrevented) return;
 
       if (!dirty || discardWarning) {
         onClose();
@@ -274,6 +413,123 @@ export default function TransactionForm({
     setDuplicateWarning((current) => (current.length > 0 ? [] : current));
   }
 
+  /** ¿El desplegable de descripciones está visible ahora mismo? */
+  const showDescriptionSuggestions =
+    descriptionFocused &&
+    !suggestionDismissed &&
+    descriptionSuggestions.length > 0;
+
+  /**
+   * Acepta una sugerencia de descripción.
+   *
+   * Precarga categoría, cuenta y (sólo si el monto está vacío) el monto típico.
+   * El monto se preserva si la persona ya escribió uno: una sugerencia es una
+   * ayuda, no una decisión sobre la plata. Para TRANSFER también precarga el
+   * destino. No guarda nada.
+   */
+  function acceptDescriptionSuggestion(suggestion: DescriptionSuggestionDTO) {
+    if (suggestion.kind !== kind) return;
+
+    setDescription(suggestion.description);
+    setSuggestionDismissed(true);
+    setDescriptionSuggestions([]);
+    setActiveSuggestion(-1);
+
+    if (amount.trim() === "") {
+      // El servidor manda decimal exacto (1500.00). Se muestra con coma, sin
+      // separador de miles, para que el parser lo lea como el mismo número.
+      setAmount(suggestion.amount.replace(".", ","));
+    }
+
+    if (!isTransfer && suggestion.category) {
+      setCategoryName(suggestion.category.name);
+      // La ayuda de categoría ya cumplió: colapsarla mantiene la geometría de
+      // reposo y evita la zona muerta del pie (trampa 15).
+      setCategoryDismissed(true);
+    }
+
+    const source = accounts.find(
+      (account) => account.id === suggestion.account.id,
+    );
+    if (source && canBeSourceAccount(kind, source)) {
+      setAccountId(source.id);
+      if (isTransfer) {
+        const destination = suggestion.toAccount
+          ? accounts.find(
+              (account) =>
+                account.id === suggestion.toAccount?.id &&
+                account.id !== source.id,
+            )
+          : null;
+        setToAccountId(
+          destination?.id ?? pickDestinationAccount(accounts, source.id),
+        );
+      }
+    }
+
+    clearDuplicateWarning();
+  }
+
+  /**
+   * Guarda el formulario actual como plantilla.
+   *
+   * Es una acción EXPLÍCITA y separada de "Guardar movimiento": la plantilla no
+   * toca totales ni crea un movimiento. El servidor valida nombre único, tope y
+   * referencias; acá sólo se cortan los errores obvios antes de viajar.
+   */
+  async function saveFavorite() {
+    if (favoriteSaving) return;
+    setFavoriteError("");
+    setFavoriteNotice("");
+
+    if (!favoriteName.trim()) {
+      setFavoriteError("Poné un nombre para la plantilla.");
+      return;
+    }
+    if (amount.trim() !== "" && !amountPreview) {
+      setFavoriteError("El monto no se entiende. Corregilo o dejalo vacío.");
+      return;
+    }
+    if (!accountId) {
+      setFavoriteError("Elegí una cuenta.");
+      return;
+    }
+
+    setFavoriteSaving(true);
+    try {
+      const response = await fetch("/api/favorites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: favoriteName.trim(),
+          kind,
+          amount: amount.trim() === "" ? null : amount,
+          description,
+          categoryName: isTransfer ? null : categoryName.trim(),
+          accountId,
+          toAccountId: isTransfer ? toAccountId : null,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as Partial<FavoriteDTO> & {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(data.error ?? "No se pudo guardar la plantilla.");
+      }
+
+      setFavoriteNotice(`Plantilla “${favoriteName.trim()}” guardada.`);
+      setFavoriteName("");
+      setFavoriteOpen(false);
+      onFavoriteSaved?.(data as FavoriteDTO);
+    } catch (err) {
+      setFavoriteError(
+        err instanceof Error ? err.message : "No se pudo guardar la plantilla.",
+      );
+    } finally {
+      setFavoriteSaving(false);
+    }
+  }
+
   /**
    * Cambiar de tipo sin cerrar el modal.
    *
@@ -289,6 +545,12 @@ export default function TransactionForm({
     setKind(next);
     setError("");
     setDuplicateWarning([]);
+    // La plantilla era de OTRO tipo: usarla para este movimiento ya no es
+    // "usar la plantilla". Se limpia la marca (lastUsedAt no se toca).
+    setFavoriteId(null);
+    setFavoriteSourceName("");
+    setSuggestionDismissed(true);
+    setDescriptionSuggestions([]);
 
     const currentAccount = accounts.find((a) => a.id === accountId);
     const nextSource =
@@ -332,6 +594,8 @@ export default function TransactionForm({
         // reportes agrupan bajo "Sin categoría".
         ...(!isTransfer ? { categoryName: categoryName.trim() } : {}),
         description,
+        // Sólo marca `lastUsedAt` en la plantilla. No altera el movimiento.
+        ...(favoriteId ? { favoriteId } : {}),
       }),
     });
 
@@ -463,31 +727,173 @@ export default function TransactionForm({
       <label htmlFor="tx-description" className="text-sm font-medium">
         Nota <span className="font-normal text-zinc-500">(opcional)</span>
       </label>
-      <input
-        id="tx-description"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        placeholder="Detalle…"
-        maxLength={200}
-        className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
-      />
+      <div className="relative">
+        <input
+          id="tx-description"
+          value={description}
+          onChange={(e) => {
+            const value = e.target.value;
+            setDescription(value);
+            // Tipear de nuevo reabre el autocompletado (se está eligiendo otra).
+            setSuggestionDismissed(false);
+            clearDuplicateWarning();
+            // Prioridad: mientras el autocompletado de descripción está en
+            // juego, la ayuda de categoría se colapsa. Tipear en categoría la
+            // reabre (ver `onChange` de ese campo).
+            if (value.trim().length >= 2) setCategoryDismissed(true);
+          }}
+          onFocus={() => setDescriptionFocused(true)}
+          onBlur={() => setDescriptionFocused(false)}
+          onKeyDown={(event) => {
+            if (!showDescriptionSuggestions) return;
+
+            if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              event.preventDefault();
+              setActiveSuggestion((current) =>
+                movePaletteIndex(
+                  current,
+                  event.key === "ArrowDown" ? 1 : -1,
+                  descriptionSuggestions.length,
+                ),
+              );
+              return;
+            }
+            if (event.key === "Enter") {
+              // Con el desplegable abierto, Enter ELIGE: guardar el movimiento
+              // con una descripción a medio escribir sería un accidente.
+              event.preventDefault();
+              const chosen =
+                descriptionSuggestions[activeSuggestion] ??
+                descriptionSuggestions[0];
+              if (chosen) acceptDescriptionSuggestion(chosen);
+              return;
+            }
+            if (event.key === "Escape") {
+              // Cierra SÓLO el desplegable: el listener de documento del modal
+              // no debe ver este Escape (si no, pediría descartar el formulario).
+              event.preventDefault();
+              event.stopPropagation();
+              setSuggestionDismissed(true);
+              setDescriptionSuggestions([]);
+              setActiveSuggestion(-1);
+            }
+          }}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={showDescriptionSuggestions}
+          aria-controls="tx-description-suggestions"
+          aria-activedescendant={
+            showDescriptionSuggestions && activeSuggestion >= 0
+              ? `tx-description-suggestion-${activeSuggestion}`
+              : undefined
+          }
+          placeholder="Detalle…"
+          maxLength={200}
+          autoComplete="off"
+          className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+        />
+
+        {/* Desplegable ABSOLUTO: no empuja fecha/cuentas hacia el pie fijo. En
+            gasto/ingreso la nota es el último campo, así que se abre hacia
+            ARRIBA para no quedar debajo de la franja sticky. */}
+        {showDescriptionSuggestions && (
+          <div
+            id="tx-description-suggestions"
+            role="listbox"
+            aria-label="Descripciones usadas antes"
+            className={`absolute left-0 right-0 z-30 max-h-56 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl ${
+              isTransfer ? "top-full mt-1" : "bottom-full mb-1"
+            }`}
+          >
+            {descriptionSuggestions.map((suggestion, index) => (
+              <button
+                key={`${suggestion.kind}-${suggestion.description}-${index}`}
+                id={`tx-description-suggestion-${index}`}
+                type="button"
+                role="option"
+                aria-selected={activeSuggestion === index}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActiveSuggestion(index)}
+                onClick={() => acceptDescriptionSuggestion(suggestion)}
+                className={`w-full text-left px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 ${
+                  activeSuggestion === index
+                    ? "bg-zinc-100 dark:bg-zinc-800"
+                    : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                }`}
+              >
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium truncate">
+                    {suggestion.description}
+                  </span>
+                  <span className="text-xs text-zinc-500 whitespace-nowrap">
+                    {formatMoney(suggestion.amount)}
+                  </span>
+                </span>
+                <span className="block text-[11px] text-zinc-500 truncate">
+                  {suggestion.category?.name ?? "Sin categoría"} ·{" "}
+                  {suggestion.account.name}
+                  {suggestion.kind === "TRANSFER" && suggestion.toAccount
+                    ? ` → ${suggestion.toAccount.name}`
+                    : ""}{" "}
+                  · {suggestion.frequency}×
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
       <div className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className={`text-xl font-bold ${style.accent}`}>{style.title}</h2>
-          <button
-            id="tx-close"
-            onClick={onClose}
-            className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
-            aria-label="Cerrar"
-          >
-            ×
-          </button>
+        <div className="flex items-center justify-between mb-2 gap-2">
+          <h2 className={`text-xl font-bold min-w-0 ${style.accent}`}>
+            {style.title}
+            {favoriteSourceName && favoriteId && (
+              <span
+                id="tx-favorite-banner"
+                className="ml-2 align-middle text-[10px] font-bold uppercase rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 px-1.5 py-0.5"
+              >
+                plantilla: {favoriteSourceName}
+              </span>
+            )}
+          </h2>
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Un enlace compacto en el encabezado, no una fila nueva: el
+                formulario de gasto ya roza el pie fijo en la ventana de tests
+                y 30 px de más empujaban los chips de fecha a la banda muerta
+                de la trampa 15. Acá no agrega altura al camino típico. */}
+            <button
+              id="tx-save-favorite"
+              type="button"
+              onClick={() => {
+                setFavoriteOpen((current) => !current);
+                setFavoriteError("");
+                setFavoriteNotice("");
+              }}
+              aria-expanded={favoriteOpen}
+              className="text-xs underline text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 px-1"
+            >
+              {favoriteOpen ? "★ Plantilla" : "☆ Plantilla"}
+            </button>
+            <button
+              id="tx-close"
+              onClick={onClose}
+              className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+              aria-label="Cerrar"
+            >
+              ×
+            </button>
+          </div>
         </div>
+
+        {favoriteNotice && (
+          <p id="tx-favorite-notice" className="text-xs text-emerald-600 mb-2">
+            {favoriteNotice}
+          </p>
+        )}
 
         {/* ── Tipo de movimiento ───────────────────────────────────────── */}
         {/* Compacto a propósito: el modal tiene que seguir entrando en una
@@ -514,6 +920,62 @@ export default function TransactionForm({
             </button>
           ))}
         </div>
+
+        {/* ── Panel de plantilla ─────────────────────────────────────────── */}
+        {/* Sólo se abre a pedido desde el enlace del encabezado. Cuando está
+            abierto empuja el formulario, pero la persona está interactuando
+            con este panel y el pie fijo sigue visible. */}
+        {favoriteOpen && (
+          <div
+            id="tx-favorite-panel"
+            className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 p-3 space-y-2 mb-3"
+          >
+            <label htmlFor="tx-favorite-name" className="text-xs font-medium block">
+              Nombre de la plantilla *
+            </label>
+            <input
+              id="tx-favorite-name"
+              value={favoriteName}
+              onChange={(event) => setFavoriteName(event.target.value)}
+              placeholder="Ej: Café de la mañana"
+              maxLength={40}
+              className={`w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm outline-none focus:ring-2 ${style.focus}`}
+            />
+            <p className="text-[11px] text-zinc-500">
+              Guarda tipo, monto, cuenta, categoría y nota. No crea un
+              movimiento.
+            </p>
+            {favoriteError && (
+              <p
+                id="tx-favorite-error"
+                role="alert"
+                className="text-xs rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-2 py-1.5"
+              >
+                {favoriteError}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                id="tx-favorite-save"
+                type="button"
+                onClick={() => void saveFavorite()}
+                disabled={favoriteSaving}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50 ${style.badge}`}
+              >
+                {favoriteSaving ? "Guardando…" : "Guardar plantilla"}
+              </button>
+              <button
+                id="tx-favorite-cancel"
+                type="button"
+                onClick={() => setFavoriteOpen(false)}
+                disabled={favoriteSaving}
+                className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {/* ── Monto ─────────────────────────────────────────────────────── */}

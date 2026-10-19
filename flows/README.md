@@ -725,6 +725,19 @@ desplegadas), y un COMPLETED sobre un punto tapado no deja rastro: si el efecto
 no aparece, medí el punto de toque contra la banda del pie antes de culpar al
 flow.
 
+**Tercera puerta (Fase 7 r2, 2026-10-19): una acción nueva arriba del formulario
+también mueve la banda.** «Guardar como plantilla» nació al final del cuerpo del
+modal, debajo del pliegue y fuera del alcance de Maestro (que no puede scrollear
+el contenedor interno, como quedó comprobado en esta misma trampa). Al moverla a
+una fila propia arriba del formulario, los ~30px extra empujaron los chips de
+fecha de GASTO a la banda del pie: el tap en «Hoy» cayó en «Guardar», el
+movimiento se guardó y el paso siguiente buscó un `tx-submit` que ya no existía.
+La solución final no agrega altura en reposo: el enlace vive en el ENCABEZADO
+del modal, al lado de la ×; el panel se abre sólo a pedido y empuja contenido
+cuando la persona ya está interactuando con él. Regla: **toda acción nueva del
+modal se mide contra la banda en el estado de reposo de su tipo** (gasto,
+ingreso y transferencia tienen alturas distintas).
+
 ---
 
 ### 16. Un diálogo nativo (`window.confirm` / `window.alert`) TUMBA al driver
@@ -821,6 +834,7 @@ kotlin.Int`, buscá un diálogo nativo en la app antes de culpar al driver —
 | `02d-carga-rapida.yaml` | La carga rápida de la Fase 7 de punta a punta: el gasto SIN categoría (el campo opcional de verdad), el monto 12.345,67 en formato argentino con su vista previa, el chip "Hoy", los tres tipos a la vista y el banco preseleccionado — y después las dos redes: recargar lo MISMO (cuenta recordada, monto y día) avisa del duplicado antes de guardar y "Volver" no guarda nada, y el toast de deshacer (persistente) revierte con su DELETE exacto: los totales vuelven a 490.000 · 310.000 · 410.000, el 502.345,67 desaparece y el toast se va — flow neto cero | ✅ Pasa (3m 0s) |
 | `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 17s) |
 | `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 22s) |
+| `04b-carga-inteligente.yaml` | La segunda capa de la Fase 7, recorrida con la UI real: el autocompletado de la nota en una transferencia (escribe "Cuota 1" → sugiere "Cuota 1 · capital" → un toque precarga monto típico 31.412,71, origen y destino), el formulario guardado como plantilla, la plantilla usada desde su chip (banner, precarga completa), el guardado + deshacer que deja el flujo **neto cero**, el borrado de la plantilla en dos pasos inline, la entrada y el preview del importador CSV (sin importar filas: no ensucia los totales de la suite) y la paleta abierta desde el botón visible con búsqueda + Enter. El atajo `Ctrl+K` no se puede emitir desde Maestro web: lo cubre `node scripts/probe-palette.mjs` (46 verificaciones CDP, incluye toggle, flechas, foco atrapado y guardas con modales abiertos). Corre pegado al `04` (era el `23`, último): sólo necesita el seed fresco, y después de los préstamos `21`/`22` el grupo "Cuota 1 · capital" queda con otros pares y el destino esperado pierde el desempate | ✅ Pasa (1m 56s en la suite final) |
 | `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (40s) |
 | `06-analisis-filtros.yaml` | Los filtros server-side de `/analisis`: categoría y texto achican los tres bloques con números exactos, el selector no se auto-filtra, el estado vacío habla de los filtros y "Limpiar ✕" vuelve a todo | ✅ Pasa (2m 29s) |
 | `07-analisis-periodos.yaml` | Semana / Mes / Año, la ida y vuelta entre meses con los MISMOS números, los meses vacíos y que el cartel viejo de truncado no exista en ningún estado, y la tarjeta del burn viva con su selector limpio (la elección completa vive en el flow 11) | ✅ Pasa (1m 56s) |
@@ -837,31 +851,49 @@ kotlin.Int`, buscá un diálogo nativo en la app antes de culpar al driver —
 | `20-tarjeta-desde-cero.yaml` | Una tarjeta desde CERO y cuotas retroactivas: alta con saldo inicial −25.000 (el orden del formulario, validado por sondas: el monto sobrevive el cambio de tipo), el medio par cierre/vencimiento (error exacto y la cuenta NO se crea), el doble toque al submit (las deudas lo delatan: 393.287,29 y no 418.287,29), sin límite ⇒ "Utilización: no se sabe" (no un 0% inventado), la compra retroactiva del 30/09 en 5 cuotas (la cuota 1 cae en el octubre ya cerrado → "Cuota 2 de 5"; el cierre emite 2.000 / mínimo 100), el borrado que devuelve la deuda a 25.000 y el cierre #3 que recalcula el impago a 0,00 — "1 actualizado(s)", MISMO documento | ✅ Pasa (3m 51s) |
 | `21-prestamo-desde-cero.yaml` | La UI de préstamos nueva, dirección "recibí": el alta guiada de 500.000 al 60% en 12 con la vista previa del servidor (cuota 56.412,71), la primera cuota computada al **día 20 del mes anterior** (nunca "hoy" literal: la 1 siempre vencida, la 2 siempre en el mes en curso), el **DESEMBOLSO como paso 2 explícito** que registra la transferencia (sin él la deuda viva mentiría — el aviso `loan-warning` tiene que NO estar), el split exacto de la cuota 1 en el bloque de pago (interés 25.000,00 + capital 31.412,71) con el refetch al tope y su flash, el progreso de la tarjeta scopeado debajo del nombre propio (debe 468.587,29 · "Cubriste 1 de 12" · "Próxima cuota 2 de 12" ya en el mes en curso), la cancelación anticipada en DOS pasos en línea (capital pendiente 468.587,29, sin interés de las cuotas que faltan) y el cierre: debe 0,00, chip "Cubierto" (sin scoping — vive en la MISMA fila del título, la trampa que dejó este flow), "Cubriste 12 de 12" al 100%, "No queda ninguna cuota por pagar" y el cronograma con la 1 PAGADA y las 11 CUBIERTAS; la sección de deudas vuelve al seed (468.587,29) | ✅ Pasa (4m 4s) |
 | `22-prestamo-a-cobrar.yaml` | La dirección "presté" (`OWED_TO_ME`, el espejo del LOAN): la dirección se elige ANTES de cargar ("¿De qué cuenta salió?"), el paso 2 del desembolso se **posterga a propósito** ("Ahora no") y se recorre el CAMINO DE RECUPERACIÓN — el aviso de que "te deben" miente, el desembolso desde la PROPIA tarjeta con el monto del contrato (100.000,00: el principal, no la deuda viva que recién creado vale 0 — el bug del card-disburse de esta ronda), "te deben" 0,00 → 100.000,00, la cuota vencida del RECEIVABLE que NO entra en "Compromisos próximos" ("Sin cuotas vencidas"), el cobro de la cuota 1 con split exacto (interés 5.000,00 + capital 14.701,75) y el progreso final: te deben 85.298,25 · "Cobraste 1 de 6" | ✅ Pasa (3m 32s) |
+**Suite completa (00–15 + 02d + 18 + 19 + 20 + 21 + 22 + 04b, el ex 23): 25 flows.** La
+última corrida ENTERA —**25/25 · Suite OK en 56m 47s**— corrió el 2026-10-19
+sobre el build de la ronda 2 de carga rápida (dir `~/.maestro/tests/2026-10-19_154423`),
+con el seed del smoke (**658 ok · 0 fallas**), e incluye el `04b` nuevo. La
+corrida de la ronda 1 —**24/24 en 53m 55s**— quedó superada. Los **gates
+dirigidos** de la ronda 2 corrieron `02d` (con seed) y la cadena
+`03 → 04 → 04b` sin reseed (el `04` depende del gasto que deja el `03`), todos
+verdes. El `Ctrl+K` no puede emitirse con `pressKey` de Maestro web (sólo
+ENTER y BACKSPACE), así que su contrato se verifica aparte con la sonda CDP
+`scripts/probe-palette.mjs`: 46 verificaciones, 0 fallas. El orden es el de la
+carpeta: `00, 01, 02, 02b, 02c, 02d, 03, 04, 04b, 05…15, 18, 19, 20, 21, 22`. Los flujos
+16 y 17 de la ronda anterior ya no existen como tales: su contenido vive en
+`02b` y `02c` (renombrados para correr pegados al 02, el único momento en que el
+estado es el del seed; el 02c además ganó el escape del 409 recorrido de
+verdad). El 18, el 19 y el 20 son nuevos: el modal de cuotas roto a propósito,
+el pago del resumen sobre saldo a favor, y la tarjeta desde cero con cuotas
+retroactivas. El `21` y el `22` son los nuevos de la ronda de préstamos: el alta
+guiada con desembolso explícito, el pago y la cancelación anticipada, y el
+camino de recuperación del desembolso postergado con el cobro. El `02d` es el
+nuevo de la ronda 1 de carga rápida (Fase 7): el gasto SIN categoría, el chip
+Hoy, el toast de deshacer y el aviso de duplicado — flujo neto cero. El `04b`
+(renombrado del `23`) es el de la ronda 2: autocompletado, plantillas y entradas
+nuevas — también neto cero (guarda y deshace su única transferencia) y **no
+importa filas de CSV**, para no mover los totales que miran los demás flows.
+Corre pegado al `04` porque el `21` y el `22` también crean transfers "Cuota 1
+· capital" (los pagos de sus cuotas) y el autocompletado esperado depende del
+estado del seed.
 
-**Suite completa (00–15 + 02d + 18 + 19 + 20 + 21 + 22): 24 flows.** La última
-corrida ENTERA —**24/24 · Suite OK en 53m 55s**— corrió el 2026-10-19 sobre el
-build de la ronda de carga rápida (dir `~/.maestro/tests/2026-10-19_011717`),
-con el seed del smoke (599 ok · 0 fallas), e incluye el `21` y el `22` de la
-ronda de préstamos. El orden es el de la carpeta:
-`00, 01, 02, 02b, 02c, 02d, 03…15, 18, 19, 20, 21, 22`. Los flujos 16 y 17 de la
-ronda anterior ya no existen como tales: su contenido vive en `02b` y `02c`
-(renombrados para correr pegados al 02, el único momento en que el estado es el
-del seed; el 02c además ganó el escape del 409 recorrido de verdad). El 18, el
-19 y el 20 son nuevos: el modal de cuotas roto a propósito, el pago del resumen
-sobre saldo a favor, y la tarjeta desde cero con cuotas retroactivas. El `21` y
-el `22` son los nuevos de la ronda de préstamos: el alta guiada con desembolso
-explícito, el pago y la cancelación anticipada, y el camino de recuperación del
-desembolso postergado con el cobro. El `02d` es el nuevo de la ronda de carga
-rápida (Fase 7): el gasto SIN categoría, el chip Hoy, el toast de deshacer y el
-aviso de duplicado — flujo neto cero.
+**Regla de la ronda 2:** un flow que corre al final hereda el estado de todos los
+anteriores y el estado del seed caduca (los préstamos `21`/`22` crean sus propias
+patas de «Cuota 1 · capital»). La posición de un flow es parte de su contrato:
+validala en la suite completa, no sólo aislada.
 
 **Límites de calendario** (lo que primero vence primero): el `20` vale hasta el
 10/11/2026 — cuando cierre el período de noviembre, su cierre #2 emitiría DOS
 resúmenes (las cuotas 1 y 2) y el flash diría "2 resúmenes nuevos" —; el `02b`
 y el `14` valen hasta el 16/11/2026; el `02d` vale hasta el 31/10/2026 (carga un
-gasto fechado HOY contra los totales de octubre, el mes sembrado). El `21` y el `22` no tienen límite
-propio: computan su fecha en el momento (día 20 del mes anterior), así que la
-cuota 1 está vencida y la cuota 2 cae en el mes en curso cualquier día del año.
+gasto fechado HOY contra los totales de octubre, el mes sembrado). El `21`, el
+`22` y el `04b` no tienen límite de calendario propio: el 21 y el 22 computan su
+fecha en el momento (día 20 del mes anterior), así que la cuota 1 está vencida y
+la cuota 2 cae en el mes en curso cualquier día del año; el 04b sólo necesita el
+seed (`Cuota 1 · capital` del 15/10) y no verifica totales porque guarda y
+deshace el mismo movimiento.
 
 Los tiempos no son decorativos: cuando había servidores MCP vivos peleando por
 `~/.maestro/sessions` (trampa 11), el flow 00 tardaba **5m51s en fallar** y los

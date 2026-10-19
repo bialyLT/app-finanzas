@@ -2978,6 +2978,441 @@ async function main() {
     );
   }
 
+  // ── Carga inteligente: sugerencias, plantillas e importación CSV ───────────
+  //
+  // Fase 7 ronda 2. Todo ocurre en AGOSTO 2026 por el mismo motivo que la
+  // sección anterior: octubre es el mes que miran los flows y un huérfano de
+  // una corrida fallida no puede mover sus totales. Hay limpieza al empezar y
+  // al terminar, y las categorías/plantillas de prueba se borran por prefijo.
+  section("Carga inteligente · sugerencias, plantillas y CSV (agosto 2026)");
+  {
+    const desde = "2026-08-01";
+    const hasta = "2026-08-31";
+    const prefijoPlantilla = "Smoke F7r2";
+    const categoriaCsv = "Smoke CSV F7r2";
+
+    const prisma = new PrismaClient();
+
+    async function limpiarAgosto() {
+      const { body } = await api(`/api/transactions?from=${desde}&to=${hasta}`);
+      for (const movimiento of body?.movements ?? []) {
+        await api(`/api/transactions?id=${movimiento.id}`, { method: "DELETE" });
+      }
+    }
+
+    async function limpiarArtefactos() {
+      // Los movimientos ya se borraron: recién ahora la categoría no tiene
+      // referencias y se puede eliminar sin tocar datos ajenos.
+      await prisma.category.deleteMany({
+        where: { name: { startsWith: categoriaCsv } },
+      });
+      await prisma.favoriteTemplate.deleteMany({
+        where: { name: { startsWith: prefijoPlantilla } },
+      });
+    }
+
+    // Limpieza de arranque: idempotencia si una corrida anterior murió a mitad.
+    await limpiarAgosto();
+    await limpiarArtefactos();
+
+    const { body: agostoInicial } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "r2 · agosto arranca vacío (limpieza incluida)",
+      (agostoInicial?.movements ?? []).length,
+      0,
+    );
+
+    // ── 1. Autocompletado de descripciones ───────────────────────────────────
+    // Tres movimientos: dos con la misma descripción normalizada y montos
+    // distintos. La mediana tiene que ser 1500,00 (no el promedio 1500,00 por
+    // casualidad: se eligen 1000, 1500 y 2000, cuya mediana es 1500).
+    const sondaSugerencias = [
+      {
+        amount: "1500",
+        date: "2026-08-01",
+        accountId: efectivo.body?.id,
+        description: "Café Smoke F7r2",
+      },
+      {
+        amount: "2000",
+        date: "2026-08-02",
+        accountId: efectivo.body?.id,
+        description: "CAFÉ SMOKE F7R2",
+      },
+      {
+        amount: "1000",
+        date: "2026-08-03",
+        accountId: banco.body?.id,
+        description: "Café Smoke F7r2",
+      },
+    ];
+    const idsSugerencias = [];
+    for (const sonda of sondaSugerencias) {
+      const creado = await post("/api/transactions", {
+        kind: "EXPENSE",
+        categoryName: "Comida",
+        ...sonda,
+      });
+      idsSugerencias.push(creado.body?.id);
+    }
+
+    const sugerencias = await api(
+      "/api/transactions/suggestions?kind=EXPENSE&q=cafe&limit=6",
+    );
+    check("sugerencias · responde 200", sugerencias.status, 200);
+    check(
+      "sugerencias · agrupa las 3 variantes en una sola",
+      sugerencias.body?.suggestions?.length,
+      1,
+    );
+    const sugerencia = sugerencias.body?.suggestions?.[0];
+    check(
+      "sugerencias · muestra la variante más repetida",
+      sugerencia?.description,
+      "Café Smoke F7r2",
+    );
+    check("sugerencias · frecuencia 3", sugerencia?.frequency, 3);
+    check("sugerencias · monto típico = mediana (1500,00)", sugerencia?.amount, "1500.00");
+    check(
+      "sugerencias · precarga la cuenta más usada",
+      sugerencia?.account?.name,
+      "Efectivo",
+    );
+    check(
+      "sugerencias · precarga la categoría",
+      sugerencia?.category?.name,
+      "Comida",
+    );
+
+    const sugerenciasIngreso = await api(
+      "/api/transactions/suggestions?kind=INCOME&q=cafe",
+    );
+    check(
+      "sugerencias · no mezcla tipos (un gasto no sugiere un ingreso)",
+      sugerenciasIngreso.body?.suggestions?.length,
+      0,
+    );
+    const sugerenciasSinKind = await api(
+      "/api/transactions/suggestions?q=cafe",
+    );
+    check("sugerencias · sin kind: 400", sugerenciasSinKind.status, 400);
+    const sugerenciasLimite = await api(
+      "/api/transactions/suggestions?kind=EXPENSE&limit=0",
+    );
+    check("sugerencias · límite fuera de rango: 400", sugerenciasLimite.status, 400);
+    const sugerenciasLarga = await api(
+      `/api/transactions/suggestions?kind=EXPENSE&q=${"a".repeat(81)}`,
+    );
+    check("sugerencias · búsqueda de 81 caracteres: 400", sugerenciasLarga.status, 400);
+    const sugerenciasSinSesion = await fetch(
+      `${BASE_URL}/api/transactions/suggestions?kind=EXPENSE&q=cafe`,
+      { headers: { Origin: BASE_URL } },
+    );
+    check("sugerencias · sin sesión: 401", sugerenciasSinSesion.status, 401);
+
+    // Limpieza de las sondas: la sección de CSV cuenta movimientos exactos.
+    for (const id of idsSugerencias.filter(Boolean)) {
+      await api(`/api/transactions?id=${id}`, { method: "DELETE" });
+    }
+
+    // ── 2. Plantillas / favoritos ────────────────────────────────────────────
+    const plantilla = await post("/api/favorites", {
+      name: `${prefijoPlantilla} café`,
+      kind: "EXPENSE",
+      amount: "1500",
+      description: "Café Smoke F7r2",
+      categoryName: "Comida",
+      accountId: efectivo.body?.id,
+    });
+    check("plantillas · crea una plantilla (201)", plantilla.status, 201);
+    check("plantillas · monto normalizado a 1500.00", plantilla.body?.amount, "1500.00");
+    check(
+      "plantillas · devuelve cuenta y categoría resueltas",
+      plantilla.body?.account?.name,
+      "Efectivo",
+    );
+
+    const listadoPlantillas = await api("/api/favorites");
+    check("plantillas · el listado responde 200", listadoPlantillas.status, 200);
+    checkTrue(
+      "plantillas · la nueva aparece en el listado",
+      (listadoPlantillas.body?.favorites ?? []).some(
+        (favorite) => favorite.id === plantilla.body?.id,
+      ),
+    );
+    check("plantillas · el listado informa el tope", listadoPlantillas.body?.max, 24);
+
+    const plantillaDuplicada = await post("/api/favorites", {
+      name: `${prefijoPlantilla.toUpperCase()} CAFÉ`,
+      kind: "EXPENSE",
+      amount: "1500",
+      description: "Otra",
+      categoryName: "Comida",
+      accountId: efectivo.body?.id,
+    });
+    check("plantillas · nombre normalizado duplicado: 409", plantillaDuplicada.status, 409);
+
+    const plantillaCero = await post("/api/favorites", {
+      name: `${prefijoPlantilla} cero`,
+      kind: "EXPENSE",
+      amount: "0",
+      accountId: efectivo.body?.id,
+    });
+    check("plantillas · monto cero: 400", plantillaCero.status, 400);
+
+    const plantillaTransferenciaMala = await post("/api/favorites", {
+      name: `${prefijoPlantilla} transferencia`,
+      kind: "TRANSFER",
+      amount: "100",
+      accountId: efectivo.body?.id,
+      toAccountId: efectivo.body?.id,
+    });
+    check(
+      "plantillas · TRANSFER con destino = origen: 400",
+      plantillaTransferenciaMala.status,
+      400,
+    );
+
+    const favoritoUsado = await post("/api/transactions", {
+      kind: "EXPENSE",
+      amount: "1500",
+      date: "2026-08-04",
+      accountId: efectivo.body?.id,
+      categoryName: "Comida",
+      description: "Café Smoke F7r2",
+      favoriteId: plantilla.body?.id,
+    });
+    check("plantillas · guardar un movimiento con la plantilla (201)", favoritoUsado.status, 201);
+
+    const listadoTrasUso = await api("/api/favorites");
+    const plantillaTrasUso = (listadoTrasUso.body?.favorites ?? []).find(
+      (favorite) => favorite.id === plantilla.body?.id,
+    );
+    checkTrue(
+      "plantillas · lastUsedAt se actualiza al usarla",
+      Boolean(plantillaTrasUso?.lastUsedAt),
+      JSON.stringify(plantillaTrasUso),
+    );
+
+    await api(`/api/transactions?id=${favoritoUsado.body?.id}`, {
+      method: "DELETE",
+    });
+    const borrarPlantilla = await api(
+      `/api/favorites?id=${plantilla.body?.id}`,
+      { method: "DELETE" },
+    );
+    check("plantillas · borrar la plantilla usada: 204", borrarPlantilla.status, 204);
+
+    const listadoFinalPlantillas = await api("/api/favorites");
+    checkTrue(
+      "plantillas · ya no está (la historia del movimiento no dependía de ella)",
+      !(listadoFinalPlantillas.body?.favorites ?? []).some(
+        (favorite) => favorite.id === plantilla.body?.id,
+      ),
+    );
+
+    // ── 3. CSV: preview estricto, importación y duplicados ───────────────────
+    const csvInvalido =
+      "fecha,tipo,monto,cuenta\r\n" +
+      "2026-08-08,EXPENSE,0,Efectivo\r\n" +
+      "2026-08-09,EXPENSE,100,Cuenta inexistente\r\n" +
+      "2026-08-10,TRANSFER,100,Efectivo\r\n";
+    const previewInvalido = await post("/api/import/csv/preview", {
+      text: csvInvalido,
+    });
+    check("csv · preview con filas inválidas responde 200", previewInvalido.status, 200);
+    check("csv · 3 filas inválidas", previewInvalido.body?.invalidRows, 3);
+    check("csv · 0 importables", previewInvalido.body?.importableRows, 0);
+
+    const commitInvalido = await post("/api/import/csv", {
+      text: csvInvalido,
+      expected: {
+        count: previewInvalido.body?.totals?.count ?? 0,
+        income: previewInvalido.body?.totals?.income ?? "0.00",
+        expenses: previewInvalido.body?.totals?.expenses ?? "0.00",
+        transfers: previewInvalido.body?.totals?.transfers ?? "0.00",
+      },
+    });
+    check("csv · commit con inválidas: 422", commitInvalido.status, 422);
+    checkTrue(
+      "csv · explica que no se importó nada",
+      String(commitInvalido.body?.error ?? "").includes("No se importó nada"),
+      JSON.stringify(commitInvalido.body),
+    );
+
+    const csvValido =
+      "\uFEFF" +
+      "fecha,tipo,monto,cuenta,cuenta_destino,categoria,descripcion\r\n" +
+      '2026-08-05,INCOME,100000,Efectivo,,Sueldo,"Sueldo smoke F7r2"\r\n' +
+      `2026-08-06,EXPENSE,"1.500,50",Efectivo,,${categoriaCsv},"Café ""especial""\r\ncon leche"\r\n` +
+      '2026-08-07,TRANSFER,2000,Efectivo,Banco Galicia,,"Paso smoke F7r2"\r\n';
+
+    const previewValido = await post("/api/import/csv/preview", {
+      text: csvValido,
+    });
+    check("csv · preview válido responde 200 (BOM + CRLF + comillas)", previewValido.status, 200);
+    check("csv · 3 filas importables", previewValido.body?.importableRows, 3);
+    check("csv · 0 inválidas", previewValido.body?.invalidRows, 0);
+    check("csv · total ingresos", previewValido.body?.totals?.income, "100000.00");
+    check("csv · total gastos", previewValido.body?.totals?.expenses, "1500.50");
+    check("csv · total transferencias", previewValido.body?.totals?.transfers, "2000.00");
+    check("csv · cantidad total", previewValido.body?.totals?.count, 3);
+    checkTrue(
+      "csv · avisa la categoría que va a crear",
+      (previewValido.body?.categoriesToCreate ?? []).some(
+        (category) => category.name === categoriaCsv && category.kind === "EXPENSE",
+      ),
+    );
+
+    const importado = await post("/api/import/csv", {
+      text: csvValido,
+      expected: {
+        count: previewValido.body?.totals?.count,
+        income: previewValido.body?.totals?.income,
+        expenses: previewValido.body?.totals?.expenses,
+        transfers: previewValido.body?.totals?.transfers,
+      },
+    });
+    check("csv · importa todo o nada (201)", importado.status, 201);
+    check("csv · importó 3 movimientos", importado.body?.imported, 3);
+    check("csv · 0 duplicados omitidos", importado.body?.skippedDuplicates, 0);
+    check("csv · totales conciliados: gastos", importado.body?.totals?.expenses, "1500.50");
+
+    const { body: agostoImportado } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "csv · la API ve exactamente 3 movimientos",
+      (agostoImportado?.movements ?? []).length,
+      3,
+    );
+    const descripcionConSalto = (agostoImportado?.movements ?? []).find(
+      (movement) => movement.description.includes("especial"),
+    );
+    checkTrue(
+      "csv · la comilla escapada y el salto interno sobreviven",
+      Boolean(
+        descripcionConSalto?.description.includes('"especial"') &&
+          descripcionConSalto?.description.includes("con leche"),
+      ),
+      JSON.stringify(descripcionConSalto?.description),
+    );
+    check(
+      "csv · el monto argentino quedó exacto",
+      descripcionConSalto?.amount,
+      "1500.50",
+    );
+
+    // Reimportar el MISMO archivo: todo duplicado, nada se escribe.
+    const previewDuplicado = await post("/api/import/csv/preview", {
+      text: csvValido,
+    });
+    check("csv · reimportar: 3 duplicadas", previewDuplicado.body?.duplicateRows, 3);
+    check("csv · reimportar: 0 importables", previewDuplicado.body?.importableRows, 0);
+
+    const commitDuplicado = await post("/api/import/csv", {
+      text: csvValido,
+      expected: {
+        count: previewDuplicado.body?.totals?.count ?? 0,
+        income: previewDuplicado.body?.totals?.income ?? "0.00",
+        expenses: previewDuplicado.body?.totals?.expenses ?? "0.00",
+        transfers: previewDuplicado.body?.totals?.transfers ?? "0.00",
+      },
+    });
+    check("csv · commit sólo con duplicadas: 422", commitDuplicado.status, 422);
+    const { body: agostoTrasDuplicado } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "csv · no se duplicó nada (siguen 3)",
+      (agostoTrasDuplicado?.movements ?? []).length,
+      3,
+    );
+
+    // El preview que la persona aprobó ya no coincide: 409 y nada se escribe.
+    const csvStale =
+      "fecha,tipo,monto,cuenta,descripcion\r\n" +
+      "2026-08-11,EXPENSE,10,Efectivo,Stale smoke F7r2\r\n";
+    const previewStale = await post("/api/import/csv/preview", {
+      text: csvStale,
+    });
+    const commitStale = await post("/api/import/csv", {
+      text: csvStale,
+      expected: {
+        count: 1,
+        income: "0.00",
+        expenses: "11.00", // el preview dijo 10,00
+        transfers: "0.00",
+      },
+    });
+    check("csv · preview aprobado que ya no coincide: 409", commitStale.status, 409);
+    checkTrue(
+      "csv · el error pide volver a previsualizar",
+      String(commitStale.body?.error ?? "").toLowerCase().includes("previsualizar"),
+      JSON.stringify(commitStale.body),
+    );
+    const { body: agostoTrasStale } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "csv · el commit rechazado no dejó filas",
+      (agostoTrasStale?.movements ?? []).length,
+      3,
+    );
+
+    // Robustez: NUL, tamaño, auth y CSRF.
+    const previewNul = await post("/api/import/csv/preview", {
+      text: "fecha,tipo,monto,cuenta\n\u0000",
+    });
+    check("csv · NUL en el texto: 400", previewNul.status, 400);
+    const previewGrande = await post("/api/import/csv/preview", {
+      text: "x".repeat(300 * 1024),
+    });
+    check("csv · texto de 300 KB: 413", previewGrande.status, 413);
+
+    const previewSinSesion = await fetch(`${BASE_URL}/api/import/csv/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({ text: csvValido }),
+    });
+    check("csv · preview sin sesión: 401", previewSinSesion.status, 401);
+
+    const commitSinOrigen = await fetch(`${BASE_URL}/api/import/csv`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({
+        text: csvValido,
+        expected: { count: 0, income: "0.00", expenses: "0.00", transfers: "0.00" },
+      }),
+    });
+    check("csv · commit sin Origin: 403", commitSinOrigen.status, 403);
+
+    // ── Limpieza final: agosto vuelve a estar vacío ──────────────────────────
+    await limpiarAgosto();
+    await limpiarArtefactos();
+
+    const { body: agostoFinal } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "r2 · agosto vuelve a estar vacío",
+      (agostoFinal?.movements ?? []).length,
+      0,
+    );
+
+    const { body: categoriasFinal } = await api("/api/categories");
+    checkTrue(
+      "r2 · la categoría de prueba no quedó huérfana",
+      !(categoriasFinal?.categories ?? []).some(
+        (category) => category.name === categoriaCsv,
+      ),
+    );
+
+    await prisma.$disconnect();
+  }
+
   // ── Logout: CSRF y atributos de la cookie ──────────────────────────────────
   section("Cierre de sesión (logout)");
   {

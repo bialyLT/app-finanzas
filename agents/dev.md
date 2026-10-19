@@ -118,6 +118,12 @@ acá va solo lo generalizable.
 - **Operación que puede correr dos veces** (generadores, doble clic, reintentos)
   → probá el doble toque; si duplicar rompe algo, blindalo (idempotencia, índice
   único parcial, transacción).
+- **Dedupe antes de insertar** (importar, «crear si no existe», «¿ya está?») → la
+  consulta previa **no serializa**: dos pedidos concurrentes leen el mismo «no
+  existe» y ambos insertan. El dedupe y el insert van en la MISMA transacción,
+  serializados con un lock (`pg_advisory_xact_lock` o `SELECT … FOR UPDATE` sobre
+  una fila de control). (B1 de la Fase 7 r2: el doble submit del CSV duplicaba
+  filas.)
 - **Estado derivado de un prefijo** (cobertura de cuotas, pagos acumulados) →
   probá los degenerados: cuotas de capital 0 (el bullet americano marcaba
   cubierto sin pagar) y el reintento sin parámetro (el doble toque sin número
@@ -135,11 +141,13 @@ acá va solo lo generalizable.
   flow en `flows/README.md`).
 - **Plata** → Decimal en todo el camino; una transferencia entre cuentas no
   infla ingresos ni gastos; probá montos de un centavo y montos enormes.
-- **Dos caminos que calculan el mismo número** (vista previa vs alta,
-  simulación vs registro) → normalizá y validá en el MISMO orden y forma en
-  ambos, y probá la paridad con el string CRUDO del input: la UI puede mentir
-  por centavos invisibles (`toFixed(2)` vs `toFixed(4)`) o romper una invariante
-  interna. (BUG-1 de la Fase 4 r2.)
+- **Dos caminos que calculan o formatean el mismo número** (vista previa vs
+  alta, simulación vs registro, valor tipeado vs valor precargado) → normalizá y
+  validá en el MISMO orden y forma en ambos, y probá la paridad con el string
+  CRUDO del input: la UI puede mentir por centavos invisibles (`toFixed(2)` vs
+  `toFixed(4)`) o romper una invariante interna. El monto que llega precargado
+  (plantilla, sugerencia) pasa por el MISMO formateador que lo tipeado: `4321.50`
+  de la API se muestra `4321,50`. (BUG-1 de la Fase 4 r2; B3 de la Fase 7 r2.)
 - **UI nueva** → estados vacíos y de error que expliquen qué hacer; y un flow de
   Maestro propio del camino feliz (el tester después hace lo adversarial).
 - **Diálogo nativo del navegador** (`window.confirm` / `alert` / `prompt`) → no:
@@ -168,11 +176,19 @@ acá va solo lo generalizable.
   por visibilidad: un tap ahí «completa» **sin foco ni error** y el dato se
   pierde en silencio. Medí la banda con la ventana real de los tests (~1019×557;
   el pie del modal arranca en y≈441) y revisá cada estado del form, no solo el
-  reposo. (F7 r1: la nota del flow 04.)
+  reposo. Una acción nueva ARRIBA del form también agrega altura: medila contra
+  la banda en el reposo de su tipo (gasto, ingreso y transferencia tienen
+  alturas distintas). (F7 r1: la nota del flow 04; F7 r2: el trigger de favorito
+  terminó en el encabezado del modal.)
 - **Ayuda desplegable** (lista de sugerencias, avisos) → mientras está abierta
   EMPUJA el layout: al aceptar, colapsala (ya cumplió su función); si queda
   abierta puede mover controles vivos a la banda muerta de una capa fija.
   (F7 r1: la sugerencia de categoría dejaba el chip «Ayer» en y≈504.)
+- **Handlers de Escape anidados** (desplegable dentro de modal) → el handler más
+  específico hace `preventDefault()` y el global TIENE que respetar
+  `event.defaultPrevented`; si no, Escape cierra todo y descarta datos. Probá:
+  Escape con la lista abierta cierra SÓLO la lista; el segundo Escape recién abre
+  el aviso del formulario. (B2 de la Fase 7 r2.)
 - **Aviso flotante sobre controles** (toast de deshacer) → la capa va
   `pointer-events-none` y el punto de toque del control de abajo tiene que
   seguir llegando al control: verificalo con `elementFromPoint` — el solape es
@@ -181,6 +197,11 @@ acá va solo lo generalizable.
   input/textarea/select/contentEditable **y** sin modal abierto; la minúscula
   debe seguir siendo DATO donde se tipea (`t` en monto, categoría, nota,
   búsqueda). (F7 r1: `T`/`I`.)
+- **Selects/opciones cruzadas** (origen/destino de una TRANSFER, rango de fechas,
+  categoría y tipo) → las opciones válidas de un campo dependen del otro:
+  después de elegir uno, excluí del otro la combinación imposible. Probá el par
+  prohibido, no sólo los caminos felices. (B4 de la Fase 7 r2: la sugerencia
+  podía proponer «A → A».)
 
 ---
 

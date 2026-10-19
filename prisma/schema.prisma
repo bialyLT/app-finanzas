@@ -324,6 +324,12 @@ model Account {
   /// El cronograma materializado del préstamo (sólo LOAN o RECEIVABLE).
   installments Installment[] @relation("LoanInstallments")
 
+  /// Plantillas que usan esta cuenta como origen (o donde entra el ingreso).
+  favoriteTemplates FavoriteTemplate[] @relation("FavoriteTemplateAccount")
+
+  /// Plantillas de transferencia que llegan a esta cuenta.
+  incomingFavoriteTemplates FavoriteTemplate[] @relation("FavoriteTemplateToAccount")
+
   /// El nombre tiene que ser único: dos cuentas llamadas "Efectivo" harían
   /// que el usuario no sepa cuál está eligiendo.
   @@unique([name])
@@ -362,6 +368,9 @@ model Category {
   /// Reglas de recurrencia que categorizan así sus ocurrencias. Se crean con la
   /// misma deduplicación por nombre normalizado que los movimientos.
   recurrenceRules RecurrenceRule[]
+
+  /// Plantillas/favoritos que precargan esta categoría.
+  favoriteTemplates FavoriteTemplate[]
 
   @@unique([normalizedName])
   @@index([kind])
@@ -890,4 +899,78 @@ model Installment {
   @@unique([accountId, number])
   /// La consulta de compromisos: las cuotas de un préstamo por fecha.
   @@index([accountId, dueDate])
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PLANTILLAS / FAVORITOS — FASE 7 RONDA 2
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Una plantilla NO es un movimiento: es la PROMESA de un formulario ya
+// completado. No tiene fecha propia, no entra en ningún total y no la toca el
+// generador de recurrencia. Lo único que hace es abrir `TransactionForm` con
+// los campos cargados para que la persona confirme.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// POR QUÉ TABLA PROPIA Y NO `RecurrenceRule`
+// ─────────────────────────────────────────────────────────────────────────────
+// Una recurrencia describe un CALENDARIO (frecuencia, ancla, fin, modo de
+// posteo). Una plantilla describe un FORMULARIO (monto, cuenta, categoría,
+// nota). Comparten la forma del movimiento, no la semántica: reutilizar la
+// tabla de reglas obligaría a inventar una frecuencia falsa para guardar un
+// favorito y contaminaría la bandeja de ocurrencias con filas que no vencen.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// `amount` NULLABLE: "sin monto" es un favorito válido
+// ─────────────────────────────────────────────────────────────────────────────
+// "Cargar un gasto en la tarjeta" puede no tener un monto típico. Guardar 0
+// sería mentir (el monto de un movimiento es siempre positivo); NULL dice
+// exactamente lo que pasa: la plantilla completa el resto y deja el monto para
+// que lo escriba la persona.
+model FavoriteTemplate {
+  id String @id @default(cuid())
+
+  /// Nombre visible y buscable: "Café de la mañana".
+  name String
+
+  /// Clave de deduplicación (sin mayúsculas, sin acentos, espacios colapsados).
+  /// Única en toda la tabla: es single-user, no hay `userId` que compartir.
+  normalizedName String
+
+  kind MovementKind
+
+  /// Monto típico, SIEMPRE positivo. NULL = "sin monto": el favorito no lo
+  /// precarga y la persona lo escribe.
+  amount Decimal? @db.Decimal(18, 2)
+
+  /// Nota que se precarga en el formulario.
+  description String @default("")
+
+  /// Categoría opcional (sólo INCOME/EXPENSE). `SetNull`: borrar la categoría
+  /// no borra el favorito; simplemente deja de precargarla.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  /// Cuenta de origen. `Cascade`: el favorito es una comodidad, no historia;
+  /// si la cuenta se borra (sólo posible sin movimientos), la plantilla que la
+  /// apuntaba ya no sirve y se va con ella.
+  accountId String
+  account   Account @relation("FavoriteTemplateAccount", fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// Sólo TRANSFER: cuenta de destino, distinta de la de origen (CHECK).
+  toAccountId String?
+  toAccount   Account? @relation("FavoriteTemplateToAccount", fields: [toAccountId], references: [id], onDelete: Cascade)
+
+  /// Se actualiza SÓLO cuando un movimiento se guarda usando esta plantilla.
+  /// Ordena la lista (el último usado primero) sin tocar los totales.
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Un nombre normalizado = una plantilla. Es el candado que impide dos
+  /// "Café" que la persona no sabría distinguir.
+  @@unique([normalizedName])
+  /// La lista de favoritos: último usado primero.
+  @@index([lastUsedAt])
+  @@index([kind])
 }

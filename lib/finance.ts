@@ -795,6 +795,93 @@ export interface LoansResponse {
   loans: LoanViewDTO[];
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * Carga rápida · favoritos y CSV (Fase 7 ronda 2)
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Una plantilla/favorito tal como viaja al cliente.
+ *
+ * No es un movimiento: no tiene fecha ni entra en totales. Es el formulario
+ * guardado que la persona abre precargado y confirma. `amount: null` significa
+ * "sin monto": la plantilla completa el resto y deja el monto para escribir.
+ */
+export interface FavoriteDTO {
+  id: string;
+  name: string;
+  kind: MovementKindDTO;
+  /** Monto típico como string exacto, o `null` si la plantilla no lo fija. */
+  amount: string | null;
+  description: string;
+  category: CategoryDTO | null;
+  account: AccountDTO;
+  /** Sólo TRANSFER. */
+  toAccount: AccountDTO | null;
+  /** ISO de la última vez que se guardó un movimiento con esta plantilla. */
+  lastUsedAt: string | null;
+}
+
+export interface FavoritesResponse {
+  favorites: FavoriteDTO[];
+  /** Tope de plantillas (la API rechaza la que sobraría). */
+  max: number;
+}
+
+/** Una fila del preview de importación CSV, con su veredicto. */
+export interface CsvRowPreviewDTO {
+  /** Número de fila del archivo, contando el encabezado como 1. */
+  line: number;
+  status: "VALID" | "INVALID" | "DUPLICATE" | "EMPTY";
+  /** Por qué no se puede importar. Vacío en VALID/DUPLICATE. */
+  errors: string[];
+  kind: MovementKindDTO | null;
+  /** Fecha de calendario normalizada, si se pudo interpretar. */
+  date: string | null;
+  /** Monto normalizado, si se pudo interpretar. */
+  amount: string | null;
+  account: string;
+  toAccount: string;
+  category: string;
+  description: string;
+}
+
+/**
+ * El preview de una importación: qué se va a importar y qué no.
+ *
+ * `totals` cuenta SÓLO las filas importables (VÁLIDAS): es el número contra el
+ * que se concilia el commit. `duplicateRows` se avisa y se omite —nunca en
+ * silencio—, y `invalidRows > 0` bloquea el commit entero (todo o nada).
+ */
+export interface CsvPreviewDTO {
+  headers: string[];
+  totalRows: number;
+  importableRows: number;
+  invalidRows: number;
+  duplicateRows: number;
+  emptyRows: number;
+  totals: {
+    income: string;
+    expenses: string;
+    transfers: string;
+    count: number;
+  };
+  rows: CsvRowPreviewDTO[];
+  categoriesToCreate: { name: string; kind: "INCOME" | "EXPENSE" }[];
+}
+
+/** Lo que hizo el commit de una importación. */
+export interface CsvImportResultDTO {
+  imported: number;
+  skippedDuplicates: number;
+  totals: {
+    income: string;
+    expenses: string;
+    transfers: string;
+    count: number;
+  };
+  categoriesCreated: { name: string; kind: "INCOME" | "EXPENSE" }[];
+}
+
 /**
  * Lo que hizo `POST /api/loans/pay`.
  *

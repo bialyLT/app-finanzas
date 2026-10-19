@@ -9,8 +9,8 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 ## Estado verificado (2026-10-19)
 
 - `main` tiene el rediseño completo del modelo de dinero (infra, auth, dominio, UI, tests, docs), ya pusheado a `origin` (`bialyLT/app-finanzas`).
-- Batería verde: **383 tests** de vitest (12 archivos, unitarios + integración), **599 aserciones** de smoke, **2.320 checks** adversariales acumulados — **582** de la Fase 5 (`scripts/tester-fase5/`), **1.275** de la Fase 4 (`scripts/tester-fase4/`: 989 server-side + 286 de UI) y **463** de la Fase 7 r1 (`scripts/tester-fase7/`: 3 server + 7 UI) —, **24 flows** de Maestro (suite completa **24/24 en 53m 55s**; re-corrida en cada gate), build de producción limpio.
-- Fases 0, 1, 2, 3, 4, 5 y 6 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3, la 4 y la 5 en dos rondas cada una, núcleo server-side + UI; la 4 r2 cerró el 2026-10-18 con la UI de préstamos). La Fase 7 ronda 1 (carga rápida) cerró el 2026-10-19; falta su ronda 2. La 9 sigue parcial (endurecimiento para producción); la 8 (migración de datos viejos) sin empezar.
+- Batería verde: **449 tests** de vitest (15 archivos, unitarios + integración), **658 aserciones** de smoke, **3.090 checks** adversariales acumulados — **582** de la Fase 5 (`scripts/tester-fase5/`), **1.275** de la Fase 4 (`scripts/tester-fase4/`), **463** de la Fase 7 r1 (`scripts/tester-fase7/`) y **770** de la Fase 7 r2 (`scripts/tester-fase7r2/`) —, **25 flows** de Maestro (suite completa **25/25 en 56m 47s**; re-corrida en cada gate), build de producción limpio.
+- Fases 0, 1, 2, 3, 4, 5, 6 y 7 cerradas (la 6 con la auditoría de seguridad pasada: sin hallazgos altos ni críticos; la 3, la 4 y la 5 en dos rondas cada una; la 7 en dos rondas: núcleo de carga rápida y segunda capa). La 9 sigue parcial (endurecimiento para producción); la 8 (presupuestos) sin empezar. **El desarrollo está en pausa desde el 2026-10-19 por pedido del usuario, para actualizar el servidor.**
 - Entorno local: PostgreSQL 17 portable en `%LOCALAPPDATA%\pg17`, puerto **5433** (bases `finanzas_dev` y `finanzas_test`); la app se sirve con `npm start` en el puerto **3000**.
 
 ## Dónde está el detalle
@@ -19,6 +19,7 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 - `README.md` — arquitectura, capas de test y cómo correr todo.
 - `agents/dev.md`, `agents/ui-tester.md` y `agents/security-auditor.md` — prompts de los subagentes autónomos (dev de ronda, tester de UI con Maestro y auditor de seguridad).
 - `flows/README.md` — las **dieciséis trampas** de Maestro. Leer antes de tocar los flows.
+- `docs/import-csv.md` — formato, validaciones y política del importador CSV (Fase 7 r2).
 - Memoria persistente **Engram** (si está disponible en la máquina): buscar por proyecto; hay observaciones de arquitectura, bugs y decisiones.
 
 ## Decisiones que no se negocian
@@ -47,13 +48,14 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 383 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 599 aserciones end-to-end (servidor arriba)
+npm test                  # 449 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 658 aserciones end-to-end (servidor arriba)
 node scripts/tester-fase4/NN-*.mjs   # 989 checks adversariales server-side (Fase 4 r1; servidor arriba)
 node scripts/tester-fase4/ui-*.mjs   # 286 checks adversariales de la UI (Fase 4 r2; servidor arriba)
 node scripts/tester-fase5/NN-*.mjs   # 582 checks adversariales server-side (Fase 5; servidor arriba)
 node scripts/tester-fase7/*.mjs      # 463 checks adversariales de carga rápida (Fase 7 r1; servidor arriba)
-npm run flows             # 24 flows de Maestro: siembra la base y corre; ~54m
+node scripts/tester-fase7r2/*.mjs    # 770 checks adversariales de la segunda capa (Fase 7 r2; servidor arriba)
+npm run flows             # 25 flows de Maestro: siembra la base y corre; ~57m
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -67,9 +69,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 7 (carga rápida) — ronda 1 completa (2026-10-19); sigue la ronda 2.** La ronda 1 cerró el núcleo: selector de 3 tipos, monto sin signo con vista previa, cuenta por defecto por tipo (localStorage), categoría opcional de punta a punta (migración que relaja el CHECK; los 5 lectores dicen «Sin categoría»), sugerencias con búsqueda difusa, chips Hoy/Ayer, autofocus, atajos `T`/`I`, toast de deshacer persistente, aviso de duplicados y clic afuera que no cierra. El tester adversarial midió los cuatro criterios: A **3 interacciones · 859 ms** (peor caso contado de forma conservadora: 4 · 9,75 s) y sumó **463 checks** durables (`scripts/tester-fase7/`, 10 baterías). Encontró y arregló **1 bug real** con repro: la zona muerta de la categoría (elegir una sugerencia dejaba el chip «Ayer» bajo la banda del pie fijo → tap muerto en silencio; se colapsan las ayudas). Gate: typecheck 0 · 383/383 · smoke 599 · build EXIT=0 · suite **24/24 en 53m 55s** (dir `~/.maestro/tests/2026-10-19_011717`). La **ronda 2** pendiente: autocompletado de descripción (precarga categoría + cuenta + monto típico), plantillas/favoritos, paleta `Ctrl+K` e import CSV.
+**Fase 7 completa (2026-10-19) — desarrollo en pausa.** La ronda 2 cerró la segunda capa de la carga rápida: autocompletado de descripción (`GET /api/transactions/suggestions` sobre 400 recientes; «monto típico» = mediana en centavos; precarga categoría/cuenta siempre y monto sólo si está vacío), plantillas/favoritos (`FavoriteTemplate` con migración `20261019120000`, tope 24), paleta `Ctrl+K` (sonda CDP `scripts/probe-palette.mjs`, 46 checks; Maestro web no emite la combinación) e import CSV (preview, commit todo-o-nada, conciliación al centavo, advisory lock; formato en `docs/import-csv.md`). El tester adversarial arregló **4 bugs** con repro que falla primero (doble submit del CSV duplicaba filas; Escape cerraba el form entero; precarga de favorito con punto decimal; TRANSFER «A → A»), sumó **770 checks** (`scripts/tester-fase7r2/`, 9 baterías) y dejó la suite **25/25 en 56m 47s** (el flow nuevo pasó de `23` a `04b` pegado al `04`); criterio A **3 interacciones · 1.027 ms**. Gate del orquestador: typecheck 0 · **449/449**. **El usuario pidió frenar todo el desarrollo después de esta ronda para actualizar el servidor: no arrancar la Fase 9 (ni ninguna otra) hasta su señal.**
 
-La Fase 4 (deudas y préstamos) quedó completa antes, en dos rondas (2026-10-18: ronda 1 server-side con 989 checks; ronda 2 UI de préstamos con 286 checks y suite 23/23 en 51m 17s). La Fase 3 (recurrencia) y la Fase 5 (tarjetas y cuotas) también cerraron completas. Después de la Fase 7 r2: la **Fase 9 (endurecimiento)** para producción.
+La Fase 4 (deudas y préstamos) quedó completa antes, en dos rondas (2026-10-18: ronda 1 server-side con 989 checks; ronda 2 UI de préstamos con 286 checks y suite 23/23 en 51m 17s). La Fase 3 (recurrencia) y la Fase 5 (tarjetas y cuotas) también cerraron completas. Al reanudar el desarrollo, la **Fase 9 (endurecimiento)** es la próxima.
 
 ## Bloqueos que necesitan a la persona
 

@@ -17,6 +17,7 @@ import {
   movementTotals,
   toMovementDTO,
 } from "@/lib/queries";
+import { touchFavorite } from "@/lib/favorites";
 import { RecurrenceError, deleteMovement } from "@/lib/recurring";
 
 function badRequest(message: string) {
@@ -204,6 +205,20 @@ export async function POST(req: Request) {
       ? body.description.trim().slice(0, 200)
       : "";
 
+  // `favoriteId` es opcional y sólo marca `lastUsedAt`: no cambia el
+  // movimiento. Si la plantilla se borró en otra pestaña, `updateMany` no
+  // falla y el movimiento se guarda igual (la historia no depende de la
+  // plantilla).
+  if (
+    body.favoriteId !== undefined &&
+    body.favoriteId !== null &&
+    typeof body.favoriteId !== "string"
+  ) {
+    return badRequest("El id de la plantilla, si viene, tiene que ser texto.");
+  }
+  const favoriteId =
+    typeof body.favoriteId === "string" ? body.favoriteId.trim() : "";
+
   const accountId = typeof body.accountId === "string" ? body.accountId : "";
   if (!accountId) {
     return badRequest("Falta indicar la cuenta.");
@@ -292,7 +307,7 @@ export async function POST(req: Request) {
         categoryId = category.id;
       }
 
-      return tx.movement.create({
+      const created = await tx.movement.create({
         data: {
           kind,
           amount: amount.toFixed(2),
@@ -304,6 +319,12 @@ export async function POST(req: Request) {
         },
         include: movementInclude,
       });
+
+      // Dentro de la misma transacción: si el movimiento no se guarda, la
+      // plantilla tampoco se marca como usada.
+      if (favoriteId) await touchFavorite(tx, favoriteId);
+
+      return created;
     });
 
     return NextResponse.json(toMovementDTO(movement), { status: 201 });

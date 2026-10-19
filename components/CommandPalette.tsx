@@ -1,0 +1,343 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  filterPaletteItems,
+  movePaletteIndex,
+  type PaletteItem,
+} from "@/lib/command-palette";
+import {
+  MOVEMENT_KIND_LABEL,
+  type FavoriteDTO,
+  type MovementKindDTO,
+} from "@/lib/finance";
+import { formatMoney } from "@/lib/format";
+
+interface Props {
+  favorites: FavoriteDTO[];
+  onClose: () => void;
+  onNewMovement: (kind: MovementKindDTO) => void;
+  onUseFavorite: (favorite: FavoriteDTO) => void;
+  onOpenCsv: () => void;
+}
+
+/** Una entrada de la paleta con la acción que ejecuta. */
+interface PaletteAction extends PaletteItem {
+  run: () => void;
+}
+
+/** Una plantilla no se puede usar si su cuenta (origen o destino) está archivada. */
+function favoriteBlocked(favorite: FavoriteDTO): boolean {
+  if (favorite.account.archived) return true;
+  return favorite.kind === "TRANSFER" && (favorite.toAccount?.archived ?? true);
+}
+
+/**
+ * Paleta global de comandos (`Ctrl+K` / `Cmd+K`).
+ *
+ * El componente sólo dibuja y ejecuta; el filtrado, el orden y el wrap-around
+ * viven en `lib/command-palette.ts` (testeados sin navegador). El foco queda
+ * atrapado adentro y se devuelve a la pantalla al cerrar porque la paleta se
+ * desmonta y el navegador devuelve el foco al elemento anterior.
+ */
+export default function CommandPalette({
+  favorites,
+  onClose,
+  onNewMovement,
+  onUseFavorite,
+  onOpenCsv,
+}: Props) {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const actions = useMemo<PaletteAction[]>(() => {
+    const closeAndRun = (run: () => void) => () => {
+      onClose();
+      run();
+    };
+
+    const items: PaletteAction[] = [
+      {
+        id: "action-expense",
+        label: "Nuevo gasto",
+        hint: "Carga rápida · tecla T",
+        group: "Acciones",
+        keywords: "gasto compra egreso cargar",
+        run: closeAndRun(() => onNewMovement("EXPENSE")),
+      },
+      {
+        id: "action-income",
+        label: "Nuevo ingreso",
+        hint: "Carga rápida · tecla I",
+        group: "Acciones",
+        keywords: "ingreso sueldo cobro cargar",
+        run: closeAndRun(() => onNewMovement("INCOME")),
+      },
+      {
+        id: "action-transfer",
+        label: "Nueva transferencia",
+        hint: "Mover plata entre cuentas",
+        group: "Acciones",
+        keywords: "transferencia pasar mover cuenta",
+        run: closeAndRun(() => onNewMovement("TRANSFER")),
+      },
+      {
+        id: "action-csv",
+        label: "Importar CSV",
+        hint: "Datos históricos · preview antes de guardar",
+        group: "Acciones",
+        keywords: "csv importar pegar archivo historico",
+        run: closeAndRun(onOpenCsv),
+      },
+      {
+        id: "nav-home",
+        label: "Ir al panel",
+        hint: "Movimientos del mes",
+        group: "Pantallas",
+        keywords: "inicio home panel movimientos",
+        run: closeAndRun(() => router.push("/")),
+      },
+      {
+        id: "nav-analysis",
+        label: "Ir a Análisis",
+        hint: "Reportes del mes",
+        group: "Pantallas",
+        keywords: "analisis reportes graficos",
+        run: closeAndRun(() => router.push("/analisis")),
+      },
+      {
+        id: "nav-cards",
+        label: "Ir a Tarjetas",
+        hint: "Resúmenes, cuotas y planes",
+        group: "Pantallas",
+        keywords: "tarjetas credito cuotas resumen",
+        run: closeAndRun(() => router.push("/tarjetas")),
+      },
+      {
+        id: "nav-recurrence",
+        label: "Ir a Recurrencia",
+        hint: "Reglas y pendientes",
+        group: "Pantallas",
+        keywords: "recurrencia reglas pendientes",
+        run: closeAndRun(() => router.push("/recurrencia")),
+      },
+      {
+        id: "nav-loans",
+        label: "Ir a Préstamos",
+        hint: "Deudas y préstamos a cobrar",
+        group: "Pantallas",
+        keywords: "prestamos deuda cobrar",
+        run: closeAndRun(() => router.push("/prestamos")),
+      },
+    ];
+
+    for (const favorite of favorites) {
+      const blocked = favoriteBlocked(favorite);
+      const amount = favorite.amount ? ` · ${formatMoney(favorite.amount)}` : "";
+      items.push({
+        id: `favorite-${favorite.id}`,
+        label: favorite.name,
+        hint: `${MOVEMENT_KIND_LABEL[favorite.kind]}${amount}${
+          blocked ? " · cuenta archivada" : ""
+        }`,
+        group: "Plantillas",
+        keywords: [
+          favorite.description,
+          favorite.category?.name ?? "",
+          favorite.account.name,
+          favorite.toAccount?.name ?? "",
+        ]
+          .join(" ")
+          .trim(),
+        disabled: blocked,
+        run: closeAndRun(() => onUseFavorite(favorite)),
+      });
+    }
+
+    return items;
+  }, [favorites, onClose, onNewMovement, onOpenCsv, onUseFavorite, router]);
+
+  const filtered = useMemo(
+    () => filterPaletteItems(actions, query),
+    [actions, query],
+  );
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // El índice activo siempre apunta a algo visible. Al cambiar la búsqueda se
+  // vuelve al primero, como en cualquier combobox.
+  useEffect(() => {
+    setActive(filtered.length > 0 ? 0 : -1);
+  }, [filtered]);
+
+  useEffect(() => {
+    if (active < 0) return;
+    document
+      .getElementById(`palette-item-${active}`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
+  // Escape y trampa de foco. Tab cicla por los elementos focusables del
+  // diálogo; sin esto el foco se iría al panel de atrás (que sigue visible).
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'input, button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable || focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const current = document.activeElement;
+
+      if (event.shiftKey && current === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && current === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  function run(action: PaletteAction) {
+    if (action.disabled) return;
+    action.run();
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 px-4 pt-[10vh]"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Paleta de comandos"
+        id="command-palette"
+        className="w-full max-w-lg rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+      >
+        <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3">
+          <span aria-hidden="true" className="text-zinc-400">
+            ⌘
+          </span>
+          <input
+            ref={inputRef}
+            id="palette-input"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                event.preventDefault();
+                setActive((current) =>
+                  movePaletteIndex(
+                    current,
+                    event.key === "ArrowDown" ? 1 : -1,
+                    filtered.length,
+                  ),
+                );
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                const action = filtered[active];
+                if (action) run(action);
+              }
+            }}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="palette-listbox"
+            aria-activedescendant={active >= 0 ? `palette-item-${active}` : undefined}
+            aria-autocomplete="list"
+            placeholder="Buscar acciones, pantallas o plantillas…"
+            autoComplete="off"
+            className="flex-1 bg-transparent text-sm outline-none"
+          />
+          <button
+            id="palette-close"
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar paleta"
+            className="text-xl leading-none text-zinc-400 hover:text-zinc-700 px-1"
+          >
+            ×
+          </button>
+        </div>
+
+        <div
+          id="palette-listbox"
+          role="listbox"
+          aria-label="Resultados de la paleta"
+          className="max-h-80 overflow-y-auto py-1"
+        >
+          {filtered.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-zinc-500 text-center">
+              Nada coincide con “{query}”.
+            </p>
+          ) : (
+            filtered.map((action, index) => (
+              <button
+                key={action.id}
+                id={`palette-item-${index}`}
+                type="button"
+                role="option"
+                aria-selected={active === index}
+                aria-disabled={action.disabled}
+                disabled={action.disabled}
+                onMouseDown={(event) => event.preventDefault()}
+                onMouseEnter={() => setActive(index)}
+                onClick={() => run(action)}
+                className={`w-full text-left px-4 py-2 flex items-baseline justify-between gap-3 ${
+                  active === index
+                    ? "bg-zinc-100 dark:bg-zinc-800"
+                    : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                } ${action.disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium truncate">
+                    {action.label}
+                  </span>
+                  {action.hint && (
+                    <span className="block text-[11px] text-zinc-500 truncate">
+                      {action.hint}
+                    </span>
+                  )}
+                </span>
+                <span className="text-[10px] uppercase tracking-wide text-zinc-400 whitespace-nowrap">
+                  {action.group}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+
+        <p className="border-t border-zinc-200 dark:border-zinc-800 px-4 py-2 text-[11px] text-zinc-400">
+          ↑ ↓ navegar · Enter elegir · Esc cerrar · los favoritos con cuenta
+          archivada se muestran deshabilitados
+        </p>
+      </div>
+    </div>
+  );
+}
