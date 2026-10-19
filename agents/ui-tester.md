@@ -138,6 +138,27 @@ Resumen de lo que no podés olvidarte:
     el error aparece en el PASO SIGUIENTE. Anclá el scroll en una línea ARRIBA del
     objetivo con `centerElement: true` (trampa 12 de `flows/README.md`).
 
+### Trampas de la MEDICIÓN (no del driver) — de la ronda F7 r1
+
+No son de Maestro, pero ya costaron una ronda: artefactos del entorno de sondas o
+datos del escenario que se leen como fallas del producto.
+
+- **La ventana real no es 1024×600: es ~1019×557, y lo tocable termina donde
+  arranca el pie fijo del modal (~y≈441).** Un control cuyo punto de toque cae
+  bajo esa banda es un **tap muerto**: «completa» sin foco ni error y el dato se
+  pierde en silencio (así se perdió la nota del flow 04; con la ayuda de
+  categoría abierta, el chip «Ayer»). Medí el rectángulo con CDP antes de culpar
+  al flow o de agregar scroll.
+- **La «ventana sorda» del CDP**: el primer clic tras cargar —y una vez, el de
+  Guardar— puede llegar al DOM **sin reacción de React** y curarse solo; con el
+  mismo estado, `hasFocus: true` y el POST real tardó 29 ms. Es artefacto de
+  MEDICIÓN: en las sondas, esperá el marcador de hidratación y reintentá acotado
+  —contando el reintento como interacción y dentro del tiempo (criterio
+  conservador)—; **jamás** metas un reintento en un flow de Maestro.
+- **El generador de recurrencia materializa vencimientos en cualquier `load()`
+  del panel** (dato de negocio, no contaminación): no asertes igualdad de tarjeta
+  entre recargas; la evidencia de un cambio es el **diff por id** contra la API.
+
 ### Los datos de partida
 
 Los flujos **verifican**, no construyen: el escenario lo arma
@@ -179,7 +200,8 @@ Verificá casos que todavía no cubre ningún flujo:
 - ¿Se entiende qué va a pasar cuando apretás el botón?
 - ¿Los números negativos se leen bien? (una deuda en positivo, no `−$ 50.000`)
 - ¿Hay algún texto que mienta sobre dónde se guardan los datos?
-- ¿La app se puede usar en una pantalla de 1024×600? (es la que usan los tests)
+- ¿La app se puede usar en la ventana chica de los tests? (medida real
+  ~1019×557, con el pie fijo del modal arrancando en y≈441)
 
 ### 4. Accesibilidad (medio)
 

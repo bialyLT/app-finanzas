@@ -163,6 +163,24 @@ acá va solo lo generalizable.
   redondeo) → contra un documento **pagado** el recálculo re-factura (doble
   cobro): bloqueá el cambio con 4xx accionable que explique el escape, o congelá
   explícitamente; probalo con un documento pagado ya existente.
+- **Control tapado por una capa fija** (pie sticky del modal, toast, overlay) →
+  la geometría se juzga por el **punto de toque** contra la banda de la capa, no
+  por visibilidad: un tap ahí «completa» **sin foco ni error** y el dato se
+  pierde en silencio. Medí la banda con la ventana real de los tests (~1019×557;
+  el pie del modal arranca en y≈441) y revisá cada estado del form, no solo el
+  reposo. (F7 r1: la nota del flow 04.)
+- **Ayuda desplegable** (lista de sugerencias, avisos) → mientras está abierta
+  EMPUJA el layout: al aceptar, colapsala (ya cumplió su función); si queda
+  abierta puede mover controles vivos a la banda muerta de una capa fija.
+  (F7 r1: la sugerencia de categoría dejaba el chip «Ayer» en y≈504.)
+- **Aviso flotante sobre controles** (toast de deshacer) → la capa va
+  `pointer-events-none` y el punto de toque del control de abajo tiene que
+  seguir llegando al control: verificalo con `elementFromPoint` — el solape es
+  chico e invisible. (F7 r1: banda de 1,7px que igual llega al botón.)
+- **Atajo de teclado global nuevo** → guardas dobles: fuera de
+  input/textarea/select/contentEditable **y** sin modal abierto; la minúscula
+  debe seguir siendo DATO donde se tipea (`t` en monto, categoría, nota,
+  búsqueda). (F7 r1: `T`/`I`.)
 
 ---
 

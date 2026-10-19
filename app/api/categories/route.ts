@@ -3,7 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { cleanName, normalizeCategoryName } from "@/lib/finance";
-import { describeDatabaseError, toCategoryDTO } from "@/lib/queries";
+import {
+  categoryLastUsedAt,
+  describeDatabaseError,
+  toCategoryDTO,
+} from "@/lib/queries";
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -16,6 +20,14 @@ function badRequest(message: string) {
  * una categoría de tipo TRANSFER, porque una transferencia entre bolsillos
  * propios no es ni un ingreso ni un gasto. El enum `CategoryKind` lo hace
  * imposible de expresar en el tipo, así que acá no hay que defenderse de eso.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ ADEMÁS VIAJA `lastUsedAt` (Fase 7)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * La carga rápida ordena las sugerencias por recencia: la categoría del próximo
+ * gasto suele ser una de las últimas que se usaron, no la primera alfabética.
+ * La recencia la calcula `categoryLastUsedAt` (una sola consulta agregada) y
+ * viaja en cada categoría; `null` significa "todavía no se usó".
  */
 export async function GET(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
@@ -23,16 +35,47 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const kind = searchParams.get("kind");
 
-  const categories = await prisma.category.findMany({
-    where: kind === "INCOME" || kind === "EXPENSE" ? { kind } : undefined,
-    // Se ordena por nombre normalizado y no por el nombre crudo: sin esto, en
-    // Postgres las mayúsculas se ordenan antes que las minúsculas y "Comida"
-    // aparecería separada de "comida" en la lista — el mismo bug de duplicación,
-    // pero en el orden.
-    orderBy: { normalizedName: "asc" },
-  });
+  try {
+    const [categories, lastUsed] = await Promise.all([
+      prisma.category.findMany({
+        where: kind === "INCOME" || kind === "EXPENSE" ? { kind } : undefined,
+        // Se ordena por nombre normalizado y no por el nombre crudo: sin esto, en
+        // Postgres las mayúsculas se ordenan antes que las minúsculas y "Comida"
+        // aparecería separada de "comida" en la lista — el mismo bug de duplicación,
+        // pero en el orden.
+        orderBy: { normalizedName: "asc" },
+      }),
+      categoryLastUsedAt(prisma),
+    ]);
 
-  return NextResponse.json({ categories: categories.map(toCategoryDTO) });
+    return NextResponse.json({
+      categories: categories.map((category) =>
+        toCategoryDTO(category, lastUsed.get(category.id) ?? null),
+      ),
+    });
+  } catch (error) {
+    // Es una LECTURA: un fallo de infraestructura se traduce a 503 ("probá de
+    // nuevo"), nunca a un 500 genérico que no dice qué hacer (lección de la
+    // Fase 4 ronda 2). El pool agotado ya viene traducido por
+    // `describeDatabaseError`.
+    console.error(error);
+
+    const described = describeDatabaseError(error);
+    if (described) {
+      return NextResponse.json(
+        { error: described.message },
+        { status: described.status },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        error:
+          "No se pudieron cargar las categorías. Probá de nuevo en unos segundos.",
+      },
+      { status: 503 },
+    );
+  }
 }
 
 /**

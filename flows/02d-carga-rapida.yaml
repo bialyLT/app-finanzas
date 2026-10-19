@@ -1,0 +1,229 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# FLUJO 02d · Carga rápida — un gasto de punta a punta en cinco toques
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# El caso que ocurre todos los días: anotar un gasto mientras volvés del kiosco.
+# La Fase 7 convirtió ese camino en el corto —categoría opcional, fecha con
+# chips Hoy/Ayer, cuenta recordada, aviso de duplicado— y este flow lo recorre:
+#
+#   1. Se abre el formulario desde el botón de gasto y se carga 12.345,67 con
+#      la categoría VACÍA: desde la Fase 7 se puede guardar sin clasificar.
+#   2. Se toca el chip "Hoy" (la fecha por defecto ya es hoy: el toque verifica
+#      que el chip responda sin cambiar nada) y se guarda.
+#   3. El toast de deshacer queda a la vista, persistente, con su botón.
+#   4. Al reabrir y cargar LO MISMO (misma cuenta recordada, mismo monto, mismo
+#      día) la app avisa del duplicado ANTES de guardar y "Volver" no guarda.
+#   5. Deshacer el movimiento devuelve los totales al punto de partida: el
+#      flow es NETO CERO.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# REQUISITO
+# ─────────────────────────────────────────────────────────────────────────────
+# La base tiene que estar recién sembrada (scripts/flows.ps1 lo hace solo) y el
+# mes en curso tiene que ser OCTUBRE 2026: la carga cae en el mes que el panel
+# muestra y los totales que se verifican son los de octubre. Corre pegado al
+# 02c, el último momento en que el estado es el del seed.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# LOS NÚMEROS, CALCULADOS A MANO
+# ─────────────────────────────────────────────────────────────────────────────
+# Seed:  ingresos 800.000 · gastos 490.000 · quedó 310.000 · patrimonio 410.000
+# Alta:  12.345,67 sin categoría, fecha hoy, cuenta por defecto (Banco Galicia)
+#
+#   gastos      490.000 + 12.345,67 = 502.345,67
+#   quedó       310.000 − 12.345,67 = 297.654,33
+#   patrimonio  410.000 − 12.345,67 = 397.654,33
+#
+# Un gasto real mueve los tres: es plata que sale. (Deshacerlo con DELETE
+# revierte exacto: 490.000 · 310.000 · 410.000.)
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# POR QUÉ EL CHIP "HOY" NO TOCA LA FECHA DE VERDAD
+# ─────────────────────────────────────────────────────────────────────────────
+# El chip es parte del camino corto y se toca —tiene que responder—, pero no
+# cambia el valor por defecto: así el flujo vale cualquier día de octubre y no
+# arrastra la fragilidad de un calendario fijo. Lo que fija el calendario es
+# sólo el MES: la carga tiene que caer en el mes sembrado.
+
+url: http://127.0.0.1:3000
+name: "02d · Carga rápida — un gasto en cinco toques"
+tags:
+  - smoke
+  - movimientos
+env:
+  BASE: "http://127.0.0.1:3000"
+
+---
+# ── Entrar ───────────────────────────────────────────────────────────────────
+- openLink: "${BASE}"
+
+# La sesión se construye desde cero en vez de heredarse: Maestro comparte el
+# perfil de Chrome dentro de una misma corrida, así que el flow anterior la dejó
+# abierta. El desarrollo completo del porqué está en flows/02-panel.yaml.
+- runFlow:
+    when:
+      visible: "Salir"
+    commands:
+      - tapOn: "Salir"
+
+- extendedWaitUntil:
+    visible: "Entrar"
+    timeout: 60000
+
+- tapOn:
+    id: "password"
+- inputText: "${APP_PASSWORD}"
+- tapOn: "Entrar"
+
+- extendedWaitUntil:
+    visible: "Patrimonio neto.*"
+    timeout: 90000
+
+# El estado inicial es el del seed: el 02c termina devolviendo exactamente el
+# mismo estado con el que empezó.
+- assertVisible: '.*490\.000,00.*'
+- assertVisible: '.*410\.000,00.*'
+
+# ── Abrir el formulario de gasto ─────────────────────────────────────────────
+# Se entra por `id` y no por el texto del botón: dice "－ Gasto" con un signo
+# menos de ancho completo (U+FF0D), y además "Gasto" también es el nombre de
+# una categoría y de un filtro. El id no es ambiguo.
+#
+# El bloque "Evolución · últimos 12 meses" empujó los botones de acción debajo
+# del pliegue y `tapOn` no scrollea para buscar su blanco: se scrollea hasta él
+# y se lo centra (el mismo remedio de la trampa 12 que usan 03 y 04).
+- scrollUntilVisible:
+    element:
+      id: "btn-expense"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "btn-expense"
+
+- extendedWaitUntil:
+    visible: ".*Nuevo gasto.*"
+    timeout: 30000
+
+# ── El formulario de carga rápida ────────────────────────────────────────────
+# Las tres pestañas de tipo están a la vista y el gasto viene elegido porque se
+# entró por btn-expense. La cuenta por defecto es el banco: de ahí sale la
+# mayoría de los gastos.
+- assertVisible:
+    id: "tx-kind-gasto"
+- assertVisible:
+    id: "tx-kind-ingreso"
+- assertVisible:
+    id: "tx-kind-transferencia"
+- assertVisible: ".*Banco Galicia.*"
+
+# La categoría es OPCIONAL (Fase 7): el campo lo dice y el flow lo deja vacío a
+# propósito — carga rápida de verdad.
+- assertVisible: '.*\(opcional\).*'
+
+# ── Monto con vista previa ───────────────────────────────────────────────────
+- tapOn:
+    id: "tx-amount"
+- inputText: "12.345,67"
+
+# La vista previa confirma al instante que se interpretó el formato argentino
+# completo (miles con punto, decimales con coma).
+- assertVisible: '.*12\.345,67.*'
+
+# ── Fecha: el chip "Hoy" ─────────────────────────────────────────────────────
+- assertVisible:
+    id: "tx-date-hoy"
+- tapOn:
+    id: "tx-date-hoy"
+
+# ── Guardar ──────────────────────────────────────────────────────────────────
+- tapOn:
+    id: "tx-submit"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000
+
+# ── El toast de deshacer queda a la vista (y es persistente) ─────────────────
+- assertVisible:
+    id: "undo-toast"
+- assertVisible:
+    id: "undo-button"
+
+# ── Los totales se movieron exacto ───────────────────────────────────────────
+# Volver arriba anclando en el id del selector de mes, igual que 03 y 04.
+- scrollUntilVisible:
+    element:
+      id: "btn-next-month"
+    direction: UP
+    timeout: 30000
+
+- assertVisible: '.*502\.345,67.*'   # gastos
+- assertVisible: '.*297\.654,33.*'   # te quedó
+- assertVisible: '.*397\.654,33.*'   # patrimonio: el gasto es plata que sale
+
+# ── El aviso de duplicado ────────────────────────────────────────────────────
+# Reabrir y cargar lo MISMO: misma cuenta (la última usada quedó recordada),
+# mismo monto, mismo día. La app pregunta antes de guardar.
+- scrollUntilVisible:
+    element:
+      id: "btn-expense"
+    direction: DOWN
+    timeout: 30000
+    centerElement: true
+
+- tapOn:
+    id: "btn-expense"
+
+- extendedWaitUntil:
+    visible: ".*Nuevo gasto.*"
+    timeout: 30000
+
+- tapOn:
+    id: "tx-amount"
+- inputText: "12.345,67"
+
+- tapOn:
+    id: "tx-submit"
+
+- extendedWaitUntil:
+    visible:
+      id: "tx-duplicate-warning"
+    timeout: 30000
+
+- assertVisible:
+    id: "tx-duplicate-back"
+
+# "Volver" es la salida segura: no guarda nada.
+- tapOn:
+    id: "tx-duplicate-back"
+
+- tapOn:
+    id: "tx-cancel"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "tx-submit"
+    timeout: 30000
+
+# ── Deshacer devuelve todo al punto de partida ───────────────────────────────
+- tapOn:
+    id: "undo-button"
+
+- extendedWaitUntil:
+    notVisible:
+      id: "undo-toast"
+    timeout: 30000
+
+- scrollUntilVisible:
+    element:
+      id: "btn-next-month"
+    direction: UP
+    timeout: 30000
+
+- assertVisible: '.*490\.000,00.*'   # gastos: de vuelta al seed
+- assertVisible: '.*310\.000,00.*'   # te quedó
+- assertVisible: '.*410\.000,00.*'   # patrimonio
+- assertNotVisible: '.*502\.345,67.*' # el gasto deshecho no está en ningún lado

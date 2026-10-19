@@ -1,23 +1,35 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { findCategoryByName, searchCategories } from "@/lib/category-search";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
-import { todayCalendar } from "@/lib/dates";
+import { addDays, todayCalendar } from "@/lib/dates";
 import {
   type AccountBalanceDTO,
   type CategoryDTO,
+  type MovementDTO,
   type MovementKindDTO,
 } from "@/lib/finance";
 import { formatAmountInput, formatLiability, formatMoney } from "@/lib/format";
+import {
+  browserStorage,
+  canBeSourceAccount,
+  readLastAccountId,
+  resolveSourceAccount,
+  writeLastAccountId,
+} from "@/lib/quick-entry";
 
 interface Props {
+  /** El tipo con el que abre el modal (después se puede cambiar adentro). */
   kind: MovementKindDTO;
   accounts: AccountBalanceDTO[];
+  /** TODAS las categorías (de los dos tipos): el selector cambia de tipo solo. */
   categories: CategoryDTO[];
   /** Cuenta preseleccionada, si la pantalla viene de "cargar un gasto acá". */
   defaultAccountId?: string;
   onClose: () => void;
-  onSaved: () => void;
+  /** Recibe el movimiento guardado: el panel lo usa para el "Deshacer". */
+  onSaved: (movement: MovementDTO) => void;
 }
 
 /**
@@ -30,27 +42,44 @@ interface Props {
  */
 const KIND_STYLE: Record<
   MovementKindDTO,
-  { title: string; accent: string; focus: string; badge: string }
+  { title: string; accent: string; focus: string; badge: string; tab: string }
 > = {
   INCOME: {
     title: "＋ Nuevo ingreso",
     accent: "text-emerald-600",
     focus: "focus:ring-emerald-500",
     badge: "bg-emerald-600 hover:bg-emerald-700",
+    tab: "bg-emerald-600 text-white",
   },
   EXPENSE: {
     title: "－ Nuevo gasto",
     accent: "text-rose-600",
     focus: "focus:ring-rose-500",
     badge: "bg-rose-600 hover:bg-rose-700",
+    tab: "bg-rose-600 text-white",
   },
   TRANSFER: {
     title: "⇄ Nueva transferencia",
     accent: "text-sky-600",
     focus: "focus:ring-sky-500",
     badge: "bg-sky-600 hover:bg-sky-700",
+    tab: "bg-sky-600 text-white",
   },
 };
+
+/**
+ * Las tres pestañas del selector de tipo, con su `id` estable.
+ *
+ * El selector existe para la carga rápida: elegir "Ingreso" por error y no
+ * poder corregirlo sin cerrar y volver a abrir era un toque de más en cada
+ * carga. Los ids son los que usan los flows para elegir sin depender del texto
+ * visible.
+ */
+const KIND_TABS: { kind: MovementKindDTO; id: string; label: string }[] = [
+  { kind: "EXPENSE", id: "tx-kind-gasto", label: "Gasto" },
+  { kind: "INCOME", id: "tx-kind-ingreso", label: "Ingreso" },
+  { kind: "TRANSFER", id: "tx-kind-transferencia", label: "Transferencia" },
+];
 
 /** Etiqueta de una cuenta en el selector: nombre y cuánta plata tiene. */
 function accountLabel(account: AccountBalanceDTO): string {
@@ -61,27 +90,6 @@ function accountLabel(account: AccountBalanceDTO): string {
     ? formatLiability(account.debt ?? "0.00")
     : formatMoney(account.balance);
   return `${account.name} · ${amount}`;
-}
-
-/**
- * Cuenta de origen por defecto.
- *
- * Para un INGRESO se filtra a las cuentas de dinero: las de pasivo no pueden
- * recibir ingresos (lo impide un trigger en la base), así que preseleccionar una
- * tarjeta dejaría el formulario en un estado que la base va a rechazar. Es mejor
- * que la interfaz no pueda mostrar ese estado que detectarlo después.
- */
-function pickSourceAccount(
-  kind: MovementKindDTO,
-  accounts: AccountBalanceDTO[],
-  preferred?: string,
-): string {
-  if (preferred) return preferred;
-
-  const candidates =
-    kind === "INCOME" ? accounts.filter((account) => !account.isLiability) : accounts;
-
-  return candidates[0]?.id ?? "";
 }
 
 /**
@@ -99,34 +107,41 @@ function pickDestinationAccount(
 }
 
 export default function TransactionForm({
-  kind,
+  kind: initialKind,
   accounts,
   categories,
   defaultAccountId,
   onClose,
   onSaved,
 }: Props) {
+  // ── El tipo activo ─────────────────────────────────────────────────────────
+  // Arranca con el del modal y se puede CAMBIAR acá adentro sin cerrar: los
+  // datos ya escritos (monto, fecha, nota, categoría) no se pierden, y la
+  // cuenta se conserva si sigue siendo válida para el tipo nuevo.
+  const [kind, setKind] = useState<MovementKindDTO>(initialKind);
   const style = KIND_STYLE[kind];
 
-  // ── La fecha por defecto ───────────────────────────────────────────────────
-  // Antes: `new Date().toISOString().slice(0, 10)`.
-  //
-  // Ese era un bug silencioso y bastante cruel: `toISOString()` convierte a UTC.
-  // En Buenos Aires (UTC−3), a partir de las 21:00 el día UTC ya es el
-  // siguiente, así que un gasto cargado a las 22:00 se registraba con la fecha
-  // de MAÑANA. El usuario no lo notaba hasta que el movimiento aparecía en el
-  // mes siguiente.
-  //
-  const [date, setDate] = useState(() => todayCalendar());
-
-  const [amount, setAmount] = useState("");
+  // ── "Hoy" y "Ayer" ─────────────────────────────────────────────────────────
+  // `todayCalendar()` una sola vez al montar (no en cada render: el "hoy" de
+  // un formulario abierto no cambia a medianoche). `addDays` hace la aritmética
+  // de calendario — jamás `toISOString()`, que convierte a UTC y de noche
+  // devuelve el día siguiente.
+  const [today] = useState(() => todayCalendar());
+  const yesterday = useMemo(() => addDays(today, -1), [today]);
 
   // ── Cuenta de origen por defecto ───────────────────────────────────────────
+  // La última usada para este tipo (recordada en `localStorage`), y si no hay
+  // ninguna válida, la primera cuenta válida. La resolución completa —con la
+  // tolerancia a ids borrados o inválidos— vive en `resolveSourceAccount`
+  // (lib/quick-entry.ts), que es pura y está testeada.
   const [accountId, setAccountId] = useState(() =>
-    pickSourceAccount(kind, accounts, defaultAccountId),
+    resolveSourceAccount(kind, accounts, {
+      preferred: defaultAccountId,
+      lastUsedId: readLastAccountId(browserStorage(), kind),
+    }),
   );
 
-  // ── Cuenta de destino por defecto ──────────────────────────────────────────
+  // ── Cuenta de destino (sólo transferencias) ────────────────────────────────
   // Arranca con la primera cuenta que NO sea el origen.
   //
   // La primera versión dejaba el destino vacío ("Elegí una cuenta…") para forzar
@@ -134,21 +149,91 @@ export default function TransactionForm({
   // caso más común —pasar plata del banco al efectivo— y deja el formulario en
   // un estado inválido que la validación tiene que rechazar después. Con un
   // destino válido preseleccionado, guardar funciona en un solo toque.
-  //
-  // Y como el `<option>` vacío ya no existe, es imposible guardar una
-  // transferencia sin destino: el estado inválido dejó de ser representable en
-  // la interfaz, no sólo detectable en la validación.
   const [toAccountId, setToAccountId] = useState(() =>
-    pickDestinationAccount(accounts, pickSourceAccount(kind, accounts, defaultAccountId)),
+    pickDestinationAccount(
+      accounts,
+      resolveSourceAccount(kind, accounts, {
+        preferred: defaultAccountId,
+        lastUsedId: readLastAccountId(browserStorage(), kind),
+      }),
+    ),
   );
 
+  const [date, setDate] = useState(() => todayCalendar());
+  const [amount, setAmount] = useState("");
   const [categoryName, setCategoryName] = useState("");
+  /**
+   * Si la persona ya tocó el campo de categoría.
+   *
+   * Las sugerencias de "últimas usadas" no se muestran hasta ese momento: son
+   * una ayuda para cuando se está eligiendo categoría, y en reposo empujarían
+   * la fecha y la nota ~38px hacia abajo — justo lo que hace que "Nota" quede
+   * debajo del pie fijo en la pantalla de los tests (1018×597). Al enfocar el
+   * campo (o al escribir, que ya implica foco) aparecen.
+   */
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  /**
+   * Si la persona ya aceptó una sugerencia y la ayuda de categoría se colapsó.
+   *
+   * Con las sugerencias en pantalla, la fila de fecha y los chips "Hoy/Ayer"
+   * bajan ~72px y caen en la banda del pie fijo, que se come esos toques; y aun
+   * colapsando la lista, el aviso "✓/＋" que acompaña al nombre suma otros ~20px
+   * — suficientes para dejarla dentro de la banda. Elegir una categoría y
+   * después tocar "Ayer" era un no-op silencioso (la fecha no cambiaba). Al
+   * aceptar una sugerencia la ayuda ya cumplió su función — y el aviso sería
+   * redundante, porque toda sugerencia es una categoría existente —, así que se
+   * colapsan los dos y el formulario vuelve a su geometría de reposo. Tipear de
+   * nuevo la reabre (se está eligiendo otra vez).
+   */
+  const [categoryDismissed, setCategoryDismissed] = useState(false);
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // ── Los dos avisos en línea (jamás `window.confirm`) ───────────────────────
+  //
+  // `discardWarning`: Escape con datos escritos no cierra de una; muestra el
+  // aviso y recién el segundo Escape (o "Descartar") cierra.
+  //
+  // `duplicateWarning`: al guardar puede aparecer "ya hay un movimiento igual",
+  // con "Guardar igual" / "Volver" en lugar de los botones normales.
+  const [discardWarning, setDiscardWarning] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState<MovementDTO[]>([]);
+
   const isTransfer = kind === "TRANSFER";
   const isIncome = kind === "INCOME";
+
+  /**
+   * ¿Hay algo escrito que se perdería al cerrar?
+   *
+   * Sólo cuenta el TEXTO tipeado (monto, categoría, nota): son los datos que
+   * cuesta recuperar. Cambiar una fecha o elegir otra cuenta no marca sucio —
+   * volver a abrir el formulario reproduce el mismo estado por defecto, y
+   * advertir por eso entrenaría a la persona a ignorar el aviso.
+   */
+  const dirty =
+    amount.trim() !== "" ||
+    categoryName.trim() !== "" ||
+    description.trim() !== "";
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+
+      if (!dirty || discardWarning) {
+        onClose();
+        return;
+      }
+      setDiscardWarning(true);
+    }
+
+    // Listener de documento y no `onKeyDown` del overlay: con el foco en el
+    // botón de guardar (o en el body, después de un clic), el evento no
+    // burbujea por el árbol del modal. Éste es el único camino que garantiza
+    // que Escape SIEMPRE haga algo.
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [dirty, discardWarning, onClose]);
 
   // Cuentas que pueden recibir el dinero en una transferencia: todas menos la de
   // origen. Ofrecer la misma cuenta obligaría a la base a rechazar el movimiento
@@ -159,27 +244,118 @@ export default function TransactionForm({
   );
 
   const selectedAccount = accounts.find((a) => a.id === accountId);
-
   const amountPreview = formatAmountInput(amount);
 
-  const suggestions = useMemo(() => {
-    const query = categoryName.trim().toLowerCase();
-    if (!query) return categories.slice(0, 6);
-    return categories
-      .filter((c) => c.name.toLowerCase().includes(query))
-      .slice(0, 6);
-  }, [categories, categoryName]);
-
-  const categoryExists = useMemo(
+  // ── Categorías: del tipo activo, ordenadas por búsqueda + recencia ─────────
+  const kindCategories = useMemo(
     () =>
-      categories.some(
-        (c) => c.name.toLowerCase() === categoryName.trim().toLowerCase(),
+      categories.filter((category) =>
+        isIncome ? category.kind === "INCOME" : category.kind === "EXPENSE",
       ),
+    [categories, isIncome],
+  );
+
+  const suggestions = useMemo(
+    () => searchCategories(kindCategories, categoryName),
+    [kindCategories, categoryName],
+  );
+
+  // El aviso de "existente"/"nueva" se compara contra TODAS las categorías y no
+  // sólo las del tipo activo: el servidor deduplica por `normalizedName`, que es
+  // único en toda la tabla — el aviso tiene que decir lo que va a pasar de
+  // verdad (ver `findCategoryByName`).
+  const categoryExists = useMemo(
+    () => findCategoryByName(categories, categoryName) !== null,
     [categories, categoryName],
   );
 
+  /** El chequeo de duplicados ya no aplica si cambió un dato del criterio. */
+  function clearDuplicateWarning() {
+    setDuplicateWarning((current) => (current.length > 0 ? [] : current));
+  }
+
+  /**
+   * Cambiar de tipo sin cerrar el modal.
+   *
+   * Regla: NADA de lo escrito se pierde. El monto, la fecha, la nota y el texto
+   * de la categoría quedan como estaban. La cuenta de origen se conserva si
+   * sigue siendo un origen válido para el tipo nuevo (una tarjeta sirve para un
+   * gasto, no para un ingreso) y, si no, se vuelve a resolver como al abrir:
+   * última usada de ese tipo, o la primera válida.
+   */
+  function switchKind(next: MovementKindDTO) {
+    if (next === kind) return;
+
+    setKind(next);
+    setError("");
+    setDuplicateWarning([]);
+
+    const currentAccount = accounts.find((a) => a.id === accountId);
+    const nextSource =
+      currentAccount && canBeSourceAccount(next, currentAccount)
+        ? accountId
+        : resolveSourceAccount(next, accounts, {
+            lastUsedId: readLastAccountId(browserStorage(), next),
+          });
+    setAccountId(nextSource);
+
+    if (next === "TRANSFER") {
+      // El destino tiene que existir y no ser el origen nuevo.
+      setToAccountId((current) =>
+        current && current !== nextSource && accounts.some((a) => a.id === current)
+          ? current
+          : pickDestinationAccount(accounts, nextSource),
+      );
+    }
+  }
+
+  /**
+   * El guardado en sí (sin el chequeo de duplicados, que es un paso previo de
+   * `handleSubmit` y se puede saltear con "Guardar igual").
+   */
+  async function postMovement() {
+    const response = await fetch("/api/transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind,
+        // El monto se manda TAL COMO SE ESCRIBIÓ. El servidor lo interpreta
+        // con su propio parser (que conoce la convención argentina) y lo
+        // convierte a decimal exacto. Mandar `Number(amount)` acá sería
+        // reintroducir el error binario en el camino.
+        amount,
+        date,
+        accountId,
+        ...(isTransfer ? { toAccountId } : {}),
+        // La categoría es opcional (Fase 7): vacía viaja como "" y el servidor
+        // la normaliza a `null` — un movimiento sin clasificar, que los
+        // reportes agrupan bajo "Sin categoría".
+        ...(!isTransfer ? { categoryName: categoryName.trim() } : {}),
+        description,
+      }),
+    });
+
+    const data = (await response.json().catch(() => ({}))) as Partial<MovementDTO> & {
+      error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(data.error ?? "No se pudo guardar el movimiento.");
+    }
+
+    // Recordar la cuenta para el PRÓXIMO movimiento de este tipo. Best-effort:
+    // si `localStorage` no está disponible, se pierde la comodidad, no el
+    // guardado (ver `writeLastAccountId`).
+    writeLastAccountId(browserStorage(), kind, accountId);
+
+    onSaved(data as MovementDTO);
+    onClose();
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    // Guarda contra el doble submit: el botón se deshabilita, pero Enter en un
+    // campo puede disparar el submit igual.
+    if (saving) return;
     setError("");
 
     if (!amountPreview) {
@@ -194,40 +370,48 @@ export default function TransactionForm({
       setError("Elegí a qué cuenta va la plata.");
       return;
     }
-    if (!isTransfer && !categoryName.trim()) {
-      setError(
-        isIncome ? "Escribí de dónde viene el ingreso." : "Escribí en qué gastaste.",
-      );
-      return;
-    }
 
     setSaving(true);
     try {
-      const response = await fetch("/api/transactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind,
-          // El monto se manda TAL COMO SE ESCRIBIÓ. El servidor lo interpreta
-          // con su propio parser (que conoce la convención argentina) y lo
-          // convierte a decimal exacto. Mandar `Number(amount)` acá sería
-          // reintroducir el error binario en el camino.
-          amount,
-          date,
-          accountId,
-          ...(isTransfer ? { toAccountId } : {}),
-          ...(!isTransfer ? { categoryName: categoryName.trim() } : {}),
-          description,
-        }),
-      });
-
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo guardar el movimiento.");
+      // ── El chequeo de duplicados: best-effort, NUNCA un bloqueo ──────────
+      //
+      // Antes de guardar se pregunta si ya hay algo igual (misma cuenta, mismo
+      // monto, mismo día y tipo). Si lo hay, se avisa; si el chequeo FALLA
+      // —la ruta no responde, la red se cayó— se guarda igual: un chequeo de
+      // comodidad no puede convertirse en "no se puede guardar".
+      let duplicates: MovementDTO[] = [];
+      try {
+        const params = new URLSearchParams({ kind, accountId, amount, date });
+        const response = await fetch(`/api/transactions/duplicates?${params}`);
+        if (response.ok) {
+          const data = (await response.json()) as { duplicates?: MovementDTO[] };
+          duplicates = data.duplicates ?? [];
+        }
+      } catch {
+        duplicates = [];
       }
 
-      onSaved();
-      onClose();
+      if (duplicates.length > 0) {
+        setDuplicateWarning(duplicates);
+        return;
+      }
+
+      await postMovement();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** "Guardar igual": saltea el chequeo y guarda lo que ya está en pantalla. */
+  async function saveAnyway() {
+    if (saving) return;
+    setError("");
+    setDuplicateWarning([]);
+    setSaving(true);
+    try {
+      await postMovement();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar.");
     } finally {
@@ -240,14 +424,11 @@ export default function TransactionForm({
   // vez de un formulario que falla al guardar.
   if (accounts.length === 0) {
     return (
-      <div
-        className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
-        onClick={onClose}
-      >
-        <div
-          className="w-full sm:max-w-md bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
-          onClick={(e) => e.stopPropagation()}
-        >
+      // El clic afuera NO cierra (en ninguna pantalla del modal): un toque al
+      // costado con el monto ya escrito no puede tirar el trabajo. Se cierra
+      // con Escape o con el botón; ambos caminos son deliberados.
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
+        <div className="w-full sm:max-w-md bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl">
           <h2 className="text-xl font-bold mb-3">Primero creá una cuenta</h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
             Todo movimiento sale de una cuenta o entra a una. Sin al menos una
@@ -264,16 +445,39 @@ export default function TransactionForm({
     );
   }
 
+  // ── El campo "Nota": su posición depende de lo que los flujos TOCAN ────────
+  //
+  // Medido en la ventana de los tests (557px de alto): el área tocable del
+  // modal termina donde arranca el pie fijo (≈441px). Todo lo que queda debajo
+  // lo tapa el pie y el tap aterriza en el pie o en el backdrop — sin error,
+  // sin foco y sin texto. Así se perdía la nota de las transferencias de los
+  // flujos 04 y 10: el nodo existía, el tap "completaba" y el texto nunca
+  // llegaba al campo (quedaba description: "").
+  //
+  // En TRANSFERENCIA la nota va arriba de las cuentas (los flujos tocan nota,
+  // no fecha); en gasto/ingreso va al final, porque ahí lo que se toca es la
+  // categoría y la fecha, que quedan más arriba. Las cuentas y la fecha se
+  // asertan (texto visible), no se tocan.
+  const descriptionField = (
+    <div>
+      <label htmlFor="tx-description" className="text-sm font-medium">
+        Nota <span className="font-normal text-zinc-500">(opcional)</span>
+      </label>
+      <input
+        id="tx-description"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Detalle…"
+        maxLength={200}
+        className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+      />
+    </div>
+  );
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
+      <div className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl">
+        <div className="flex items-center justify-between mb-2">
           <h2 className={`text-xl font-bold ${style.accent}`}>{style.title}</h2>
           <button
             id="tx-close"
@@ -285,7 +489,33 @@ export default function TransactionForm({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {/* ── Tipo de movimiento ───────────────────────────────────────── */}
+        {/* Compacto a propósito: el modal tiene que seguir entrando en una
+            pantalla de 1018×597, donde "Nota" queda al borde del pie fijo. */}
+        <div
+          role="group"
+          aria-label="Tipo de movimiento"
+          className="grid grid-cols-3 gap-1 rounded-xl bg-zinc-100 dark:bg-zinc-800 p-1 mb-3"
+        >
+          {KIND_TABS.map((tab) => (
+            <button
+              key={tab.kind}
+              id={tab.id}
+              type="button"
+              onClick={() => switchKind(tab.kind)}
+              aria-pressed={kind === tab.kind}
+              className={`rounded-lg py-1.5 text-sm font-medium transition ${
+                kind === tab.kind
+                  ? KIND_STYLE[tab.kind].tab
+                  : "text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           {/* ── Monto ─────────────────────────────────────────────────────── */}
           <div>
             <label htmlFor="tx-amount" className="text-sm font-medium">
@@ -298,7 +528,10 @@ export default function TransactionForm({
               autoComplete="off"
               autoFocus
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value);
+                clearDuplicateWarning();
+              }}
               placeholder="0,00"
               className={`mt-1 w-full text-2xl font-bold rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 ${style.focus}`}
             />
@@ -317,6 +550,10 @@ export default function TransactionForm({
             </p>
           </div>
 
+          {/* En TRANSFERENCIA la nota va acá arriba, junto al monto — el
+              porqué completo, en `descriptionField`. */}
+          {isTransfer && descriptionField}
+
           {/* ── Cuenta de origen ──────────────────────────────────────────── */}
           <div>
             <label htmlFor="tx-account" className="text-sm font-medium">
@@ -332,12 +569,13 @@ export default function TransactionForm({
               onChange={(e) => {
                 const nextSource = e.target.value;
                 setAccountId(nextSource);
+                clearDuplicateWarning();
                 // Al cambiar el origen, el destino anterior puede ser el mismo.
                 // Se re-elige el primero disponible en vez de vaciarlo: el
                 // formulario nunca queda en un estado inválido.
                 setToAccountId(pickDestinationAccount(accounts, nextSource));
               }}
-              className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-3 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
             >
               {accounts.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -372,7 +610,7 @@ export default function TransactionForm({
                   id="tx-to-account"
                   value={toAccountId}
                   onChange={(e) => setToAccountId(e.target.value)}
-                  className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-3 outline-none focus:ring-2 ${style.focus}`}
+                  className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
                 >
                   {destinationOptions.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -388,16 +626,21 @@ export default function TransactionForm({
             </div>
           )}
 
-          {/* ── Categoría (sólo ingresos y gastos) ────────────────────────── */}
+          {/* ── Categoría (sólo ingresos y gastos, y OPCIONAL) ────────────── */}
           {!isTransfer && (
             <div>
               <label htmlFor="tx-category" className="text-sm font-medium">
-                {isIncome ? "De dónde viene *" : "En qué se fue *"}
+                {isIncome ? "De dónde viene" : "En qué se fue"}{" "}
+                <span className="font-normal text-zinc-500">(opcional)</span>
               </label>
               <input
                 id="tx-category"
                 value={categoryName}
-                onChange={(e) => setCategoryName(e.target.value)}
+                onChange={(e) => {
+                  setCategoryName(e.target.value);
+                  setCategoryDismissed(false);
+                }}
+                onFocus={() => setCategoryTouched(true)}
                 placeholder={
                   isIncome
                     ? "Ej: Sueldo, Freelance, Ventas…"
@@ -405,15 +648,15 @@ export default function TransactionForm({
                 }
                 list="tx-categories"
                 autoComplete="off"
-                className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 ${style.focus}`}
+                className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
               />
               <datalist id="tx-categories">
-                {categories.map((category) => (
+                {kindCategories.map((category) => (
                   <option key={category.id} value={category.name} />
                 ))}
               </datalist>
 
-              {categoryName.trim() !== "" && (
+              {categoryName.trim() !== "" && !categoryDismissed && (
                 <p className="mt-1 text-xs text-zinc-500">
                   {categoryExists ? (
                     <>
@@ -429,53 +672,91 @@ export default function TransactionForm({
                 </p>
               )}
 
-              {suggestions.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {suggestions.map((suggestion) => (
-                    <button
-                      type="button"
-                      key={suggestion.id}
-                      onClick={() => setCategoryName(suggestion.name)}
-                      className="text-xs px-3 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                    >
-                      {suggestion.name}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Sugerencias: últimas usadas primero, y al escribir, las que
+                  empiezan con lo escrito. La lógica vive en
+                  `searchCategories` (lib/category-search.ts). En reposo no se
+                  muestran para no empujar los campos de abajo (el porqué,
+                  arriba de todo, en `categoryTouched`). */}
+              {suggestions.length > 0 &&
+                !categoryDismissed &&
+                (categoryTouched || categoryName.trim() !== "") && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {suggestions.map((suggestion) => (
+                      <button
+                        type="button"
+                        key={suggestion.id}
+                        onClick={() => {
+                          setCategoryName(suggestion.name);
+                          setCategoryDismissed(true);
+                        }}
+                        className="text-xs px-3 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                      >
+                        {suggestion.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
             </div>
           )}
 
-          {/* ── Fecha y nota ──────────────────────────────────────────────── */}
+          {/* ── Fecha ─────────────────────────────────────────────────────── */}
+          {/* Los chips "Hoy"/"Ayer" comparten la fila del label para no sumar
+              una fila entera al modal (el porqué del espacio, en el pie). */}
           <div>
-            <label htmlFor="tx-date" className="text-sm font-medium">
-              Fecha *
-            </label>
+            <div className="flex items-center justify-between">
+              <label htmlFor="tx-date" className="text-sm font-medium">
+                Fecha *
+              </label>
+              <div className="flex gap-1">
+                <button
+                  id="tx-date-hoy"
+                  type="button"
+                  onClick={() => {
+                    setDate(today);
+                    clearDuplicateWarning();
+                  }}
+                  aria-pressed={date === today}
+                  className={`text-xs px-2.5 py-1 rounded-full border ${
+                    date === today
+                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-black"
+                      : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  Hoy
+                </button>
+                <button
+                  id="tx-date-ayer"
+                  type="button"
+                  onClick={() => {
+                    setDate(yesterday);
+                    clearDuplicateWarning();
+                  }}
+                  aria-pressed={date === yesterday}
+                  className={`text-xs px-2.5 py-1 rounded-full border ${
+                    date === yesterday
+                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-black"
+                      : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  Ayer
+                </button>
+              </div>
+            </div>
             <input
               id="tx-date"
               type="date"
               value={date}
               onChange={(e) => {
                 setDate(e.target.value);
+                clearDuplicateWarning();
                 clearDateInputIfEmptied(e.target);
               }}
-              className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 outline-none focus:ring-2 ${style.focus}`}
             />
           </div>
 
-          <div>
-            <label htmlFor="tx-description" className="text-sm font-medium">
-              Nota <span className="font-normal text-zinc-500">(opcional)</span>
-            </label>
-            <input
-              id="tx-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Detalle…"
-              maxLength={200}
-              className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
-            />
-          </div>
+          {/* En gasto/ingreso la nota va al final — el porqué, en `descriptionField`. */}
+          {!isTransfer && descriptionField}
 
           {/* ────────────────────────────────────────────────────────────────
               PIE FIJO: EL BOTÓN DE GUARDAR NO PUEDE IRSE DE PANTALLA
@@ -498,11 +779,13 @@ export default function TransactionForm({
 
               El `-mx-6 -mb-6` cancela el `p-6` del contenedor para que la
               franja llegue hasta los bordes; si no, quedaría una isla flotante
-              con el fondo del modal asomando alrededor.
+              con el fondo del modal asomando alrededor. El `pb-3` y el `pt-2`
+              recortan el pie a lo esencial: su alto también cuenta — cada píxel
+              de menos es un píxel menos de scroll en una ventana baja.
 
               El mensaje de error va acá adentro y no entre los campos: un error
               que aparece fuera de la vista es un error que no se leyó. */}
-          <div className="sticky bottom-0 -mx-6 -mb-6 mt-4 px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+          <div className="sticky bottom-0 -mx-6 -mb-6 px-6 pb-3 pt-2 space-y-3 bg-white dark:bg-zinc-900">
             {error && (
               <p
                 role="alert"
@@ -512,24 +795,95 @@ export default function TransactionForm({
               </p>
             )}
 
-            <div className="flex gap-3">
-              <button
-                id="tx-cancel"
-                type="button"
-                onClick={onClose}
-                className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+            {/* Aviso de descarte: Escape con datos escritos entra acá. El
+                segundo Escape (o "Descartar") cierra; "Seguir editando"
+                vuelve. Nunca `window.confirm`: el driver de los tests no
+                puede contestar diálogos nativos. */}
+            {discardWarning && (
+              <div
+                id="tx-discard-warning"
+                role="alert"
+                className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
               >
-                Cancelar
-              </button>
-              <button
-                id="tx-submit"
-                type="submit"
-                disabled={saving}
-                className={`flex-1 rounded-xl py-3 font-bold text-white disabled:opacity-50 ${style.badge}`}
+                <p>Si cerrás ahora se pierde lo que cargaste.</p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    id="tx-discard-cancel"
+                    type="button"
+                    onClick={() => setDiscardWarning(false)}
+                    className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                  >
+                    Seguir editando
+                  </button>
+                  <button
+                    id="tx-discard-confirm"
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 text-xs font-bold"
+                  >
+                    Descartar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {duplicateWarning.length > 0 ? (
+              // El aviso de duplicado REEMPLAZA a los botones: con los botones
+              // normales a la vista, "Guardar" volvería a chocar contra el
+              // mismo chequeo o —peor— guardaría sin que se vea la decisión.
+              <div
+                id="tx-duplicate-warning"
+                role="alert"
+                className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
               >
-                {saving ? "Guardando…" : "Guardar"}
-              </button>
-            </div>
+                <p>
+                  Ya{" "}
+                  {duplicateWarning.length === 1
+                    ? "hay un movimiento igual"
+                    : `hay ${duplicateWarning.length} movimientos iguales`}
+                  : misma cuenta, mismo monto y mismo día. Puede ser el mismo
+                  gasto cargado dos veces.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    id="tx-duplicate-back"
+                    type="button"
+                    onClick={() => setDuplicateWarning([])}
+                    className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    id="tx-duplicate-save"
+                    type="button"
+                    onClick={() => void saveAnyway()}
+                    disabled={saving}
+                    className="rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 text-xs font-bold disabled:opacity-50"
+                  >
+                    Guardar igual
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <button
+                  id="tx-cancel"
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+                >
+                  Cancelar
+                </button>
+                <button
+                  id="tx-submit"
+                  type="submit"
+                  disabled={saving}
+                  className={`flex-1 rounded-xl py-3 font-bold text-white disabled:opacity-50 ${style.badge}`}
+                >
+                  {saving ? "Guardando…" : "Guardar"}
+                </button>
+              </div>
+            )}
           </div>
         </form>
       </div>

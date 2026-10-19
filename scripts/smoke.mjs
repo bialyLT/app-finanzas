@@ -2833,6 +2833,151 @@ async function main() {
     );
   }
 
+  // ── Carga rápida: la categoría opcional y la red de duplicados ─────────────
+  //
+  // La Fase 7 hizo OPCIONAL la categoría en gastos e ingresos. Esta sección
+  // verifica las tres puntas del cambio contra la API real:
+  //
+  //   1. El alta — un EXPENSE sin categoría se guarda (201) y el DTO dice
+  //      `category: null`, no "" ni undefined.
+  //   2. El reporte — ese movimiento cae en una fila "Sin categoría" de la
+  //      torta (categoryId null): un grupo real, no un agujero.
+  //   3. Los duplicados — `GET /api/transactions/duplicates` encuentra el
+  //      gemelo por (kind, cuenta, monto, día) y no se confunde con otra
+  //      cuenta ni con otro día.
+  //
+  // Se hace en AGOSTO 2026 a propósito: el mes sembrado (octubre) es el que
+  // verifican las pruebas de interfaz, y si un fallo a mitad de camino dejara
+  // el movimiento vivo, en octubre correría los totales de TODOS los flows.
+  // En agosto un huérfano no toca nada, y la limpieza del arranque —que corre
+  // ANTES de asertar— lo borra en la próxima corrida.
+  section("Carga rápida · categoría opcional y duplicados (agosto 2026)");
+  {
+    const desde = "2026-08-01";
+    const hasta = "2026-08-31";
+    const fecha = "2026-08-15";
+    const montoArgentino = "12.345,67"; // El formato que manda el formulario.
+
+    // Limpieza de arranque: si una corrida anterior murió entre el POST y el
+    // DELETE, el movimiento quedó vivo. Se borra ANTES de medir nada, así la
+    // sección es idempotente y "agosto está vacío" es una verificación de la
+    // API, no una suposición.
+    const { body: agostoPrevio } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    for (const movimiento of agostoPrevio?.movements ?? []) {
+      await api(`/api/transactions?id=${movimiento.id}`, { method: "DELETE" });
+    }
+
+    const { body: agostoVacio } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "agosto arranca vacío (limpieza incluida)",
+      (agostoVacio?.movements ?? []).length,
+      0,
+    );
+
+    // ── 1. El alta sin categoría ─────────────────────────────────────────────
+    const sinCategoria = await post("/api/transactions", {
+      kind: "EXPENSE",
+      amount: montoArgentino,
+      date: fecha,
+      accountId: efectivo.body?.id,
+      description: "Sonda de carga rápida (smoke)",
+    });
+    check("un gasto SIN categoría se guarda (201)", sinCategoria.status, 201);
+    check("el DTO dice category: null", sinCategoria.body?.category, null);
+    check(
+      "y el monto argentino se interpretó exacto",
+      sinCategoria.body?.amount,
+      "12345.67",
+    );
+
+    // ── 2. El reporte agrupa bajo "Sin categoría" ────────────────────────────
+    const { body: reporteAgosto } = await api(
+      `/api/reports?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "los gastos de agosto son el movimiento nuevo",
+      reporteAgosto?.totals?.expenses,
+      "12345.67",
+    );
+    check(
+      "la torta trae una sola porción",
+      reporteAgosto?.byCategory?.length,
+      1,
+    );
+    check(
+      "agrupado como «Sin categoría»",
+      reporteAgosto?.byCategory?.[0]?.name,
+      "Sin categoría",
+    );
+    check(
+      "sin categoryId: es el grupo de los null",
+      reporteAgosto?.byCategory?.[0]?.categoryId,
+      null,
+    );
+    check(
+      "y el monto exacto",
+      reporteAgosto?.byCategory?.[0]?.amount,
+      "12345.67",
+    );
+
+    // ── 3. Duplicados: la misma cuenta y el mismo día sí; el resto, no ───────
+    const duplicadosDe = async (params) => {
+      const { body } = await api(
+        `/api/transactions/duplicates?${new URLSearchParams(params)}`,
+      );
+      return body?.duplicates ?? [];
+    };
+
+    const iguales = await duplicadosDe({
+      kind: "EXPENSE",
+      accountId: efectivo.body?.id,
+      amount: montoArgentino,
+      date: fecha,
+    });
+    check("el gemelo exacto aparece (1)", iguales.length, 1);
+    check(
+      "y es el movimiento recién creado",
+      iguales[0]?.id,
+      sinCategoria.body?.id,
+    );
+
+    const otraCuenta = await duplicadosDe({
+      kind: "EXPENSE",
+      accountId: banco.body?.id,
+      amount: montoArgentino,
+      date: fecha,
+    });
+    check("con otra cuenta, 0", otraCuenta.length, 0);
+
+    const otroDia = await duplicadosDe({
+      kind: "EXPENSE",
+      accountId: efectivo.body?.id,
+      amount: montoArgentino,
+      date: "2026-08-16",
+    });
+    check("con otro día, 0", otroDia.length, 0);
+
+    // ── 4. La limpieza final deja agosto como estaba ─────────────────────────
+    const borradoSonda = await api(
+      `/api/transactions?id=${sinCategoria.body?.id}`,
+      { method: "DELETE" },
+    );
+    check("el movimiento de prueba se borra (204)", borradoSonda.status, 204);
+
+    const { body: agostoFinal } = await api(
+      `/api/transactions?from=${desde}&to=${hasta}`,
+    );
+    check(
+      "y agosto vuelve a estar vacío",
+      (agostoFinal?.movements ?? []).length,
+      0,
+    );
+  }
+
   // ── Logout: CSRF y atributos de la cookie ──────────────────────────────────
   section("Cierre de sesión (logout)");
   {

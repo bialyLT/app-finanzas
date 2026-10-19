@@ -709,6 +709,22 @@ también que los diálogos nativos no hacen falta en este formulario (las
 validaciones son inline: "El día de cierre y el de vencimiento van juntos") y el
 patrón vive en `flows/20-tarjeta-desde-cero.yaml`.
 
+**Segunda puerta (Fase 7 r1, 2026-10-19): el desplegable abierto EMPUJA campos
+vivos bajo la banda.** En el alta rápida, elegir una sugerencia de categoría
+dejaba abiertas la lista de sugerencias y el aviso «✓»: la fila de fecha bajaba
+~72px y el chip «Ayer» (centro y≈504) caía dentro de la banda muerta del pie —
+ventana real medida en esta máquina: ~1019×557, con el pie del modal arrancando
+en **y≈441**—. El tap «COMPLETED» no cambiaba la fecha: **sin foco, sin error,
+no-op silencioso**. La misma ronda encontró la otra puerta del mecanismo: la
+NOTA de la transferencia (su label matcheaba bajo la banda → tap muerto →
+`description: ""`; el flow 04 fallaba al final buscando la nota perdida). Ambas
+se arreglaron en la app — reordenar «Nota» por tipo y colapsar las ayudas al
+aceptar la sugerencia (ya cumplieron su función) —, y la lección quedó fina:
+**la geometría del modal se juzga por ESTADO** (en reposo y con las ayudas
+desplegadas), y un COMPLETED sobre un punto tapado no deja rastro: si el efecto
+no aparece, medí el punto de toque contra la banda del pie antes de culpar al
+flow.
+
 ---
 
 ### 16. Un diálogo nativo (`window.confirm` / `window.alert`) TUMBA al driver
@@ -802,6 +818,7 @@ kotlin.Int`, buscá un diálogo nativo en la app antes de culpar al driver —
 | `02-panel.yaml` | Los números del mes (ingresos 800.000 · gastos 490.000 · quedó 310.000 · ahorro 38,75% · patrimonio 410.000), la **tarjeta "Flujo de caja"** con sus tres caras (octubre +328.587,29 conviviendo con "Te quedó" +310.000; septiembre +500.000 sin ser ingreso; agosto $ 0,00 con "Sin transferencias"), los saldos por cuenta, la **reconciliación visible** (ΔPatrimonio +310.000 = Ahorro del mes +310.000, "cuadra al centavo"), la **tarjeta Deudas** (deuda viva 518.587,29 = Visa 50.000 + Préstamo 468.587,29; barra de progreso 6,28% = capital devuelto 31.412,71 / 500.000; «1 de 12 cubiertas · faltan 11»; interés pagado 25.000,00; DTI 7,05% = 56.412,71 / 800.000; "sin plan de cuotas" en la Visa; en septiembre «0 de 12 cubiertas» y DTI "no se puede calcular"), y que el desembolso del préstamo no aparezca como ingreso | ✅ Pasa (3m) |
 | `02b-tarjetas.yaml` | El ciclo de una tarjeta real sobre el seed: configurar cierre 15 / vence 5 / límite 500.000 (la deuda de 50.000 de la Ropa pasa a 10,00% del límite y el período en curso a noviembre), "Correr el cierre" (resumen de octubre 50.000 / mínimo 2.500 "Sin pagar"), pagarlo en dos pasos con el Banco Galicia preseleccionado y el paso intermedio cancelado primero (deuda 0, "Pagado"), el 409 VERBATIM al cambiar el cierre con un resumen pagado ("Borrá primero el pago…" — el cierre NO cambia) y que el pago es transferencia, no gasto (panel 490.000 con 2 transferencias) | ✅ Pasa (2m 23s) |
 | `02c-cuotas.yaml` | La compra en cuotas de punta a punta: "Heladera" de 120.000 en 12 cuotas con contado 108.000 → vista previa con cuota 10.000,00, sobreprecio 12.000,00 y **tasa implícita 1,66% por mes — TEA 21,83%** ("el interés está en el precio", §3.3); la compra del 18/10 cae en el período de noviembre ("Cuota 1 de 12", nada facturado); deuda 120.000 / utilización 24,00% / período 10.000 con mínimo 500; compromisos 60.000 a 6 meses y 120.000 a 12; el gasto cuenta UNA vez (panel 610.000 = 490.000 + 120.000); el borrado en dos pasos se lleva el gasto Y las cuotas; y la EXTENSIÓN: el escape del 409 del 02b recorrido de verdad — borrar el pago del resumen desde /inicio (dos pasos en línea, trampa 16), el resumen se reabre solo, el cambio de cierre ahora se guarda y al final se restaura el 15 (estado = seed) | ✅ Pasa (4m 11s) |
+| `02d-carga-rapida.yaml` | La carga rápida de la Fase 7 de punta a punta: el gasto SIN categoría (el campo opcional de verdad), el monto 12.345,67 en formato argentino con su vista previa, el chip "Hoy", los tres tipos a la vista y el banco preseleccionado — y después las dos redes: recargar lo MISMO (cuenta recordada, monto y día) avisa del duplicado antes de guardar y "Volver" no guarda nada, y el toast de deshacer (persistente) revierte con su DELETE exacto: los totales vuelven a 490.000 · 310.000 · 410.000, el 502.345,67 desaparece y el toast se va — flow neto cero | ✅ Pasa (3m 0s) |
 | `03-cargar-gasto.yaml` | Cargar un gasto desde el formulario y que los cinco totales se muevan exacto | ✅ Pasa (1m 17s) |
 | `04-transferencia.yaml` | Transferir 50.000 entre cuentas propias y que **nada de lo que mide el mes cambie** | ✅ Pasa (1m 22s) |
 | `05-analisis.yaml` | El desglose por categoría, que el interés aparezca y el capital no, y que las transferencias estén aparte | ✅ Pasa (40s) |
@@ -821,13 +838,12 @@ kotlin.Int`, buscá un diálogo nativo en la app antes de culpar al driver —
 | `21-prestamo-desde-cero.yaml` | La UI de préstamos nueva, dirección "recibí": el alta guiada de 500.000 al 60% en 12 con la vista previa del servidor (cuota 56.412,71), la primera cuota computada al **día 20 del mes anterior** (nunca "hoy" literal: la 1 siempre vencida, la 2 siempre en el mes en curso), el **DESEMBOLSO como paso 2 explícito** que registra la transferencia (sin él la deuda viva mentiría — el aviso `loan-warning` tiene que NO estar), el split exacto de la cuota 1 en el bloque de pago (interés 25.000,00 + capital 31.412,71) con el refetch al tope y su flash, el progreso de la tarjeta scopeado debajo del nombre propio (debe 468.587,29 · "Cubriste 1 de 12" · "Próxima cuota 2 de 12" ya en el mes en curso), la cancelación anticipada en DOS pasos en línea (capital pendiente 468.587,29, sin interés de las cuotas que faltan) y el cierre: debe 0,00, chip "Cubierto" (sin scoping — vive en la MISMA fila del título, la trampa que dejó este flow), "Cubriste 12 de 12" al 100%, "No queda ninguna cuota por pagar" y el cronograma con la 1 PAGADA y las 11 CUBIERTAS; la sección de deudas vuelve al seed (468.587,29) | ✅ Pasa (4m 4s) |
 | `22-prestamo-a-cobrar.yaml` | La dirección "presté" (`OWED_TO_ME`, el espejo del LOAN): la dirección se elige ANTES de cargar ("¿De qué cuenta salió?"), el paso 2 del desembolso se **posterga a propósito** ("Ahora no") y se recorre el CAMINO DE RECUPERACIÓN — el aviso de que "te deben" miente, el desembolso desde la PROPIA tarjeta con el monto del contrato (100.000,00: el principal, no la deuda viva que recién creado vale 0 — el bug del card-disburse de esta ronda), "te deben" 0,00 → 100.000,00, la cuota vencida del RECEIVABLE que NO entra en "Compromisos próximos" ("Sin cuotas vencidas"), el cobro de la cuota 1 con split exacto (interés 5.000,00 + capital 14.701,75) y el progreso final: te deben 85.298,25 · "Cobraste 1 de 6" | ✅ Pasa (3m 32s) |
 
-**Suite completa (00–15 + 18 + 19 + 20 + 21 + 22): 23 flows.** La última
-corrida ENTERA —21/21 en 47m 30s— es anterior a la ronda de préstamos
-(2026-10-18, dir `~/.maestro/tests/2026-10-18_064912`); el `21` y el `22` se
-validaron por separado sobre el build final y con la base recién sembrada
-(4m 4s y 3m 32s) y la próxima corrida completa los suma al final. El orden es el
-de la carpeta:
-`00, 01, 02, 02b, 02c, 03…15, 18, 19, 20, 21, 22`. Los flujos 16 y 17 de la
+**Suite completa (00–15 + 02d + 18 + 19 + 20 + 21 + 22): 24 flows.** La última
+corrida ENTERA —**24/24 · Suite OK en 53m 55s**— corrió el 2026-10-19 sobre el
+build de la ronda de carga rápida (dir `~/.maestro/tests/2026-10-19_011717`),
+con el seed del smoke (599 ok · 0 fallas), e incluye el `21` y el `22` de la
+ronda de préstamos. El orden es el de la carpeta:
+`00, 01, 02, 02b, 02c, 02d, 03…15, 18, 19, 20, 21, 22`. Los flujos 16 y 17 de la
 ronda anterior ya no existen como tales: su contenido vive en `02b` y `02c`
 (renombrados para correr pegados al 02, el único momento en que el estado es el
 del seed; el 02c además ganó el escape del 409 recorrido de verdad). El 18, el
@@ -835,12 +851,15 @@ del seed; el 02c además ganó el escape del 409 recorrido de verdad). El 18, el
 sobre saldo a favor, y la tarjeta desde cero con cuotas retroactivas. El `21` y
 el `22` son los nuevos de la ronda de préstamos: el alta guiada con desembolso
 explícito, el pago y la cancelación anticipada, y el camino de recuperación del
-desembolso postergado con el cobro.
+desembolso postergado con el cobro. El `02d` es el nuevo de la ronda de carga
+rápida (Fase 7): el gasto SIN categoría, el chip Hoy, el toast de deshacer y el
+aviso de duplicado — flujo neto cero.
 
 **Límites de calendario** (lo que primero vence primero): el `20` vale hasta el
 10/11/2026 — cuando cierre el período de noviembre, su cierre #2 emitiría DOS
 resúmenes (las cuotas 1 y 2) y el flash diría "2 resúmenes nuevos" —; el `02b`
-y el `14` valen hasta el 16/11/2026. El `21` y el `22` no tienen límite
+y el `14` valen hasta el 16/11/2026; el `02d` vale hasta el 31/10/2026 (carga un
+gasto fechado HOY contra los totales de octubre, el mes sembrado). El `21` y el `22` no tienen límite
 propio: computan su fecha en el momento (día 20 del mes anterior), así que la
 cuota 1 está vencida y la cuota 2 cae en el mes en curso cualquier día del año.
 

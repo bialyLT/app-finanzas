@@ -34,6 +34,7 @@ import {
   formatPercent,
   toCents,
 } from "@/lib/format";
+import { shortcutMovementKind } from "@/lib/quick-entry";
 
 /** Lo que se abre en el modal. */
 type Modal = MovementKindDTO | "ACCOUNT" | null;
@@ -163,6 +164,23 @@ export default function Home() {
     null,
   );
 
+  /**
+   * El aviso de "Deshacer" posterior a un guardado, con el movimiento recién
+   * creado.
+   *
+   * Es PERSISTENTE a propósito: no se auto-oculta. Un aviso que desaparece solo
+   * a los segundos es imposible de testear —el flow que lo verifica llegaría
+   * tarde o temprano— y, peor, puede desaparecer justo cuando la persona por
+   * fin levantó la vista para deshacer. Se va cuando se lo usa, cuando se lo
+   * descarta con la ×, o cuando el próximo guardado lo reemplaza (ver Fase 7,
+   * criterio de "carga rápida").
+   */
+  const [undoToast, setUndoToast] = useState<{
+    movement: MovementDTO;
+    error: string;
+    busy: boolean;
+  } | null>(null);
+
   // ── El rango del mes ───────────────────────────────────────────────────────
   // Se calcula con `periodRange`, que conoce los meses de 28, 29, 30 y 31 días.
   //
@@ -279,6 +297,83 @@ export default function Home() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /**
+   * Atajos de teclado: T abre gasto, I abre ingreso.
+   *
+   * Las guardas —no disparar con un modal abierto, no disparar escribiendo en
+   * un campo de texto, no robarse Ctrl/Alt/Meta— viven en
+   * `shortcutMovementKind` (lib/quick-entry.ts), que es pura y está testeada:
+   * acá sólo se traduce el evento del DOM y se abre el modal que la función
+   * devuelva. Sin esa separación, "tipear tomate en una nota no puede abrir el
+   * modal de gasto" sólo se podría verificar con un navegador.
+   */
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const next = shortcutMovementKind(
+        {
+          key: event.key,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          altKey: event.altKey,
+          target:
+            event.target instanceof HTMLElement
+              ? {
+                  tagName: event.target.tagName,
+                  isContentEditable: event.target.isContentEditable,
+                }
+              : null,
+        },
+        { modalOpen: modal !== null },
+      );
+      if (!next) return;
+      event.preventDefault();
+      setModal(next);
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [modal]);
+
+  /**
+   * Deshace el último guardado: reutiliza el DELETE de movimientos que ya
+   * existe (sin ruta nueva) y muestra el error del servidor si falla — jamás
+   * falla en silencio.
+   *
+   * Un movimiento protegido (el gasto de una compra en cuotas, por ejemplo) no
+   * se puede borrar: en ese caso el aviso se queda con el mensaje y la persona
+   * entiende por qué. Un 404, en cambio, también es un final feliz: el
+   * movimiento ya no está, que es lo que "Deshacer" buscaba.
+   */
+  async function undoLastSave() {
+    if (!undoToast || undoToast.busy) return;
+    setUndoToast({ ...undoToast, busy: true, error: "" });
+    try {
+      const response = await fetch(
+        `/api/transactions?id=${encodeURIComponent(undoToast.movement.id)}`,
+        { method: "DELETE" },
+      );
+
+      if (response.ok || response.status === 404) {
+        setUndoToast(null);
+        load();
+        return;
+      }
+
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      setUndoToast({
+        ...undoToast,
+        busy: false,
+        error: data.error ?? "No se pudo deshacer.",
+      });
+    } catch {
+      setUndoToast({
+        ...undoToast,
+        busy: false,
+        error: "No se pudo deshacer.",
+      });
+    }
+  }
 
   // ── Totales del mes ────────────────────────────────────────────────────────
   //
@@ -978,6 +1073,21 @@ export default function Home() {
         </button>
       </div>
 
+      {/* Los atajos se anuncian acá para que existan para quien no los conoce;
+          las guardas (no disparar escribiendo, ni con un modal abierto) viven
+          en lib/quick-entry.ts, testeadas. */}
+      <p className="-mt-3 text-center text-[11px] text-zinc-400">
+        Atajos:{" "}
+        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+          T
+        </kbd>{" "}
+        gasto ·{" "}
+        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+          I
+        </kbd>{" "}
+        ingreso
+      </p>
+
       {/* ── Lista de movimientos ─────────────────────────────────────────── */}
       <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-4 pt-4 flex-wrap gap-2">
@@ -1225,17 +1335,62 @@ export default function Home() {
         </Link>
       </p>
 
+      {/* ── Aviso persistente de "Deshacer" ─────────────────────────────── */}
+      {/* `z-40`: por debajo del modal (z-50). La capa externa es
+          `pointer-events-none` para que sólo la píldora reciba clics: el aviso
+          aparece pegado abajo y no puede bloquear lo que hay detrás. */}
+      {undoToast && (
+        <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4 pointer-events-none">
+          <div
+            id="undo-toast"
+            className="pointer-events-auto rounded-2xl bg-zinc-900 text-white dark:bg-white dark:text-black px-4 py-3 shadow-2xl text-sm"
+          >
+            <div className="flex items-center gap-3">
+              <span>Movimiento guardado.</span>
+              <button
+                id="undo-button"
+                onClick={undoLastSave}
+                disabled={undoToast.busy}
+                className="font-bold underline whitespace-nowrap disabled:opacity-50"
+              >
+                {undoToast.busy ? "Deshaciendo…" : "Deshacer"}
+              </button>
+              <button
+                id="undo-dismiss"
+                onClick={() => setUndoToast(null)}
+                aria-label="Cerrar aviso"
+                className="text-lg leading-none px-1 text-zinc-400 hover:text-zinc-200 dark:text-zinc-500 dark:hover:text-zinc-700"
+              >
+                ×
+              </button>
+            </div>
+            {undoToast.error && (
+              <p
+                id="undo-error"
+                role="alert"
+                className="mt-2 text-xs rounded-lg bg-rose-500 text-white px-2 py-1"
+              >
+                {undoToast.error}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       {modal === "ACCOUNT" ? (
         <AccountForm onClose={() => setModal(null)} onSaved={load} />
       ) : modal ? (
         <TransactionForm
           kind={modal}
           accounts={accounts}
-          categories={categories.filter((c) =>
-            modal === "INCOME" ? c.kind === "INCOME" : c.kind === "EXPENSE",
-          )}
+          // TODAS las categorías: el formulario cambia de tipo sin cerrarse y
+          // necesita las dos listas para filtrar adentro por tipo activo.
+          categories={categories}
           onClose={() => setModal(null)}
-          onSaved={load}
+          onSaved={(movement) => {
+            setUndoToast({ movement, error: "", busy: false });
+            load();
+          }}
         />
       ) : null}
     </main>

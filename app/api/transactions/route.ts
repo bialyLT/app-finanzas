@@ -135,7 +135,7 @@ export async function GET(req: Request) {
  *     date: "2026-10-15",             // fecha de calendario
  *     accountId: "...",               // origen (o destino, si es un ingreso)
  *     toAccountId: "...",             // SÓLO TRANSFER
- *     categoryName: "Comida",         // SÓLO INCOME y EXPENSE
+ *     categoryName: "Comida",         // OPCIONAL en INCOME y EXPENSE; prohibida en TRANSFER
  *     description: "..."              // opcional
  *   }
  */
@@ -242,15 +242,30 @@ export async function POST(req: Request) {
       );
     }
 
-    const raw = typeof body.categoryName === "string" ? body.categoryName : "";
-    categoryName = cleanName(raw);
-    if (!categoryName) {
-      return badRequest(
-        kind === "INCOME"
-          ? "Falta indicar de dónde viene el ingreso."
-          : "Falta indicar en qué se gastó.",
-      );
+    // ── La categoría es OPCIONAL (Fase 7) ──────────────────────────────────
+    //
+    // Antes era obligatoria y este era el campo que hacía lenta la carga más
+    // frecuente: registrar la compra del kiosco exigía inventar una categoría
+    // primero. Un movimiento sin clasificar es un dato válido —los reportes lo
+    // agrupan bajo "Sin categoría"—, así que un nombre ausente o vacío ya no es
+    // un error.
+    //
+    // Lo que SÍ sigue siendo un error es mandar algo que no sea texto: un
+    // número o un objeto acá es un cliente roto, y un 400 que lo dice es mejor
+    // que guardar un movimiento sin la categoría que el cliente creía mandar.
+    if (
+      body.categoryName !== undefined &&
+      body.categoryName !== null &&
+      typeof body.categoryName !== "string"
+    ) {
+      return badRequest("La categoría, si viene, tiene que ser un texto.");
     }
+
+    const raw = typeof body.categoryName === "string" ? body.categoryName : "";
+    // `cleanName("   ")` da "" — y "" en un campo opcional significa "sin
+    // categoría": se normaliza a `null` acá, en el borde, para que el resto del
+    // camino no tenga que distinguir "vacío" de "ausente".
+    categoryName = cleanName(raw) || null;
   }
 
   try {

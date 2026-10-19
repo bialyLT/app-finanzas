@@ -57,6 +57,7 @@ import {
 import { dueDateSeries, loanScheduleFor } from "./loans";
 import {
   categoriesInPeriod,
+  findDuplicateCandidates,
   getDebtReport,
   getMonthReconciliation,
   getNetWorthSeries,
@@ -66,6 +67,7 @@ import {
   movementCategoryBreakdown,
   movementDateBreakdown,
   movementTotals,
+  DUPLICATES_MAX_ROWS,
 } from "./queries";
 
 const TEST_DATABASE_URL = process.env.DATABASE_URL_TEST;
@@ -342,21 +344,65 @@ describeDb("Invariantes del modelo en la base de datos", () => {
       ).rejects.toThrow();
     });
 
-    it("rechaza un ingreso SIN categoría", async () => {
+    it("ACEPTA un ingreso SIN categoría (Fase 7)", async () => {
+      // La versión anterior de este test exigía lo contrario, y el cambio es el
+      // corazón de la fase: la categoría obligatoria era el campo que hacía
+      // lenta la carga más frecuente. Un movimiento sin clasificar es un dato
+      // válido — los reportes lo agrupan bajo "Sin categoría".
       const account = await db.account.create({
         data: { name: "Banco", kind: "BANK" },
       });
 
-      await expect(
-        db.movement.create({
-          data: {
-            kind: "INCOME",
-            amount: "1000",
-            date: calendarToDb("2026-10-15"),
-            accountId: account.id,
-          },
-        }),
-      ).rejects.toThrow();
+      const movement = await db.movement.create({
+        data: {
+          kind: "INCOME",
+          amount: "1000",
+          date: calendarToDb("2026-10-15"),
+          accountId: account.id,
+        },
+      });
+
+      expect(movement.categoryId).toBeNull();
+    });
+
+    it("ACEPTA un gasto SIN categoría (Fase 7)", async () => {
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+
+      const movement = await db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "1000",
+          date: calendarToDb("2026-10-15"),
+          accountId: account.id,
+        },
+      });
+
+      expect(movement.categoryId).toBeNull();
+    });
+
+    it("sigue ACEPTANDO la categoría cuando viene", async () => {
+      // El control positivo de los dos tests de arriba: sin esto, una base que
+      // rechazara TODA categoría los haría pasar igual.
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const category = await db.category.create({
+        data: { name: "Gastos", normalizedName: "gastos", kind: "EXPENSE" },
+      });
+
+      const movement = await db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "1000",
+          date: calendarToDb("2026-10-15"),
+          accountId: account.id,
+          categoryId: category.id,
+        },
+      });
+
+      expect(movement.categoryId).toBe(category.id);
     });
 
     it("rechaza un gasto con cuenta de destino", async () => {
@@ -400,6 +446,258 @@ describeDb("Invariantes del modelo en la base de datos", () => {
           },
         }),
       ).rejects.toThrow();
+    });
+  });
+
+  describe("La recurrencia SIGUE exigiendo categoría (la Fase 7 no la tocó)", () => {
+    it("rechaza una regla de gasto sin categoría", async () => {
+      // El CHECK `recurrence_shape_by_kind` quedó intacto a propósito: una regla
+      // sin categoría explotaría recién al postear su primer movimiento. La
+      // carga rápida relajó el MOVIMIENTO manual, no la promesa automática.
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+
+      await expect(
+        db.recurrenceRule.create({
+          data: {
+            title: "Alquiler",
+            kind: "EXPENSE",
+            amount: "1000",
+            freq: "MONTHLY",
+            startDate: calendarToDb("2026-10-15"),
+            accountId: account.id,
+          },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("sigue aceptando una regla CON categoría", async () => {
+      // Control positivo: sin esto, el test de arriba pasaría también si las
+      // reglas estuvieran rechazando todo por otro motivo (una columna nueva,
+      // un enum cambiado).
+      const [account, category] = await Promise.all([
+        db.account.create({ data: { name: "Efectivo", kind: "CASH" } }),
+        db.category.create({
+          data: { name: "Gastos", normalizedName: "gastos", kind: "EXPENSE" },
+        }),
+      ]);
+
+      const rule = await db.recurrenceRule.create({
+        data: {
+          title: "Alquiler",
+          kind: "EXPENSE",
+          amount: "1000",
+          freq: "MONTHLY",
+          startDate: calendarToDb("2026-10-15"),
+          accountId: account.id,
+          categoryId: category.id,
+        },
+      });
+
+      expect(rule.categoryId).toBe(category.id);
+    });
+  });
+
+  describe("Los movimientos sin categoría se reportan como 'Sin categoría'", () => {
+    it("movementCategoryBreakdown los agrupa en un solo bucket y los SUMA", async () => {
+      // Dos gastos sin categoría (de días distintos) y uno con categoría: el
+      // bucket `null` tiene que existir, juntar los dos, y ordenarse por monto
+      // como cualquier otro. Antes de la Fase 7 este caso era defensivo; ahora
+      // es el camino real de "anoté el gasto sin clasificarlo".
+      const [account, category] = await Promise.all([
+        db.account.create({ data: { name: "Efectivo", kind: "CASH" } }),
+        db.category.create({
+          data: { name: "Gastos", normalizedName: "gastos", kind: "EXPENSE" },
+        }),
+      ]);
+
+      await db.movement.createMany({
+        data: [
+          {
+            kind: "EXPENSE",
+            amount: "250.00",
+            date: calendarToDb("2026-10-01"),
+            accountId: account.id,
+          },
+          {
+            kind: "EXPENSE",
+            amount: "50.00",
+            date: calendarToDb("2026-10-02"),
+            accountId: account.id,
+          },
+          {
+            kind: "EXPENSE",
+            amount: "100.00",
+            date: calendarToDb("2026-10-03"),
+            accountId: account.id,
+            categoryId: category.id,
+          },
+        ],
+      });
+
+      const breakdown = await movementCategoryBreakdown(db, {});
+
+      expect(breakdown).toEqual([
+        { categoryId: null, name: "Sin categoría", amount: "300.00" },
+        { categoryId: category.id, name: "Gastos", amount: "100.00" },
+      ]);
+    });
+
+    it("los totales y el flujo de caja los cuentan igual que a cualquier gasto", async () => {
+      // Un gasto sin clasificar es un gasto: si los reportes lo saltearan, el
+      // mes mostraría un total que no coincide con la plata que salió.
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+
+      await db.movement.createMany({
+        data: [
+          {
+            kind: "EXPENSE",
+            amount: "120.00",
+            date: calendarToDb("2026-10-05"),
+            accountId: account.id,
+          },
+          {
+            kind: "EXPENSE",
+            amount: "30.00",
+            date: calendarToDb("2026-10-06"),
+            accountId: account.id,
+          },
+        ],
+      });
+
+      const totals = await movementTotals(db, {});
+      expect(totals.expenses).toBe("150.00");
+      expect(totals.expenseCount).toBe(2);
+
+      const cashFlow = await movementCashFlow(db, {});
+      expect(cashFlow).toBe("-150.00");
+    });
+  });
+
+  describe("Detección de duplicados (Fase 7)", () => {
+    /** Una cuenta y un gasto ya cargado, listos para comparar. */
+    async function seedExistingMovement() {
+      const account = await db.account.create({
+        data: { name: "Banco", kind: "BANK" },
+      });
+      const existing = await db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "12345.67",
+          date: calendarToDb("2026-08-15"),
+          accountId: account.id,
+        },
+      });
+      return { account, existing };
+    }
+
+    it("encuentra el candidato con la tupla completa: tipo, cuenta, monto y día", async () => {
+      const { account, existing } = await seedExistingMovement();
+
+      const found = await findDuplicateCandidates(db, {
+        kind: "EXPENSE",
+        accountId: account.id,
+        amount: "12345.67",
+        date: "2026-08-15",
+      });
+
+      expect(found.map((movement) => movement.id)).toEqual([existing.id]);
+      // Y viaja como DTO: la pantalla lo puede mostrar sin otra consulta.
+      expect(found[0].amount).toBe("12345.67");
+    });
+
+    it("sin coincidencia exacta no devuelve nada", async () => {
+      const { account } = await seedExistingMovement();
+      const other = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+
+      const noMatch = async (input: {
+        kind?: "INCOME" | "EXPENSE" | "TRANSFER";
+        accountId?: string;
+        amount?: string;
+        date?: string;
+      }) =>
+        findDuplicateCandidates(db, {
+          kind: input.kind ?? "EXPENSE",
+          accountId: input.accountId ?? account.id,
+          amount: input.amount ?? "12345.67",
+          date: input.date ?? "2026-08-15",
+        });
+
+      // Cada campo de la tupla, movido de a uno, deja de ser duplicado.
+      expect(await noMatch({ accountId: other.id })).toEqual([]);
+      expect(await noMatch({ kind: "INCOME" })).toEqual([]);
+      expect(await noMatch({ amount: "12345.68" })).toEqual([]);
+      expect(await noMatch({ date: "2026-08-16" })).toEqual([]);
+    });
+
+    it("dos cafés iguales son DOS duplicados: la base no deduplica, sólo avisa", async () => {
+      // Dos movimientos idénticos son un dato válido (dos cafés el mismo día al
+      // mismo precio existen). Por eso la consulta devuelve candidatos y la
+      // decisión queda en la persona: "Guardar igual" o "Volver".
+      const { account } = await seedExistingMovement();
+      const second = await db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "12345.67",
+          date: calendarToDb("2026-08-15"),
+          accountId: account.id,
+        },
+      });
+
+      const found = await findDuplicateCandidates(db, {
+        kind: "EXPENSE",
+        accountId: account.id,
+        amount: "12345.67",
+        date: "2026-08-15",
+      });
+
+      expect(found).toHaveLength(2);
+      expect(found.map((movement) => movement.id)).toContain(second.id);
+    });
+
+    it("no devuelve más que el tope aunque haya más repetidos", async () => {
+      const { account } = await seedExistingMovement();
+
+      await db.movement.createMany({
+        data: Array.from({ length: DUPLICATES_MAX_ROWS + 2 }, () => ({
+          kind: "EXPENSE" as const,
+          amount: "12345.67",
+          date: calendarToDb("2026-08-15"),
+          accountId: account.id,
+        })),
+      });
+
+      const found = await findDuplicateCandidates(db, {
+        kind: "EXPENSE",
+        accountId: account.id,
+        amount: "12345.67",
+        date: "2026-08-15",
+      });
+
+      // 1 original + 7 creados = 8 iguales; la respuesta se corta en el tope.
+      expect(found).toHaveLength(DUPLICATES_MAX_ROWS);
+    });
+
+    it("un movimiento sin categoría también puede ser duplicado", async () => {
+      // La carga rápida escribe movimientos sin categoría: si el chequeo no los
+      // mirara, el error más común —anotar dos veces el mismo gasto— pasaría
+      // justo en los casos que la fase hizo fáciles de cargar.
+      const { account, existing } = await seedExistingMovement();
+
+      expect(existing.categoryId).toBeNull();
+      const found = await findDuplicateCandidates(db, {
+        kind: "EXPENSE",
+        accountId: account.id,
+        amount: "12345.67",
+        date: "2026-08-15",
+      });
+
+      expect(found).toHaveLength(1);
     });
   });
 

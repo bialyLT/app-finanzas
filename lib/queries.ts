@@ -51,6 +51,7 @@ import type {
   DebtReportDTO,
   DebtReportRowDTO,
   MovementDTO,
+  MovementKindDTO,
   NetWorthPointDTO,
   PeriodTotalsDTO,
   ReconciliationDTO,
@@ -458,7 +459,7 @@ export async function movementCategoryBreakdown(
     .filter((id): id is string => id !== null);
 
   // Sin ids no hace falta consultar: el período sólo tiene movimientos sin
-  // categoría (caso defensivo; hoy la base exige categoría en un EXPENSE).
+  // categoría (caso real desde la Fase 7: la categoría es opcional).
   const categories =
     categoryIds.length > 0
       ? await db.category.findMany({
@@ -1105,6 +1106,99 @@ export async function getDebtReport(
 }
 
 /**
+ * La recencia de cada categoría: cuándo la usó por última vez un movimiento.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ `_max(date)` Y NO `_max(createdAt)`
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Porque la fecha que la persona reconoce como "cuándo lo usé" es la del
+ * movimiento, no la del INSERT. Cargar hoy la expensa de noviembre no vuelve a
+ * "Comida" la categoría más reciente por haber sido tipeada última: lo que la
+ * persona ve es la fecha del movimiento. Con `max(date)` la sugerencia coincide
+ * con el calendario que tiene en pantalla.
+ *
+ * Se agrupa por `categoryId` —un solo viaje, sin importar cuántas categorías
+ * haya— y se ignora el grupo `null` (los movimientos sin categoría no son una
+ * categoría).
+ *
+ * El mapa `id → fecha` es el que consume `GET /api/categories` para armar
+ * `CategoryDTO.lastUsedAt`. Devuelve `Map` y no un objeto porque la clave es un
+ * id de la base: un `Map` no puede colisionar con `__proto__`.
+ */
+export async function categoryLastUsedAt(
+  db: Db,
+): Promise<Map<string, CalendarDate>> {
+  const grouped = await db.movement.groupBy({
+    by: ["categoryId"],
+    where: { categoryId: { not: null } },
+    _max: { date: true },
+  });
+
+  const lastUsed = new Map<string, CalendarDate>();
+  for (const row of grouped) {
+    if (row.categoryId === null || row._max.date === null) continue;
+    lastUsed.set(row.categoryId, dbToCalendar(row._max.date));
+  }
+  return lastUsed;
+}
+
+/**
+ * El tope de coincidencias que devuelve la detección de duplicados.
+ *
+ * La pregunta que responde la ruta es "¿ya cargaste algo igual?" — un sí/no con
+ * evidencia. Cinco alcanzan para mostrar el caso real (el mismo gasto anotado
+ * dos veces) sin que la respuesta crezca con un historial patológico.
+ */
+export const DUPLICATES_MAX_ROWS = 5;
+
+/**
+ * Movimientos que podrían ser el mismo que se está por cargar.
+ *
+ * La identidad del candidato es la tupla `(kind, account, amount, date)`: mismo
+ * tipo, misma cuenta, mismo monto y mismo día. Con eso se detecta el error real
+ * —"creo que esto ya lo anoté"— sin inventar una heurística de similitud que
+ * después marque como duplicados dos cafés del mismo precio en días distintos.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ESTO NO ES UNA REGLA: ES UNA PREGUNTA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * La base NO impide dos movimientos idénticos — dos cafés el mismo día, al
+ * mismo precio y de la misma cuenta son DOS cafés. Por eso esto devuelve
+ * candidatos y el formulario ofrece "Guardar igual" / "Volver": quien conoce el
+ * contexto es la persona, no la consulta.
+ *
+ * El monto viaja como string decimal exacto y se compara contra la columna
+ * `Decimal`: Prisma lo convierte sin pasar por el binario de `number`, así que
+ * la igualdad es la de la base, no una aproximación.
+ */
+export async function findDuplicateCandidates(
+  db: Db,
+  input: {
+    kind: MovementKindDTO;
+    accountId: string;
+    /** Monto normalizado (`"12345.67"`); ver `parseMoneyInput`. */
+    amount: string;
+    date: CalendarDate;
+  },
+): Promise<MovementDTO[]> {
+  const movements = await db.movement.findMany({
+    where: {
+      kind: input.kind,
+      accountId: input.accountId,
+      amount: input.amount,
+      date: calendarToDb(input.date),
+    },
+    include: movementInclude,
+    // El más reciente primero: si hay que elegir cuál mostrar, es el que la
+    // persona acaba de cargar (o el más fácil de recordar).
+    orderBy: [{ createdAt: "desc" }],
+    take: DUPLICATES_MAX_ROWS,
+  });
+
+  return movements.map(toMovementDTO);
+}
+
+/**
  * Las categorías que tienen al menos un movimiento en el rango de fechas.
  *
  * Es la lista que puebla el selector de `/analisis`. NO recibe los filtros de
@@ -1152,7 +1246,10 @@ export async function categoriesInPeriod(
     orderBy: { normalizedName: "asc" },
   });
 
-  return categories.map(toCategoryDTO);
+  // Sin `lastUsedAt`: es el mismo criterio que `GET /api/categories`, pero el
+  // dato de recencia sólo lo necesita el selector de la carga rápida, y acá no
+  // hay un segundo query de fechas que lo justifique.
+  return categories.map((category) => toCategoryDTO(category));
 }
 
 type MovementRow = Prisma.MovementGetPayload<{ include: typeof movementInclude }>;
@@ -1216,11 +1313,17 @@ export function toAccountDTO(account: AccountRowLike): AccountDTO {
   };
 }
 
-export function toCategoryDTO(category: CategoryRow): CategoryDTO {
+export function toCategoryDTO(
+  category: CategoryRow,
+  lastUsedAt: CalendarDate | null = null,
+): CategoryDTO {
   return {
     id: category.id,
     name: category.name,
     kind: category.kind,
+    // Por defecto `null`: los caminos que no calculan recencia (reglas, movimientos
+    // embebidos) dicen "sin dato" en vez de fingir una fecha.
+    lastUsedAt,
   };
 }
 

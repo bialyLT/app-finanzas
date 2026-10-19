@@ -88,6 +88,16 @@ export interface CategoryDTO {
   id: string;
   name: string;
   kind: CategoryKindDTO;
+  /**
+   * Fecha (`YYYY-MM-DD`) del movimiento más reciente que usa esta categoría, o
+   * `null` cuando nadie la usó todavía o el endpoint no la calcula.
+   *
+   * Existe para la carga rápida (Fase 7): las categorías que la persona acaba
+   * de usar van primero en las sugerencias, porque la categoría del próximo
+   * gasto suele ser una de las últimas dos o tres. `null` significa "sin dato",
+   * no "usada hace mucho": quien ordena por recencia decide dónde ponerlas.
+   */
+  lastUsedAt: string | null;
 }
 
 export interface MovementDTO {
@@ -103,7 +113,11 @@ export interface MovementDTO {
   account: AccountDTO;
   /** Sólo en TRANSFER: cuenta de destino. */
   toAccount: AccountDTO | null;
-  /** Sólo en INCOME y EXPENSE. */
+  /**
+   * Sólo en INCOME y EXPENSE, y OPCIONAL (Fase 7): `null` es un movimiento sin
+   * clasificar, que los reportes agrupan bajo "Sin categoría". En TRANSFER
+   * siempre es `null` — una transferencia no se categoriza.
+   */
   category: CategoryDTO | null;
 
   /**
@@ -486,7 +500,11 @@ export interface MovementsResponse {
  * (monto descendente) es información útil para la torta.
  */
 export interface CategoryBreakdownDTO {
-  /** `null` agrupa los movimientos sin categoría. Hoy la base los prohíbe en un EXPENSE, así que es defensivo. */
+  /**
+   * `null` agrupa los movimientos sin categoría. Desde la Fase 7 la categoría
+   * es opcional, así que este grupo es un caso de uso real —un gasto anotado
+   * sin clasificar—, no una defensa.
+   */
   categoryId: string | null;
   /** Nombre para mostrar. `"Sin categoría"` cuando `categoryId` es `null`. */
   name: string;
@@ -526,7 +544,7 @@ export interface BurnCandidateDTO {
   amount: string;
   /** Descripción cargada por la persona, si hay. */
   description: string | null;
-  /** Nombre de la categoría; `null` es defensivo (hoy un EXPENSE sin categoría no existe). */
+  /** Nombre de la categoría; `null` desde la Fase 7 es un gasto sin clasificar. */
   categoryName: string | null;
 }
 
