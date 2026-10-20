@@ -168,23 +168,44 @@ export function formatLiability(debt: MoneyLike): string {
  * ancho disponible es el que manda, el número entra entero en su caja en vez
  * de salirse, y la grilla no necesita un corte nuevo.
  *
- * El factor es `1 / (caracteres × 0,6)`: el avance medio de un carácter de
- * un monto en negrita es de 0,576 em (medido: 248 px / 18 caracteres / 24 px
- * de cuerpo) y 0,6 es ese número con un 4 % de margen.
+ * El factor es `1 / (caracteres × 0,62)`: el avance medio de un carácter de
+ * un monto en negrita es de 0,59 em (medido en el navegador con la fuente de
+ * la app, GEIST en peso 800) y 0,62 es ese número con un 5 % de margen.
  *
  * Con los montos de todos los días (≤ 13 caracteres) el factor da un tamaño
  * MAYOR que el que ya se usaba: la tarjeta se ve EXACTAMENTE igual. Esto
  * sólo cambia cuando el monto no entraba.
  *
  * El `avance` es un parámetro porque no todos los montos avanzan igual: los
- * largos (18 caracteres, todos dígitos y separadores) avanzan 0,574 em y
- * necesitan el margen; los cortos («$ 100.000,00») avanzan 0,49 em (la «$»
- * y el espacio son angostos) y con 0,6 se achucarían de más: se verían más
- * chicos de lo necesario aunque entren. Con 0,5 el monto corto entra JUSTO
- * en su ficha y conserva su cuerpo de letra en el teléfono de todos los
- * días.
+ * largos (18 caracteres, todos dígitos y separadores) avanzan 0,51 em y
+ * necesitan el margen; los cortos («$ 100.000,00») avanzan 0,57 em (la «$»
+ * y el espacio son angostos) y con 0,62 se achucarían de más: se verían más
+ * chicos de lo necesario aunque entren.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA FUENTE DE ESTE NÚMERO: GEIST, NO ARIAL (medido, 2026-10-20)
+ * El avance es una MÉTRICA DE LA FUENTE, no un número arbitrario: depende de
+ * cada glifo. Con la fuente de antes (Arial) el avance de un dígito era
+ * tabular (0,556 em, todos iguales) y el de un peso 800 era 0,5835 em.
+ *
+ * Con GEIST los dígitos son PROPORCIONALES (el «0» mide 0,6931 em y el «1»
+ * 0,4491 em), así que el avance de un monto depende de qué dígitos tenga.
+ * Los números de arriba son el PEOR caso medido, no un promedio:
+ *
+ *   · peso 800 (las tarjetas grandes, `font-extrabold`):
+ *       «$ 000.000,00» → 0,5895 em por carácter (el peor: todos ceros)
+ *       «+$ 800.000,00» → 0,5861 em
+ *       «$ 1.234.567.890,12» → 0,5099 em (los «1» son angostos)
+ *   · peso 700 (las fichas, `font-bold`):
+ *       «$ 000.000,00» → 0,5803 em por carácter
+ *       «$ 800.000,00» → 0,5771 em
+ *       «$ 100.000,00» → 0,5578 em
+ *       el signo «+» → 0,57 em (la «−» → 0,5441 em)
+ *
+ * Si la fuente de la app cambia, este número se recalibra: el test de
+ * `lib/format.test.ts` lo verifica contra las medidas de arriba.
  */
-export function factorMonto(texto: string, avance = 0.6): string {
+export function factorMonto(texto: string, avance = 0.62): string {
   const caracteres = [...texto].length;
   if (caracteres === 0) return "1";
   return (1 / (caracteres * avance)).toFixed(4);
@@ -213,32 +234,46 @@ export function montoLargo(texto: string, maximo = 13): boolean {
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * POR QUÉ NO EL FACTOR DE ARRIBA
- * `factorMonto` usa un avance de 0,6 em por carácter: es un MARGEN
- * (conservador) y está calibrado para las tarjetas grandes, donde el tope
- * de 24 px manda y el margen extra no se ve.
+ * `factorMonto` usa un avance de 0,62 em por carácter: es un MARGEN
+ * (conservador) y está calibrado para las tarjetas grandes (peso 800), donde
+ * el tope de 24 px manda y el margen extra no se ve.
  *
- * En las fichas angostas (la caja mide 64 px a 320 px) el margen se nota:
- * con 0,6 el monto de todos los días («$ 100.000,00», que entra JUSTO en
- * 82 px) se achicaría a 11,4 px aunque entrara perfecto — y el caso común
- * cambiaría (que es justo lo que no hay que hacer).
+ * En las fichas angostas (la caja mide 64 px a 320 px) el peso es 700 y el
+ * avance real es MENOR: con 0,62 el monto de todos los días
+ * («$ 100.000,00», que entra JUSTO en 82 px con cuerpo de 14) se achicaría
+ * a 8,6 px aunque entrara perfecto — y el caso común cambiaría (que es
+ * justo lo que no hay que hacer).
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * EL AVANCE REAL, MEDIDO
- * En el navegador, con la fuente de la app y cuerpo de 14 px:
- *   · «$ 100.000,00» (12 caracteres) → 82 px → 0,488 em por carácter.
- *   · «+$ 310.000,00» (los mismos 12, más el signo) → 90 px → el signo
- *     adelante suma 0,571 em (los dígitos son tabulares: el ancho no
- *     depende de QUÉ dígito sea).
+ * EL AVANCE REAL, MEDIDO (con la fuente de la app: GEIST en peso 700)
+ * En el navegador, con cuerpo de 14 px:
+ *   · «$ 100.000,00» (12 caracteres) → 0,5578 em por carácter.
+ *   · «$ 800.000,00» → 0,5771 em (el peor caso REALISTO: los ceros son anchos).
+ *   · «$ 000.000,00» → 0,5803 em (el peor caso artificial: todos ceros).
+ *   · el signo «+» → 0,57 em; la «−» → 0,5441 em.
  *
- * Acá se usa 0,52 por carácter y 0,60 por el signo: un 6 % de margen sobre
- * la medición, que es lo que hace que el número entre en su caja y no la
- * empuje — en cualquier máquina, con un 6 % de diferencia de fuente.
+ * Acá se usa 0,60 por carácter y 0,60 por el signo: un margen de ~4 % sobre
+ * la medición (0,5803), que es lo que hace que el número entre en su caja y
+ * no la empuje — con un 4 % de diferencia de fuente y de motor de texto.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ 0,60 Y NO 0,52 (que era con ARIAL)
+ * El avance de un carácter es una MÉTRICA DE LA FUENTE. Con Arial los
+ * dígitos eran tabulares (0,556 em) y ese 0,52 estaba justificado por la
+ * medición. Con GEIST los dígitos son proporcionales y el «0» es un 14 %
+ * más ancho que el «1»: el mismo 0,52 dejaba el monto PASANDO de su caja
+ * (medido: 6 px de sobra a 360 px de device, 5 px a 320). El 0,60 es la
+ * medida nueva con su margen.
+ *
+ * El efecto: en las fichas angostas (320-414 px) el monto se ve un poco más
+ * chico — es el precio de que ENTRE. En las fichas anchas (480 px en
+ * adelante) el tope de 0,875 rem manda y el monto se ve EXACTAMENTE igual.
  */
 export function factorMontoFicha(texto: string): string {
   const caracteres = [...texto].length;
   if (caracteres === 0) return "1";
   const conSigno = /^[+\-−]/.test(texto);
-  const em = caracteres * 0.52 + (conSigno ? 0.6 : 0);
+  const em = caracteres * 0.6 + (conSigno ? 0.6 : 0);
   return factorMonto(texto, em / caracteres);
 }
 

@@ -1612,14 +1612,38 @@ export default function Home() {
                 key={movement.id}
                 className="@container border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
               >
-                <div className="mov-fila flex items-start gap-3">
+                {/* La fila se parte cuando la TARJETA es angosta: la variante
+                    `angosta:` es una container query (el corte es por el ancho
+                    de la tarjeta, no por el del device) y el 24 rem vive en un
+                    solo lugar, en el `@custom-variant` del CSS global.
+
+                    `mov-fila`, `mov-texto`, `mov-derecha`, `mov-monto` y
+                    `mov-borrar` son MARCAS, no clases de estilo: NO tienen
+                    CSS (el estilo va entero en las utilidades de Tailwind) y
+                    están para que las pruebas puedan apuntar a la fila
+                    (`scripts/tester-responsive/14-filas-y-fichas.mjs`).
+
+                    POR QUÉ NO SON CLASES: una clase sin CSS es una clase
+                    fantasma: en el markup parece que hay un estilo que
+                    alguien va a escribir después, y ese «alguien» lo
+                    escribiría en el CSS global — que es justo lo que la
+                    ronda «cero CSS suelto» vino a eliminar. Si alguna vez
+                    estas filas necesitan estilo, el estilo va en utilidades
+                    de Tailwind (una clase sin CSS que no haga nada no se
+                    distingue de una clase con CSS, y ésa es la trampa).
+
+                    Y si alguien intenta escribirlo en el CSS global, el
+                    candado lo rechaza: `npm run check:css` falla con
+                    «selector de clase dentro de @layer base» o «selector
+                    suelto». */}
+                <div className="mov-fila flex items-start gap-3 angosta:flex-wrap">
                   <div
                     className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg ${style.bubble}`}
                   >
                     {style.icon}
                   </div>
 
-                  <div className="mov-texto flex-1 min-w-0">
+                  <div className="mov-texto flex-1 min-w-0 angosta:min-w-32">
                     <p className="font-semibold truncate">
                       {isTransfer ? (
                         <>
@@ -1664,8 +1688,12 @@ export default function Home() {
                     device) o dejar la papelera sola en una tercera línea.
                     Como grupo, bajan juntos a su línea cuando la tarjeta
                     es angosta y quedan como estaban cuando hay lugar.
+
+                    `angosta:flex-1 angosta:basis-full` es el `flex: 1 1 100%`
+                    de antes (que los baja a su propia línea) y
+                    `angosta:justify-end` los alinea a la derecha.
                   */}
-                  <div className="mov-derecha flex items-start gap-3 shrink-0">
+                  <div className="mov-derecha flex items-start gap-3 shrink-0 angosta:flex-1 angosta:basis-full angosta:justify-end">
                   <p
                     className={`mov-monto font-extrabold pt-1 ${style.amount}${
                       montoLargo(

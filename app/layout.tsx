@@ -24,7 +24,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="es"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100">
+      {/* `font-sans` es la fuente del design system: el `@theme` la mapea a
+          Geist (`--font-geist-sans`), la que carga el layout de arriba. Antes
+          esta fuente venía de una regla `body { font-family: Arial }` escrita a
+          mano en el CSS global: la app se veía en ARIAL y descargaba dos
+          archivos de fuente al pedo. */}
+      <body className="min-h-full flex flex-col font-sans bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100">
         <Header />
         <div className="flex-1 w-full">{children}</div>
         {/* El footer es el único lugar de la app que le habla al usuario sobre

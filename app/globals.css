@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * ESTE ARCHIVO ES CONFIGURACIÓN, NO ESTILO.
+ *
+ * En Tailwind v4 el CSS global es JUSTAMENTE donde vive la configuración del
+ * design system: el theme (`@theme`), las variantes propias
+ * (`@custom-variant`), las utilidades propias (`@utility`) y los defaults de
+ * elemento (`@layer base`). Lo que NO vive acá es el estilo de un componente
+ * escrito a mano: eso es utilidad de Tailwind, en el markup o declarada con
+ * `@utility`.
+ *
+ * El candado es `scripts/check-css-puro.mjs`: falla si vuelve a aparecer un
+ * selector suelto (`.algo { }`, `body { }`, un `@media` con reglas adentro)
+ * fuera de `@import` / `@theme` / `@custom-variant` / `@utility` /
+ * `@layer base`.
+ *
+ * ───────────────────────────────────────────────────────────────────────────── */
+
 /* ── Variante propia: `touch:` ─────────────────────────────────────────────
    `touch:` = «esta pantalla se opera con el dedo». NO es «la pantalla es
    angosta», y esa diferencia importa:
@@ -14,7 +31,7 @@
    conservan su densidad (que es lo que hace que los modales, ajustados a
    una ventana de 557 px de alto, sigan entrando).
 
-   ─────────────────────────────────────────────────────────────────────────
+   ─────────────────────────────────────────────────────────────────────────────
    `any-pointer: coarse` Y NO `pointer: coarse` (decisión del orquestador)
    La condición del proyecto es «cualquier pantalla que se opere CON EL
    DEDO». `pointer` es el puntero PRINCIPAL: en una notebook con pantalla
@@ -41,132 +58,16 @@
   }
 }
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ── Variante propia: `angosta:` ────────────────────────────────────────────
+   «la TARJETA que contiene a esto es angosta» — un corte por el ancho del
+   CONTENEDOR, no por el del device.
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+   Es la variante que reemplaza al `@container (max-width: 24rem)` con reglas
+   sueltas que tenía el CSS global: ahora la fila de un movimiento se parte
+   con `angosta:flex-wrap` en el markup, y el 24 rem vive acá, en un solo
+   lugar, con su explicación.
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-/* ── Objetivo táctil mínimo (44×44 px) ─────────────────────────────────────
-   En un teléfono, 36 px de alto es un blunder de dedo: la guía de Apple (y
-   las WCAG 2.5.5) piden 44×44 px.
-
-   Vive en el CSS global y no en el className de cada control a propósito:
-   un control nuevo nace con el target correcto y nadie tiene que acordarse
-   de agregarle la clase. Los `a` quedan fuera a propósito: un enlace de
-   texto dentro de un párrafo no es un botón, y estirarlo rompe el flujo de
-   la línea; los enlaces que SÍ son controles llevan `touch:min-h-11`.
-
-   `min-width` también: un botón de 40×44 (un "×" de cerrar) sigue siendo
-   un blanco de dedo demasiado chico.
-
-   La condición es el PUNTERO, no el ancho: en un escritorio con mouse los
-   botones conservan su densidad (36 px) y en un teléfono —de cualquier
-   tamaño, incluso en landscape— miden 44 px.
-
-   `any-pointer: coarse` (y no `pointer: coarse`): la regla es «esta pantalla
-   se puede operar CON EL DEDO», y una notebook con pantalla táctil se puede
-   aunque su puntero principal sea el mouse. El trade-off (y su límite de
-   medición) están documentados arriba, en la variante `touch`. */
-@media (any-pointer: coarse) {
-  button,
-  input,
-  select,
-  textarea {
-    min-height: 44px;
-    min-width: 44px;
-  }
-}
-
-/* ── El monto tiene que entrar en su tarjeta ────────────────────────────────
-   La fila de cuatro tarjetas del panel entra a partir de 940 px, y ese corte
-   está calculado para un monto de 13 caracteres. Un monto más largo no
-   entraba: el texto se salía de la tarjeta, las tarjetas se pisaban y el
-   documento se iba de ancho (medido: 978 px de contenido en un device de
-   941 — scroll horizontal, el invariante que la app no puede romper).
-
-   Acá el tamaño de letra acompaña al ancho de la TARJETA (una container
-   query: `100cqw` es el 1 % del ancho de su tarjeta), no al del device: el
-   número entra entero en su caja y la grilla no necesita un corte nuevo.
-
-   El factor `--k` lo calcula `factorMonto()` (lib/format.ts) a partir de la
-   cantidad de caracteres del monto. Para los montos de todos los días el
-   factor da un tamaño MAYOR que el de siempre: la tarjeta se ve igual. */
-.monto-tarjeta {
-  font-size: min(1.125rem, calc(100cqw * var(--k, 100)));
-}
-
-@media (min-width: 640px) {
-  .monto-tarjeta {
-    font-size: min(var(--monto-tope, 1.5rem), calc(100cqw * var(--k, 100)));
-  }
-}
-
-/* El análisis usa un cuerpo un poco más chico que el panel (sm:text-xl). */
-.monto-tarjeta--analisis {
-  --monto-tope: 1.25rem;
-}
-
-/* ── El monto de la ficha de un mes (la serie del patrimonio) ──────────────
-   La ficha de un mes vive en una grilla de 3 columnas a 320 px: la caja
-   mide 80 px y el contenido 64. El monto de todos los días («$ 100.000,00»)
-   mide 82 px con cuerpo de 14: NO entra. Antes se salía de la ficha (y de
-   paso empujaba a la grilla: 266 px de contenido en 256 de caja) y la
-   auditoría lo imprimía sin contarlo como falla.
-
-   El arreglo es el MISMO mecanismo de las tarjetas grandes: el cuerpo de
-   letra acompaña al ancho de la TARJETA (una container query) y no al del
-   device. El factor lo calcula `factorMonto(texto)` (lib/format.ts).
-
-   El tope es 0,875 rem (el `text-sm` de siempre): en un teléfono de 480 px
-   o más la ficha entra de sobra y el monto se ve EXACTAMENTE como antes.
-   El piso de 0,5 rem (8 px) evita que un monto extremo se vuelva
-   ilegible: si no entra de ninguna manera, parte el número (que es lo que
-   hace `break-all` en los montos largos).
-
-   La variante `--chico` es para las líneas secundarias (la variación del
-   mes, que es de 11 px): el tope es el de siempre y el mecanismo es el
-   mismo. */
-.monto-ficha {
-  font-size: clamp(0.5rem, min(0.875rem, calc(100cqw * var(--k, 100))), 0.875rem);
-}
-
-.monto-ficha--chico {
-  font-size: clamp(0.5rem, min(0.6875rem, calc(100cqw * var(--k, 100))), 0.6875rem);
-}
-
-/* ── La fila de un movimiento en un teléfono angosto ───────────────────────
-   La fila es [ícono 40] [texto] [monto] [papelera 44] con huecos de 12:
-   lo fijo se come 232 px. A 320 px la fila entera mide 230: el texto se
-   queda con CERO de ancho y se lee de a una letra por renglón (medido:
-   «12 de octubre · Visa Santander» con la columna en 0 px).
-
-   El arreglo es fluido, no una media query por teléfono: cuando la fila no
-   tiene lugar, el monto baja a su propia línea y el texto toma el ancho
-   que le queda. El corte es por el ancho de la TARJETA (una container
-   query), no por el del device: la misma fila en una ventana angosta se
-   acomoda sola.
-
-   ─────────────────────────────────────────────────────────────────────────
+   ─────────────────────────────────────────────────────────────────────────────
    EL CORTE: 24 rem, NO 17 rem (corregido por el tester en la r2)
    El corte original (17 rem = 272 px de ancho de tarjeta) estaba medido
    sobre el extremo de 320 px, y dejaba intacto un rango ENORME de
@@ -200,15 +101,134 @@ body {
 
    En los dos lados la fila se lee igual de bien; lo que cambia es dónde
    está el monto. Y el escritorio (la fila mide ~900 px) no se entera. */
-@container (max-width: 24rem) {
-  .mov-fila {
-    flex-wrap: wrap;
+@custom-variant angosta {
+  @container (max-width: 24rem) {
+    @slot;
   }
-  .mov-texto {
-    min-width: 8rem;
+}
+
+/* ── El theme: la fuente de la app ───────────────────────────────────────────
+   Lo ÚNICO que queda del theme son las fuentes: el layout carga Geist (dos
+   archivos woff2) y las expone como `--font-geist-sans` / `--font-geist-mono`
+   en el `<html>`.
+
+   `inline` hace que el valor se INLINE en las utilidades en vez de dejar
+   una variable: `font-sans` compila a `font-family: var(--font-geist-sans)`.
+
+   Lo que se BORRÓ de acá (y por qué no vuelve):
+     · `--background` / `--foreground` y su `@media (prefers-color-scheme:
+       dark)`: no los usaba NINGUNA clase (`bg-background`, `text-foreground`,
+       `border-background` no existen en el markup). El body se pinta con
+       `bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100` y el
+       `dark:` de Tailwind v4 ya responde a `prefers-color-scheme`.
+     · la regla `body { font-family: Arial }`: pisaba la fuente de Geist (el
+       `<body>` no llevaba `font-sans`, así que la app se veía en ARIAL y
+       descargaba dos archivos de fuente al pedo). Ahora la fuente es la
+       utilidad `font-sans` del `<body>`, y sale de acá. */
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ── Objetivo táctil mínimo (44×44 px) ─────────────────────────────────────
+   En un teléfono, 36 px de alto es un blunder de dedo: la guía de Apple (y
+   las WCAG 2.5.5) piden 44×44 px.
+
+   Vive en la CAPA BASE y no en el className de cada control a propósito:
+   un control nuevo nace con el target correcto y nadie tiene que acordarse
+   de agregarle la clase. En la capa base, las utilidades de Tailwind la
+   pueden pisar (que es lo que tiene que pasar: un `min-h-9` explícito es
+   una decisión del autor, no un default).
+
+   Los `a` quedan fuera a propósito: un enlace de texto dentro de un párrafo
+   no es un botón, y estirarlo rompe el flujo de la línea; los enlaces que
+   SÍ son controles llevan `touch:min-h-11`.
+
+   `min-width` también: un botón de 40×44 (un "×" de cerrar) sigue siendo
+   un blanco de dedo demasiado chico.
+
+   La condición es el PUNTERO, no el ancho: en un escritorio con mouse los
+   botones conservan su densidad (36 px) y en un teléfono —de cualquier
+   tamaño, incluso en landscape— miden 44 px.
+
+   `any-pointer: coarse` (y no `pointer: coarse`): la regla es «esta pantalla
+   se puede operar CON EL DEDO», y una notebook con pantalla táctil se puede
+   aunque su puntero principal sea el mouse. El trade-off (y su límite de
+   medición) están documentados arriba, en la variante `touch`. */
+@layer base {
+  @media (any-pointer: coarse) {
+    button,
+    input,
+    select,
+    textarea {
+      min-height: 44px;
+      min-width: 44px;
+    }
   }
-  .mov-derecha {
-    flex: 1 1 100%;
-    justify-content: flex-end;
+}
+
+/* ── Utilidades propias ──────────────────────────────────────────────────────
+   Lo que en `@layer components` (o en CSS a mano) era el estilo de un
+   componente, acá es una UTILIDAD: se registra en la capa `utilities`, gana
+   por orden sobre las utilidades de Tailwind y —lo importante— se puede
+   combinar con variantes (`hover:`, `angosta:`, `touch:`…).
+
+   ─────────────────────────────────────────────────────────────────────────────
+   EL MONTO TIENE QUE ENTRAR EN SU TARJETA
+   La fila de cuatro tarjetas del panel entra a partir de 940 px, y ese corte
+   está calculado para un monto de 13 caracteres. Un monto más largo no
+   entraba: el texto se salía de la tarjeta, las tarjetas se pisaban y el
+   documento se iba de ancho (medido: 978 px de contenido en un device de
+   941 — scroll horizontal, el invariante que la app no puede romper).
+
+   Acá el tamaño de letra acompaña al ancho de la TARJETA (una container
+   query: `100cqw` es el 1 % del ancho de su tarjeta), no al del device: el
+   número entra entero en su caja y la grilla no necesita un corte nuevo.
+
+   El factor `--k` lo calcula `factorMonto()` (lib/format.ts) a partir de la
+   cantidad de caracteres del monto. Para los montos de todos los días el
+   factor da un tamaño MAYOR que el de siempre: la tarjeta se ve igual. */
+@utility monto-tarjeta {
+  font-size: min(1.125rem, calc(100cqw * var(--k, 100)));
+
+  /* Desde 640 px la tarjeta tiene lugar para el cuerpo grande: antes era
+     `1.5rem` (24 px) y el tope de 1,25 rem en el análisis (ver
+     `monto-tarjeta--analisis`). */
+  @media (min-width: 640px) {
+    font-size: min(var(--monto-tope, 1.5rem), calc(100cqw * var(--k, 100)));
   }
+}
+
+/* El análisis usa un cuerpo un poco más chico que el panel (sm:text-xl): el
+   tope del monto baja de 1,5 rem a 1,25 rem. */
+@utility monto-tarjeta--analisis {
+  --monto-tope: 1.25rem;
+}
+
+/* ── El monto de la ficha de un mes (la serie del patrimonio) ──────────────
+   La ficha de un mes vive en una grilla de 3 columnas a 320 px: la caja
+   mide 80 px y el contenido 64. El monto de todos los días («$ 100.000,00»)
+   mide 82 px con cuerpo de 14: NO entra. Antes se salía de la ficha (y de
+   paso empujaba a la grilla: 266 px de contenido en 256 de caja) y la
+   auditoría lo imprimía sin contarlo como falla.
+
+   El arreglo es el MISMO mecanismo de las tarjetas grandes: el cuerpo de
+   letra acompaña al ancho de la TARJETA (una container query) y no al del
+   device. El factor lo calcula `factorMonto(texto)` (lib/format.ts).
+
+   El tope es 0,875 rem (el `text-sm` de siempre): en un teléfono de 480 px
+   o más la ficha entra de sobra y el monto se ve EXACTAMENTE como antes.
+   El piso de 0,5 rem (8 px) evita que un monto extremo se vuelva
+   ilegible: si no entra de ninguna manera, parte el número (que es lo que
+   hace `break-all` en los montos largos).
+
+   La variante `--chico` es para las líneas secundarias (la variación del
+   mes, que es de 11 px): el tope es el de siempre y el mecanismo es el
+   mismo. */
+@utility monto-ficha {
+  font-size: clamp(0.5rem, min(0.875rem, calc(100cqw * var(--k, 100))), 0.875rem);
+}
+
+@utility monto-ficha--chico {
+  font-size: clamp(0.5rem, min(0.6875rem, calc(100cqw * var(--k, 100))), 0.6875rem);
 }
