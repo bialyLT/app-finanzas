@@ -214,7 +214,42 @@ Verificá casos que todavía no cubre ningún flujo:
 - ¿La app se puede usar en la ventana chica de los tests? (medida real
   ~1019×557, con el pie fijo del modal arrancando en y≈441)
 
-### 4. Accesibilidad (medio)
+### 4. Responsive (alto)
+
+- ¿El layout **se adapta al espacio disponible** o está fijo a una lista de teléfonos?
+  Auditalo como un **barrido**: el invariante tiene que valer en **todo** el rango
+  (320-1024 px), no sólo en los devices que probaste. Un arreglo que entra en 375 y se
+  rompe en 414 es responsive de juguete. **Y en las DOS orientaciones**: un sweep sólo
+  portrait no ve la mitad del problema (ahí estaba el bug de la paleta).
+- **Sin scroll horizontal**: el contenido no puede imponer su ancho mínimo al viewport.
+  Sospechá del nav del header, de los `grid-cols-N` sin `sm:`, de los
+  `whitespace-nowrap`, de las tablas y de los `w-[Npx]`.
+- **El contenido tiene que entrar en su caja**: un número partido dentro de su tarjeta
+  es una mentira (el documento puede estar bien y el monto estar cortado). Si el texto
+  no entra, tiene que **ajustarse al ancho de su caja** (container query), no cortarse.
+- **Ojo con la medición**: `innerWidth` **miente** cuando el contenido no puede
+  achicarse (Chrome expande el viewport de layout: 375 → 664). Medí contra el
+  ancho del device.
+- **Targets táctiles de 44 px o más** en **cualquier pantalla que se opere con el
+  dedo** (`any-pointer: coarse`; no por ancho): en un teléfono, 36 px de alto es un
+  blunder de dedo. Contá los que quedan abajo.
+- **El pie pegajoso**: el **área scrolleable tiene que terminar donde empieza el pie**
+  (columna flex), no un pie `sticky` dentro del scroller. Medí con una **malla de
+  puntos** sobre el rect visible de cada control y `elementFromPoint`: tiene que dar
+  **0 superficies partidas** (la persona ve un control y el tap despacha otro). Con el
+  pie **fuera** del `<form>`, el botón de guardar se referencia con `form="…"`.
+- **El pie pegajoso y los "avisos"**: un control que queda bajo la banda del pie en
+  reposo pero se alcanza scrolleando **no es un tap muerto** (es un aviso): verificá
+  que se alcance de verdad y **qué hay debajo** (un «Cancelar» debajo es un bug
+  distinto: descarta lo cargado).
+- ¿Los **modales** (cargar movimiento, cuenta, préstamo, tarjeta, CSV, paleta)
+  se ven completos en mobile? El pie fijo tapando el campo es el bug clásico.
+- ¿El header sticky tapa contenido al hacer scroll?
+- **El gate mismo**: ¿detecta una fuga real? ¿el umbral de un check se puede **ablandar
+  a voluntad** (un flag sin valor → `NaN` → el check se apaga en silencio)? Un gate
+  verde con mentira es peor que no tener gate.
+
+### 5. Accesibilidad (medio)
 
 - ¿Todo lo que se puede clickear tiene `id` o etiqueta accesible?
 - ¿Los inputs tienen `label`?

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import {
   Bar,
   BarChart,
@@ -25,6 +26,7 @@ import {
 import type { PeriodTotalsDTO, ReportsResponse } from "@/lib/finance";
 import {
   centsToString,
+  factorMonto,
   formatMoney,
   formatPercent,
   toCents,
@@ -463,10 +465,18 @@ export default function AnalisisPage() {
       {!loading && !loadError && (
         <>
           {/* ── Resumen ─────────────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-emerald-600 text-white rounded-2xl p-4">
+          {/* Las cuatro tarjetas del resumen: la fila de cuatro recién entra en
+              940 px, porque el monto es una palabra sola y a 20 px mide 153 px
+              (el mismo cálculo que en el panel: 4×(153+32)+68 = 812 px, y se
+              deja margen). Antes entraban en 640 px y el monto se salía de la
+              tarjeta. A 384 px entran dos columnas; por debajo, una. */}
+          <div className="grid grid-cols-1 min-[384px]:grid-cols-2 min-[940px]:grid-cols-4 gap-3">
+            <div className="@container min-w-0 bg-emerald-600 text-white rounded-2xl p-4">
               <p className="text-xs uppercase opacity-80">Ingresos</p>
-              <p className="text-xl font-extrabold">
+              <p
+                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                style={{ "--k": factorMonto(formatMoney(stats.incomeTotal)) } as CSSProperties}
+              >
                 {formatMoney(stats.incomeTotal)}
               </p>
               <p className="text-[11px] opacity-80">
@@ -475,9 +485,12 @@ export default function AnalisisPage() {
               </p>
             </div>
 
-            <div className="bg-rose-600 text-white rounded-2xl p-4">
+            <div className="@container min-w-0 bg-rose-600 text-white rounded-2xl p-4">
               <p className="text-xs uppercase opacity-80">Gastos</p>
-              <p className="text-xl font-extrabold">
+              <p
+                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                style={{ "--k": factorMonto(formatMoney(stats.expenseTotal)) } as CSSProperties}
+              >
                 {formatMoney(stats.expenseTotal)}
               </p>
               <p className="text-[11px] opacity-80">
@@ -487,14 +500,19 @@ export default function AnalisisPage() {
             </div>
 
             <div
-              className={`rounded-2xl p-4 ${
+              className={`@container min-w-0 rounded-2xl p-4 ${
                 stats.positive
                   ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
                   : "bg-amber-500 text-black"
               }`}
             >
               <p className="text-xs uppercase opacity-80">Te quedó</p>
-              <p className="text-xl font-extrabold">
+              <p
+                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                style={
+                  { "--k": factorMonto(formatMoney(stats.result, { withSign: true })) } as CSSProperties
+                }
+              >
                 {formatMoney(stats.result, { withSign: true })}
               </p>
               <p className="text-[11px] opacity-80">
@@ -506,9 +524,12 @@ export default function AnalisisPage() {
 
             {/* Las transferencias se muestran aparte, y eso es informativo: deja
                 claro que ese dinero se movió sin ser ganancia ni pérdida. */}
-            <div className="bg-sky-600 text-white rounded-2xl p-4">
+            <div className="@container min-w-0 bg-sky-600 text-white rounded-2xl p-4">
               <p className="text-xs uppercase opacity-80">Transferencias</p>
-              <p className="text-xl font-extrabold">
+              <p
+                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                style={{ "--k": factorMonto(formatMoney(stats.transferTotal)) } as CSSProperties}
+              >
                 {formatMoney(stats.transferTotal)}
               </p>
               <p className="text-[11px] opacity-80">

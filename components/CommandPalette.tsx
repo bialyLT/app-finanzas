@@ -231,13 +231,19 @@ export default function CommandPalette({
         if (event.target === event.currentTarget) onClose();
       }}
     >
+      {/* El panel se limita al alto de la ventana (`max-h-[80vh]`) y la lista
+          toma lo que sobra (`flex-1 min-h-0`): en un teléfono ACOSTADO la
+          ventana tiene 390 px de alto y la paleta, con su lista de 320 px, se
+          iba 88 px más abajo del borde (medido: el panel ocupaba de y=39 a
+          y=478 y sólo 5 de las 9 acciones quedaban a la vista). Con el tope, la
+          paleta entra en cualquier ventana y la lista scrollea adentro. */}
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Paleta de comandos"
         id="command-palette"
-        className="w-full max-w-lg rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
       >
         <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3">
           <span aria-hidden="true" className="text-zinc-400">
@@ -290,7 +296,7 @@ export default function CommandPalette({
           id="palette-listbox"
           role="listbox"
           aria-label="Resultados de la paleta"
-          className="max-h-80 overflow-y-auto py-1"
+          className="min-h-0 flex-1 overflow-y-auto py-1"
         >
           {filtered.length === 0 ? (
             <p className="px-4 py-6 text-sm text-zinc-500 text-center">

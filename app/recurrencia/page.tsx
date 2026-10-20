@@ -741,7 +741,7 @@ export default function RecurrencePage() {
       )}
 
       <p className="text-center text-xs text-zinc-400 pb-2">
-        <Link href="/" className="underline">
+        <Link href="/" className="underline inline-flex items-center touch:min-h-11">
           ← Volver al panel
         </Link>
       </p>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import AccountForm from "@/components/AccountForm";
 import CommandPalette from "@/components/CommandPalette";
@@ -32,10 +33,13 @@ import {
 import {
   LOCALE,
   centsToString,
+  factorMonto,
+  factorMontoFicha,
   formatDayLabel,
   formatLiability,
   formatMoney,
   formatPercent,
+  montoLargo,
   toCents,
 } from "@/lib/format";
 import { shortcutMovementKind } from "@/lib/quick-entry";
@@ -88,6 +92,24 @@ const KIND_ROW_STYLE: Record<
     amount: "text-sky-600",
   },
 };
+
+/**
+ * Clases extra para un monto que NO entra en su caja.
+ *
+ * Un monto de 18+ caracteres («+$ 1.234.567.890,12») es más ancho que las
+ * cajas angostas de la app (la ficha de un mes, una fila de movimiento, una
+ * celda de reconciliación) y las empuja: el número empuja al documento y la
+ * página se va de ancho (medido a 320 px: 337 px de contenido en un device de
+ * 320).
+ *
+ * Cuando el monto es largo, la caja tiene que poder partirlo
+ * (`break-all`) y tiene que poder encogerse (`min-w-0`). Para los montos de
+ * todos los días la respuesta es «no» y no se agrega ninguna clase: la
+ * pantalla se ve EXACTAMENTE igual.
+ */
+function claseMontoLargo(texto: string): string {
+  return montoLargo(texto) ? " min-w-0 break-all" : "";
+}
 
 export default function Home() {
   const [month, setMonth] = useState(() => todayCalendar().slice(0, 7));
@@ -712,10 +734,25 @@ export default function Home() {
       )}
 
       {/* ── Balance del mes ──────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="bg-emerald-600 text-white rounded-2xl p-4 shadow">
+      {/* Las cuatro tarjetas del mes.
+
+          La fila de cuatro recién entra en 940 px, y no por gusto: el monto
+          («+$ 310.000,00») es UNA palabra —no tiene dónde partirse— y a
+          30 px de tipografía mide 184 px. Con cuatro tarjetas, tres huecos y
+          los 32 px de padding de la página, hace falta 4×(184+32)+68 = 940 px
+          para que el monto entre en su tarjeta. Antes entraba en 640 px
+          (sm) y el monto se salía de la tarjeta: a 640 la tarjeta mide 143 px
+          y el texto se veía cortado.
+
+          A 384 px entran dos columnas (la tarjeta mide 138 px y el monto
+          entra justo); por debajo, una sola columna. */}
+      <div className="grid grid-cols-1 min-[384px]:grid-cols-2 min-[940px]:grid-cols-4">
+        <div className="@container min-w-0 bg-emerald-600 text-white rounded-2xl p-4 shadow">
           <p className="text-xs uppercase opacity-80">Ingresos</p>
-          <p className="text-lg sm:text-2xl font-extrabold">
+          <p
+            className="monto-tarjeta font-extrabold"
+            style={{ "--k": factorMonto(formatMoney(totals.income)) } as CSSProperties}
+          >
             {formatMoney(totals.income)}
           </p>
           <p className="text-[11px] opacity-80 mt-1">
@@ -724,9 +761,12 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="bg-rose-600 text-white rounded-2xl p-4 shadow">
+        <div className="@container min-w-0 bg-rose-600 text-white rounded-2xl p-4 shadow">
           <p className="text-xs uppercase opacity-80">Gastos</p>
-          <p className="text-lg sm:text-2xl font-extrabold">
+          <p
+            className="monto-tarjeta font-extrabold"
+            style={{ "--k": factorMonto(formatMoney(totals.expenses)) } as CSSProperties}
+          >
             {formatMoney(totals.expenses)}
           </p>
           <p className="text-[11px] opacity-80 mt-1">
@@ -736,14 +776,19 @@ export default function Home() {
         </div>
 
         <div
-          className={`rounded-2xl p-4 shadow ${
+          className={`@container min-w-0 rounded-2xl p-4 shadow ${
             totals.positive
               ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
               : "bg-amber-500 text-black"
           }`}
         >
           <p className="text-xs uppercase opacity-80">Te quedó</p>
-          <p className="text-lg sm:text-2xl font-extrabold">
+          <p
+            className="monto-tarjeta font-extrabold"
+            style={
+              { "--k": factorMonto(formatMoney(totals.result, { withSign: true })) } as CSSProperties
+            }
+          >
             {formatMoney(totals.result, { withSign: true })}
           </p>
           <p className="text-[11px] opacity-80 mt-1">
@@ -771,9 +816,14 @@ export default function Home() {
           explica por qué este número se separa de "Te quedó" (pagar la
           tarjeta, cobrar un préstamo, mover plata entre bolsillos).
         */}
-        <div className="bg-sky-600 text-white rounded-2xl p-4 shadow">
+        <div className="@container min-w-0 bg-sky-600 text-white rounded-2xl p-4 shadow">
           <p className="text-xs uppercase opacity-80">Flujo de caja</p>
-          <p className="text-lg sm:text-2xl font-extrabold">
+          <p
+            className="monto-tarjeta font-extrabold"
+            style={
+              { "--k": factorMonto(formatMoney(totals.cashFlow, { withSign: true })) } as CSSProperties
+            }
+          >
             {formatMoney(totals.cashFlow, { withSign: true })}
           </p>
           <p className="text-[11px] opacity-80 mt-1">
@@ -876,7 +926,7 @@ export default function Home() {
                     <div
                       key={point.month}
                       id={`networth-month-${point.month}`}
-                      className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5"
+                      className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5"
                     >
                       <p className="text-[11px] text-zinc-500">
                         {formatCalendar(`${point.month}-01`, LOCALE, {
@@ -887,22 +937,46 @@ export default function Home() {
                           <span className="text-zinc-400"> · en curso</span>
                         )}
                       </p>
+                      {/*
+                        El monto de la ficha tiene que ENTRAR en la ficha: a
+                        320 px la caja mide 64 y «$ 100.000,00» mide 82 con
+                        cuerpo de 14. El cuerpo de letra acompaña al ancho de
+                        la FICHA (una container query, el mismo mecanismo de
+                        las tarjetas grandes) y no al del device: el monto se
+                        achica lo JUSTO para entrar y, en un teléfono de 480
+                        px o más, se ve EXACTAMENTE como antes. Los montos
+                        largos (13+ caracteres) además se pueden partir.
+                      */}
                       <p
-                        className={`text-sm font-bold ${
+                        className={`monto-ficha font-bold ${
                           toCents(point.net) < 0 ? "text-amber-600" : ""
-                        }`}
+                        }${claseMontoLargo(formatMoney(point.net))}`}
+                        style={
+                          {
+                            "--k": factorMontoFicha(formatMoney(point.net)),
+                          } as CSSProperties
+                        }
                       >
                         {formatMoney(point.net)}
                       </p>
                       {previous && (
                         <p
-                          className={`text-[11px] ${
+                          className={`monto-ficha--chico ${
                             deltaCents > 0
                               ? "text-emerald-600"
                               : deltaCents < 0
                                 ? "text-rose-600"
                                 : "text-zinc-400"
                           }`}
+                          style={
+                            {
+                              "--k": factorMontoFicha(
+                                formatMoney(centsToString(deltaCents), {
+                                  withSign: true,
+                                }),
+                              ),
+                            } as CSSProperties
+                          }
                         >
                           {formatMoney(centsToString(deltaCents), { withSign: true })}
                         </p>
@@ -953,29 +1027,47 @@ export default function Home() {
               </p>
 
               <div className="mt-2 grid grid-cols-3 gap-2">
-                <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
+                <div className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
                   <p className="text-[11px] text-zinc-500">Δ Patrimonio</p>
                   <p
                     id="reconciliation-delta"
-                    className={`text-sm font-bold ${
+                    className={`monto-ficha font-bold ${
                       toCents(reconciliation.netDelta) < 0 ? "text-amber-600" : ""
-                    }`}
+                    }${claseMontoLargo(formatMoney(reconciliation.netDelta, { withSign: true }))}`}
+                    style={
+                      {
+                        "--k": factorMontoFicha(
+                          formatMoney(reconciliation.netDelta, { withSign: true }),
+                        ),
+                      } as CSSProperties
+                    }
                   >
                     {formatMoney(reconciliation.netDelta, { withSign: true })}
                   </p>
-                  <p className="text-[11px] text-zinc-400">
+                  <p
+                    className={`text-[11px] text-zinc-400${claseMontoLargo(
+                      `${formatMoney(reconciliation.netStart)}${formatMoney(reconciliation.netEnd)}`,
+                    )}`}
+                  >
                     de {formatMoney(reconciliation.netStart)} a{" "}
                     {formatMoney(reconciliation.netEnd)}
                   </p>
                 </div>
 
-                <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
+                <div className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
                   <p className="text-[11px] text-zinc-500">Ahorro del mes</p>
                   <p
                     id="reconciliation-saving"
-                    className={`text-sm font-bold ${
+                    className={`monto-ficha font-bold ${
                       toCents(reconciliation.saving) < 0 ? "text-amber-600" : ""
-                    }`}
+                    }${claseMontoLargo(formatMoney(reconciliation.saving, { withSign: true }))}`}
+                    style={
+                      {
+                        "--k": factorMontoFicha(
+                          formatMoney(reconciliation.saving, { withSign: true }),
+                        ),
+                      } as CSSProperties
+                    }
                   >
                     {formatMoney(reconciliation.saving, { withSign: true })}
                   </p>
@@ -984,13 +1076,22 @@ export default function Home() {
                   </p>
                 </div>
 
-                <div className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
+                <div className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
                   <p className="text-[11px] text-zinc-500">Diferencia</p>
                   <p
                     id="reconciliation-difference"
-                    className={`text-sm font-bold ${
+                    className={`monto-ficha font-bold ${
                       reconciliation.balanced ? "text-emerald-600" : "text-rose-600"
                     }`}
+                    style={
+                      {
+                        "--k": factorMontoFicha(
+                          formatMoney(reconciliation.difference, {
+                            withSign: !reconciliation.balanced,
+                          }),
+                        ),
+                      } as CSSProperties
+                    }
                   >
                     {/* Con signo sólo cuando NO cuadra: "+$ 0,00" en un cero
                         que cuadra es ruido, y en cambio el signo de una
@@ -1377,7 +1478,10 @@ export default function Home() {
       <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-4 pt-4 flex-wrap gap-2">
           <h2 className="font-bold">Movimientos del mes</h2>
-          <div className="flex gap-1 text-sm">
+          {/* Los filtros envuelven: en 320 px los cuatro botones miden 315 px
+              y no entran en la tarjeta (288 px), así que el último quedaba
+              cortado. */}
+          <div className="flex flex-wrap gap-1 text-sm">
             {(["ALL", "INCOME", "EXPENSE", "TRANSFER"] as const).map((option) => (
               <button
                 key={option}
@@ -1506,16 +1610,16 @@ export default function Home() {
             return (
               <div
                 key={movement.id}
-                className="border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
+                className="@container border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
               >
-                <div className="flex items-start gap-3">
+                <div className="mov-fila flex items-start gap-3">
                   <div
                     className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg ${style.bubble}`}
                   >
                     {style.icon}
                   </div>
 
-                  <div className="flex-1 min-w-0">
+                  <div className="mov-texto flex-1 min-w-0">
                     <p className="font-semibold truncate">
                       {isTransfer ? (
                         <>
@@ -1537,7 +1641,7 @@ export default function Home() {
                       )}
                     </p>
 
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-500 break-words">
                       {/* `formatDayLabel` parsea el string de calendario con
                           componentes locales. Usar `new Date(...)` sobre el string
                           mostraría el día anterior. */}
@@ -1552,8 +1656,24 @@ export default function Home() {
                     )}
                   </div>
 
+                  {/*
+                    El monto y la papelera van JUNTOS en su propio grupo
+                    (`.mov-derecha`): sueltos, el reparto de líneas puede
+                    meterlos en la misma línea que el texto (que queda con su
+                    ancho MÍNIMO y se estruja: medido, 53 px a 375 px de
+                    device) o dejar la papelera sola en una tercera línea.
+                    Como grupo, bajan juntos a su línea cuando la tarjeta
+                    es angosta y quedan como estaban cuando hay lugar.
+                  */}
+                  <div className="mov-derecha flex items-start gap-3 shrink-0">
                   <p
-                    className={`font-extrabold whitespace-nowrap pt-1 ${style.amount}`}
+                    className={`mov-monto font-extrabold pt-1 ${style.amount}${
+                      montoLargo(
+                        `${movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}${formatMoney(movement.amount)}`,
+                      )
+                        ? " min-w-0 break-all"
+                        : " whitespace-nowrap"
+                    }`}
                   >
                     {movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}
                     {formatMoney(movement.amount)}
@@ -1592,11 +1712,12 @@ export default function Home() {
                       }}
                       title="Eliminar"
                       aria-label="Eliminar movimiento"
-                      className="text-zinc-400 hover:text-rose-600 px-1 pt-1"
+                      className="mov-borrar text-zinc-400 hover:text-rose-600 px-1 pt-1"
                     >
                       🗑
                     </button>
                   )}
+                  </div>
                 </div>
 
                 {notice && (
@@ -1615,7 +1736,7 @@ export default function Home() {
       </div>
 
       <p className="text-center text-xs text-zinc-400 pb-2">
-        <Link href="/analisis" className="underline">
+        <Link href="/analisis" className="underline inline-flex items-center touch:min-h-11">
           Ver análisis del mes →
         </Link>
       </p>

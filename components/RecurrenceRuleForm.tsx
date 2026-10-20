@@ -100,6 +100,23 @@ export default function RecurrenceRuleForm({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * Aviso de descarte: «Cancelar» no descarta en silencio.
+   *
+   * El pie de este formulario es pegajoso (`sticky bottom-0`) sobre el scroll
+   * de la PÁGINA: es la única zona donde un tap perdido puede caer. Cuando
+   * hay algo escrito —el nombre, el monto, la categoría— cerrar tira el
+   * trabajo, así que primero pregunta, en línea, en dos pasos (nunca un
+   * `window.confirm`: el driver de los tests no tiene nodo que conteste).
+   *
+   * «Sucio» es lo que cuesta recuperar: el nombre, el monto y la categoría.
+   * Elegir el tipo o la cuenta no marca sucio — volver a abrir el formulario
+   * reproduce el mismo estado por defecto, y advertir por eso entrenaría a
+   * ignorar el aviso.
+   */
+  const [discardWarning, setDiscardWarning] = useState(false);
+  const dirty =
+    title.trim() !== "" || amount.trim() !== "" || categoryName.trim() !== "";
 
   const isTransfer = kind === "TRANSFER";
   const isIncome = kind === "INCOME";
@@ -694,11 +711,43 @@ export default function RecurrenceRuleForm({
               </p>
             )}
 
+            {/* Aviso de descarte: dos pasos, en línea (nunca `window.confirm`).
+                El pie de este formulario es la única zona donde un tap
+                perdido puede caer: el pie es pegajoso sobre el scroll de la
+                página, así que «Cancelar» no puede descartar en silencio. */}
+            {discardWarning && (
+              <div
+                id="rec-discard-warning"
+                role="alert"
+                className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+              >
+                <p>Si cerrás ahora se pierde lo que cargaste.</p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    id="rec-discard-cancel"
+                    type="button"
+                    onClick={() => setDiscardWarning(false)}
+                    className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                  >
+                    Seguir editando
+                  </button>
+                  <button
+                    id="rec-discard-confirm"
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 text-xs font-bold"
+                  >
+                    Descartar
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-3">
               <button
                 id="rec-form-cancel"
                 type="button"
-                onClick={onClose}
+                onClick={() => (dirty ? setDiscardWarning(true) : onClose())}
                 className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
               >
                 Cancelar

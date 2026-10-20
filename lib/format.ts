@@ -146,6 +146,103 @@ export function formatLiability(debt: MoneyLike): string {
 }
 
 /**
+ * Factor de tamaño de letra de un monto, para que el número ENTRE en su
+ * tarjeta.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL PROBLEMA
+ * La fila de cuatro tarjetas del panel (y la del análisis) entra a partir de
+ * 940 px, y ese corte está calculado para un monto de 13 caracteres
+ * («+$ 800.000,00»): a 940 px la tarjeta mide 227 px y el texto del monto,
+ * con 24 px de cuerpo, mide 165 px y entra justo.
+ *
+ * Un monto más largo no entra: «$ 1.234.567.890,12» mide 248 px en una caja
+ * de 195 px. MEDIDO: el texto se salía de la tarjeta (37 px), las tarjetas se
+ * pisaban entre sí y el DOCUMENTO se iba a 978 px en un device de 941 — o
+ * sea, scroll horizontal, que es el invariante que la app no puede romper.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA REGLA
+ * El tamaño de letra acompaña al ancho de la TARJETA (una container query:
+ * `100cqw` es el 1 % del ancho de la tarjeta), no al del device. Como el
+ * ancho disponible es el que manda, el número entra entero en su caja en vez
+ * de salirse, y la grilla no necesita un corte nuevo.
+ *
+ * El factor es `1 / (caracteres × 0,6)`: el avance medio de un carácter de
+ * un monto en negrita es de 0,576 em (medido: 248 px / 18 caracteres / 24 px
+ * de cuerpo) y 0,6 es ese número con un 4 % de margen.
+ *
+ * Con los montos de todos los días (≤ 13 caracteres) el factor da un tamaño
+ * MAYOR que el que ya se usaba: la tarjeta se ve EXACTAMENTE igual. Esto
+ * sólo cambia cuando el monto no entraba.
+ *
+ * El `avance` es un parámetro porque no todos los montos avanzan igual: los
+ * largos (18 caracteres, todos dígitos y separadores) avanzan 0,574 em y
+ * necesitan el margen; los cortos («$ 100.000,00») avanzan 0,49 em (la «$»
+ * y el espacio son angostos) y con 0,6 se achucarían de más: se verían más
+ * chicos de lo necesario aunque entren. Con 0,5 el monto corto entra JUSTO
+ * en su ficha y conserva su cuerpo de letra en el teléfono de todos los
+ * días.
+ */
+export function factorMonto(texto: string, avance = 0.6): string {
+  const caracteres = [...texto].length;
+  if (caracteres === 0) return "1";
+  return (1 / (caracteres * avance)).toFixed(4);
+}
+
+/**
+ * ¿Este monto es más largo de lo que entra en su caja?
+ *
+ * Un monto de 13 caracteres («+$ 800.000,00») entra en cualquier caja de la
+ * app. Uno de 18 («+$ 1.234.567.890,12») no: en las cajas angostas —la ficha
+ * de un mes del patrimonio, una fila de movimientos, una celda de
+ * reconciliación— el número es más ancho que la caja y la empuja, y con él
+ * empuja al documento (medido a 320 px: el documento se iba a 337 px).
+ *
+ * Cuando el monto es largo, la caja tiene que poder PARTIRLO: sin eso, el
+ * número no se puede mostrar entero en una pantalla angosta. Para los montos
+ * de todos los días esto no cambia NADA: la respuesta es siempre «no».
+ */
+export function montoLargo(texto: string, maximo = 13): boolean {
+  return [...texto].length > maximo;
+}
+
+/**
+ * El factor del mecanismo de las FICHAS (el cuerpo de letra acompaña al
+ * ancho de la tarjeta, no al del device).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ NO EL FACTOR DE ARRIBA
+ * `factorMonto` usa un avance de 0,6 em por carácter: es un MARGEN
+ * (conservador) y está calibrado para las tarjetas grandes, donde el tope
+ * de 24 px manda y el margen extra no se ve.
+ *
+ * En las fichas angostas (la caja mide 64 px a 320 px) el margen se nota:
+ * con 0,6 el monto de todos los días («$ 100.000,00», que entra JUSTO en
+ * 82 px) se achicaría a 11,4 px aunque entrara perfecto — y el caso común
+ * cambiaría (que es justo lo que no hay que hacer).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL AVANCE REAL, MEDIDO
+ * En el navegador, con la fuente de la app y cuerpo de 14 px:
+ *   · «$ 100.000,00» (12 caracteres) → 82 px → 0,488 em por carácter.
+ *   · «+$ 310.000,00» (los mismos 12, más el signo) → 90 px → el signo
+ *     adelante suma 0,571 em (los dígitos son tabulares: el ancho no
+ *     depende de QUÉ dígito sea).
+ *
+ * Acá se usa 0,52 por carácter y 0,60 por el signo: un 6 % de margen sobre
+ * la medición, que es lo que hace que el número entre en su caja y no la
+ * empuje — en cualquier máquina, con un 6 % de diferencia de fuente.
+ */
+export function factorMontoFicha(texto: string): string {
+  const caracteres = [...texto].length;
+  if (caracteres === 0) return "1";
+  const conSigno = /^[+\-−]/.test(texto);
+  const em = caracteres * 0.52 + (conSigno ? 0.6 : 0);
+  return factorMonto(texto, em / caracteres);
+}
+
+/**
  * Etiqueta corta del día, para agrupar movimientos en una lista.
  *
  *     formatDayLabel("2026-10-15") → "15 de octubre"

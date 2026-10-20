@@ -115,9 +115,16 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
       onClick={onClose}
     >
       <div
-        className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Configurar ${card.name}`}
+        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Columna flex: el encabezado y el pie son `flex-none` y el área
+            que scrollea termina donde empieza el pie (antes el pie era
+            `sticky` dentro del área y tapaba los campos: trampa 15). */}
+        <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">⚙️ {card.name}</h2>
           <button
@@ -129,8 +136,10 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
             ×
           </button>
         </div>
+        </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
+        <form id="cardconf-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
           <p className="text-sm text-zinc-500">
             El <b>cierre</b> decide en qué resumen cae cada compra; el{" "}
             <b>vencimiento</b>, cuándo vence. El límite es opcional.
@@ -203,9 +212,10 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
             bloqueado — el aviso te dice por qué.
           </p>
 
-          {/* Pie fijo: mismo motivo que en el resto de los modales — en una
-              pantalla baja los botones quedarían recortados. */}
-          <div className="sticky bottom-0 -mx-6 -mb-6 mt-4 px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+          {/* Pie: hermano del área que scrollea (`flex-none`, no `sticky`). */}
+        </form>
+        </div>
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
             {error && (
               <p
                 id="cardconf-error"
@@ -228,6 +238,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
               <button
                 id="cardconf-save"
                 type="submit"
+                form="cardconf-form"
                 disabled={saving}
                 className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
               >
@@ -235,7 +246,6 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
               </button>
             </div>
           </div>
-        </form>
       </div>
     </div>
   );

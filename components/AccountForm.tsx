@@ -180,9 +180,18 @@ export default function AccountForm({ onClose, onSaved }: Props) {
       onClick={onClose}
     >
       <div
-        className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Nueva cuenta"
+        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* El panel es una columna: el encabezado y el pie son `flex-none` y
+            el área del formulario scrollea con su límite EXACTO en el borde
+            superior del pie. Antes el pie era `sticky` dentro del área que
+            scrolleaba y los campos passaban por debajo (trampa 15): un tap
+            en un campo tapado caía en el pie. */}
+        <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">Nueva cuenta</h2>
           <button
@@ -194,8 +203,10 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             ×
           </button>
         </div>
+        </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
+        <form id="acc-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div>
             <label htmlFor="acc-name" className="text-sm font-medium">
               Nombre *
@@ -441,10 +452,15 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             </>
           )}
 
-          {/* Pie fijo: mismo motivo que en TransactionForm — en una pantalla
-              baja los botones quedaban recortados por el contenedor con scroll.
-              Ver el comentario largo de components/TransactionForm.tsx. */}
-          <div className="sticky bottom-0 -mx-6 -mb-6 mt-4 px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+        </form>
+        </div>
+
+        {/* Pie: hermano del área que scrollea (no `sticky` dentro de
+            ella). Es `flex-none`: su altura es la suya y el botón de
+            guardar nunca se pierde. El botón referencia al formulario
+            (`#acc-form`) con `form=`, así el pie puede vivir fuera del
+            `<form>`. */}
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
             {error && (
               <p
                 role="alert"
@@ -466,6 +482,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               <button
                 id="acc-submit"
                 type="submit"
+                form="acc-form"
                 disabled={saving}
                 className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
               >
@@ -473,7 +490,6 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               </button>
             </div>
           </div>
-        </form>
       </div>
     </div>
   );

@@ -202,6 +202,32 @@ acá va solo lo generalizable.
   después de elegir uno, excluí del otro la combinación imposible. Probá el par
   prohibido, no sólo los caminos felices. (B4 de la Fase 7 r2: la sugerencia
   podía proponer «A → A».)
+- **Vista o modal nuevo** → es **responsive por definición**: el layout se adapta al
+  espacio disponible, no a una lista de teléfonos. Son **invariantes**, no listas: (a)
+  **sin scroll horizontal en NINGÚN ancho del rango** (320-1024 px) — el contenido no
+  puede imponer su ancho mínimo al viewport (un `flex` que no envuelve, un `grid-cols-4`
+  sin `sm:`, un `whitespace-nowrap`, una tabla, un `w-[Npx]`) — (b) **el contenido entra
+  en su caja** (un número cortado dentro de su tarjeta es una mentira: si el texto no
+  entra, que se ajuste al ancho de su caja con una container query, no con un corte) y
+  (c) **targets táctiles de 44 px o más** (mínimo de ergonomía del dedo) en **cualquier
+  pantalla que se opere con el dedo** (`any-pointer: coarse`; el corte es por modalidad
+  del puntero, no por
+  ancho). Y el arreglo tiene que ser **fluido**:
+  que el contenedor envuelva, `min-w-0` en los hijos de flex, scroll propio en tablas,
+  container queries; un `md:hidden md:block` por teléfono no es responsive. Corré
+  `node scripts/responsive/audit-mobile.mjs` (10 anchos × 6 vistas + 11 modales × 3
+  orientaciones) y
+  **no des por hecho que el escritorio alcanza**: el nav del header solo empujaba el documento a 664 px en un device
+  de 375 y rompía TODAS las vistas. Ojo con la medición: `innerWidth` **miente** cuando el
+  contenido no puede achicarse (Chrome expande el viewport de layout); el ancho del device
+  es la verdad.
+- **Modal con pie pegajoso** → el **área scrolleable tiene que terminar donde empieza el
+  pie** (panel como columna flex: `flex-none` en encabezado y pie, `flex-1 min-h-0
+  overflow-y-auto` en el formulario), no un pie `sticky` **dentro** del scroller: así los
+  campos pasan por debajo de la banda y el tap cae en otro control (en el modal de
+  préstamo, en «Cancelar»: cerraba y descartaba lo cargado). Con el pie **fuera** del
+  `<form>`, el botón de guardar se referencia con `form="…"` — si no, Enter en un campo
+  dispara el submit antes de tiempo. (Fase 9 r2: BUG-3.)
 
 ---
 
@@ -218,6 +244,7 @@ no de memoria**:
    npm test                 # vitest: unitarios + integración
    npm run smoke -- --reset # end-to-end, con la base sembrada (servidor arriba)
    npm run build            # tiene que terminar con EXIT=0
+   node scripts/responsive/audit-mobile.mjs  # si tocaste UI: 0 desbordes y targets >= 44px
    ```
 
    Si el build da `EPERM`: bajá el server, construí, y volvé a levantarlo

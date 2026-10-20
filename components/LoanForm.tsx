@@ -81,6 +81,17 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * Aviso de descarte: «Cancelar» no cierra en silencio.
+   *
+   * El pie de este modal es la zona donde puede caer un tap perdido (el
+   * contenido scrolleaba POR DEBAJO del pie): un toque ahí aterrizaba en
+   * «Cancelar» y cerraba el formulario con todo lo cargado. Desde que el
+   * área que scrollea termina donde empieza el pie, el tap perdido es un
+   * tap en un botón que la persona VE — y ese botón no puede descartar en
+   * silencio: primero pregunta, en línea, en dos pasos.
+   */
+  const [discardWarning, setDiscardWarning] = useState(false);
 
   /** El préstamo creado, cuando ya se pasó al paso del desembolso. */
   const [created, setCreated] = useState<CreatedLoan | null>(null);
@@ -287,9 +298,19 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
       onClick={closeOrSkip}
     >
       <div
-        className="w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Nuevo préstamo"
+        className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* El panel es una columna: el encabezado y el pie son `flex-none` y
+            el área que scrollea termina EXACTAMENTE donde empieza el pie.
+            Antes el pie era `sticky` dentro del área que scrolleaba: los
+            campos pasaban por debajo y un tap en un campo tapado caía en el
+            pie (en este modal, en «Cancelar»: el formulario se cerraba y lo
+            cargado se perdía — el BUG-3 de la ronda). */}
+        <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">🤝 Nuevo préstamo</h2>
           <button
@@ -301,9 +322,12 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
             ×
           </button>
         </div>
+        </div>
 
         {step === "form" ? (
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <>
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
+        <form id="loan-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_280px] gap-4 sm:gap-5">
               {/* ── Columna de campos ─────────────────────────────────────── */}
               <div className="flex flex-col gap-4">
@@ -529,9 +553,13 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 )}
               </div>
             </div>
+          </form>
+        </div>
 
-            {/* Pie fijo: mismo motivo que en el resto de los modales. */}
-            <div className="sticky bottom-0 -mx-6 -mb-6 mt-4 px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+        {/* Pie: hermano del área que scrollea (`flex-none`, no `sticky`).
+            El botón de guardar referencia al formulario (`#loan-form`) con
+            `form=`, así el pie puede vivir fuera del `<form>`. */}
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
               {error && (
                 <p
                   id="loanalta-error"
@@ -542,11 +570,43 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 </p>
               )}
 
+              {/* Aviso de descarte: «Cancelar» NUNCA descarta en silencio.
+                  Es la confirmación en línea, en dos pasos —jamás un
+                  `window.confirm`: el driver de los tests no tiene nodo que
+                  conteste y el hilo de JS se bloquea (trampa 16). */}
+              {discardWarning && (
+                <div
+                  id="loanalta-discard-warning"
+                  role="alert"
+                  className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                >
+                  <p>Si cerrás ahora se pierde lo que cargaste.</p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      id="loanalta-discard-cancel"
+                      type="button"
+                      onClick={() => setDiscardWarning(false)}
+                      className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                    >
+                      Seguir editando
+                    </button>
+                    <button
+                      id="loanalta-discard-confirm"
+                      type="button"
+                      onClick={onClose}
+                      className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 text-xs font-bold"
+                    >
+                      Descartar
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   id="loanalta-cancel"
                   type="button"
-                  onClick={onClose}
+                  onClick={() => setDiscardWarning(true)}
                   className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
                 >
                   Cancelar
@@ -554,6 +614,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 <button
                   id="loanalta-submit"
                   type="submit"
+                  form="loan-form"
                   disabled={saving || cashAccounts.length === 0}
                   className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
                 >
@@ -561,9 +622,11 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 </button>
               </div>
             </div>
-          </form>
+          </>
         ) : (
+          <>
           /* ── Paso 2: el desembolso, explícito ──────────────────────────────── */
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
           <div className="flex flex-col gap-4">
             <div className="rounded-xl bg-sky-50 dark:bg-sky-950 px-4 py-3 text-sm text-sky-900 dark:text-sky-100">
               <p className="font-bold">
@@ -624,7 +687,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
               </div>
             </div>
 
-            <div className="sticky bottom-0 -mx-6 -mb-6 px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+            <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
               {error && (
                 <p
                   id="loanalta-error"
@@ -657,6 +720,8 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
               </div>
             </div>
           </div>
+          </div>
+          </>
         )}
       </div>
     </div>

@@ -1,5 +1,46 @@
 @import "tailwindcss";
 
+/* ── Variante propia: `touch:` ─────────────────────────────────────────────
+   `touch:` = «esta pantalla se opera con el dedo». NO es «la pantalla es
+   angosta», y esa diferencia importa:
+
+   Un teléfono en landscape mide 1024 px de ancho y sigue siendo un
+   teléfono. Con un corte por ancho (`max-width: 639px`) sus botones quedan
+   de 36 px, que es un blunder de dedo con la pantalla completa. La
+   condición del puntero no depende del tamaño: cubre cualquier teléfono,
+   en cualquier orientación.
+
+   El escritorio con mouse NO entra: ahí el puntero es fino y los botones
+   conservan su densidad (que es lo que hace que los modales, ajustados a
+   una ventana de 557 px de alto, sigan entrando).
+
+   ─────────────────────────────────────────────────────────────────────────
+   `any-pointer: coarse` Y NO `pointer: coarse` (decisión del orquestador)
+   La condición del proyecto es «cualquier pantalla que se opere CON EL
+   DEDO». `pointer` es el puntero PRINCIPAL: en una notebook con pantalla
+   táctil, el puntero principal es el mouse (fino) y el táctil es el
+   secundario → con `pointer: coarse` esa notebook conserva botones de
+   36 px aunque se pueda operar con el dedo. `any-pointer` pregunta por
+   CUALQUIER puntero disponible: si hay uno grueso, la pantalla se puede
+   operar con el dedo y la regla de los 44 px se aplica.
+
+   EL TRADE-OFF (aceptado): las notebooks con pantalla táctil pierden algo
+   de densidad (targets de 44 px en lugar de 36 px). Es coherente con el
+   criterio —«se puede operar con el dedo»— y es un dispositivo raro.
+
+   LA LIMITACIÓN DE LA MEDICIÓN: la emulación de CDP no fabrica un puntero
+   MIXTO. Con la emulación de toque activada, Chrome reporta `pointer:
+   coarse` (aunque el device sea `mobile: false`), `any-pointer: coarse`
+   en true y `pointer: fine` en false. O sea: la regla con `any-pointer`
+   queda VERIFICADA en el caso grueso, pero el caso mixto (una notebook con
+   pantalla táctil y mouse) NO se puede medir con CDP: hay que creerlo por
+   la especificación de la media query. */
+@custom-variant touch {
+  @media (any-pointer: coarse) {
+    @slot;
+  }
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -23,4 +64,151 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ── Objetivo táctil mínimo (44×44 px) ─────────────────────────────────────
+   En un teléfono, 36 px de alto es un blunder de dedo: la guía de Apple (y
+   las WCAG 2.5.5) piden 44×44 px.
+
+   Vive en el CSS global y no en el className de cada control a propósito:
+   un control nuevo nace con el target correcto y nadie tiene que acordarse
+   de agregarle la clase. Los `a` quedan fuera a propósito: un enlace de
+   texto dentro de un párrafo no es un botón, y estirarlo rompe el flujo de
+   la línea; los enlaces que SÍ son controles llevan `touch:min-h-11`.
+
+   `min-width` también: un botón de 40×44 (un "×" de cerrar) sigue siendo
+   un blanco de dedo demasiado chico.
+
+   La condición es el PUNTERO, no el ancho: en un escritorio con mouse los
+   botones conservan su densidad (36 px) y en un teléfono —de cualquier
+   tamaño, incluso en landscape— miden 44 px.
+
+   `any-pointer: coarse` (y no `pointer: coarse`): la regla es «esta pantalla
+   se puede operar CON EL DEDO», y una notebook con pantalla táctil se puede
+   aunque su puntero principal sea el mouse. El trade-off (y su límite de
+   medición) están documentados arriba, en la variante `touch`. */
+@media (any-pointer: coarse) {
+  button,
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ── El monto tiene que entrar en su tarjeta ────────────────────────────────
+   La fila de cuatro tarjetas del panel entra a partir de 940 px, y ese corte
+   está calculado para un monto de 13 caracteres. Un monto más largo no
+   entraba: el texto se salía de la tarjeta, las tarjetas se pisaban y el
+   documento se iba de ancho (medido: 978 px de contenido en un device de
+   941 — scroll horizontal, el invariante que la app no puede romper).
+
+   Acá el tamaño de letra acompaña al ancho de la TARJETA (una container
+   query: `100cqw` es el 1 % del ancho de su tarjeta), no al del device: el
+   número entra entero en su caja y la grilla no necesita un corte nuevo.
+
+   El factor `--k` lo calcula `factorMonto()` (lib/format.ts) a partir de la
+   cantidad de caracteres del monto. Para los montos de todos los días el
+   factor da un tamaño MAYOR que el de siempre: la tarjeta se ve igual. */
+.monto-tarjeta {
+  font-size: min(1.125rem, calc(100cqw * var(--k, 100)));
+}
+
+@media (min-width: 640px) {
+  .monto-tarjeta {
+    font-size: min(var(--monto-tope, 1.5rem), calc(100cqw * var(--k, 100)));
+  }
+}
+
+/* El análisis usa un cuerpo un poco más chico que el panel (sm:text-xl). */
+.monto-tarjeta--analisis {
+  --monto-tope: 1.25rem;
+}
+
+/* ── El monto de la ficha de un mes (la serie del patrimonio) ──────────────
+   La ficha de un mes vive en una grilla de 3 columnas a 320 px: la caja
+   mide 80 px y el contenido 64. El monto de todos los días («$ 100.000,00»)
+   mide 82 px con cuerpo de 14: NO entra. Antes se salía de la ficha (y de
+   paso empujaba a la grilla: 266 px de contenido en 256 de caja) y la
+   auditoría lo imprimía sin contarlo como falla.
+
+   El arreglo es el MISMO mecanismo de las tarjetas grandes: el cuerpo de
+   letra acompaña al ancho de la TARJETA (una container query) y no al del
+   device. El factor lo calcula `factorMonto(texto)` (lib/format.ts).
+
+   El tope es 0,875 rem (el `text-sm` de siempre): en un teléfono de 480 px
+   o más la ficha entra de sobra y el monto se ve EXACTAMENTE como antes.
+   El piso de 0,5 rem (8 px) evita que un monto extremo se vuelva
+   ilegible: si no entra de ninguna manera, parte el número (que es lo que
+   hace `break-all` en los montos largos).
+
+   La variante `--chico` es para las líneas secundarias (la variación del
+   mes, que es de 11 px): el tope es el de siempre y el mecanismo es el
+   mismo. */
+.monto-ficha {
+  font-size: clamp(0.5rem, min(0.875rem, calc(100cqw * var(--k, 100))), 0.875rem);
+}
+
+.monto-ficha--chico {
+  font-size: clamp(0.5rem, min(0.6875rem, calc(100cqw * var(--k, 100))), 0.6875rem);
+}
+
+/* ── La fila de un movimiento en un teléfono angosto ───────────────────────
+   La fila es [ícono 40] [texto] [monto] [papelera 44] con huecos de 12:
+   lo fijo se come 232 px. A 320 px la fila entera mide 230: el texto se
+   queda con CERO de ancho y se lee de a una letra por renglón (medido:
+   «12 de octubre · Visa Santander» con la columna en 0 px).
+
+   El arreglo es fluido, no una media query por teléfono: cuando la fila no
+   tiene lugar, el monto baja a su propia línea y el texto toma el ancho
+   que le queda. El corte es por el ancho de la TARJETA (una container
+   query), no por el del device: la misma fila en una ventana angosta se
+   acomoda sola.
+
+   ─────────────────────────────────────────────────────────────────────────
+   EL CORTE: 24 rem, NO 17 rem (corregido por el tester en la r2)
+   El corte original (17 rem = 272 px de ancho de tarjeta) estaba medido
+   sobre el extremo de 320 px, y dejaba intacto un rango ENORME de
+   teléfonos: los que miden entre 363 y 474 px de device (la fila mide
+   90 px menos: de 285 a 384 px de tarjeta).
+
+   En ese rango la fila NO se partía y el texto se quedaba con lo que
+   sobra de lo fijo — 232 px — o sea 53 px a 375 px de device. Medido
+   (sonda del tester, barrido 320→520):
+
+     device  340   360   375   390   400   414   430   460   480
+     texto   198   218    53    68    78    92   108   138   158
+     alto    131   131   200   181   146   111   111    91    91
+
+   O sea: a 375 px (el teléfono más usado del mundo) la categoría se
+   leía «Intere…», la fecha ocupaba cuatro renglones («15 de / octubre ·
+   / Banco / Galicia») y la nota cuatro más: una fila de 200 px de alto
+   (el doble de la normal) leída de a una palabra por renglón.
+
+   El corte tiene que estar donde el TEXTO todavía entra cómodo en una
+   sola línea, no donde el caso extremo empieza a doler: el texto necesita
+   ~150 px (la línea «15 de octubre · Banco Galicia» a 12 px) y lo fijo se
+   come 232 → la tarjeta tiene que medir 382 px para que la fila de una
+   línea sea legible. 382 px = 24 rem. Con 24 rem:
+
+     · la tarjeta de ≤ 384 px (device ≤ 474) → la fila se parte: el monto
+       baja a su línea y el texto toma el ancho que le queda (198-300 px),
+       SIN renglones rotos;
+     · la tarjeta de > 384 px (device ≥ 475) → la fila de una línea, con el
+       texto en 152 px o más: tampoco renglones rotos.
+
+   En los dos lados la fila se lee igual de bien; lo que cambia es dónde
+   está el monto. Y el escritorio (la fila mide ~900 px) no se entera. */
+@container (max-width: 24rem) {
+  .mov-fila {
+    flex-wrap: wrap;
+  }
+  .mov-texto {
+    min-width: 8rem;
+  }
+  .mov-derecha {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
 }

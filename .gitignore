@@ -19,6 +19,11 @@
 .maestro-*
 /.maestro/
 
+# Capturas de la auditoría de responsive (scripts/responsive/): son
+# artefactos de una corrida, no código. El repo lleva la auditoría, no sus
+# fotos.
+/reports/
+
 # next.js
 /.next/
 /out/

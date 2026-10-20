@@ -33,6 +33,16 @@ App personal de finanzas: ingresos, gastos, transferencias y préstamos sobre Ne
 - Moneda única: ARS. No hay campo `currency`; no mezclar monedas en fórmulas.
 - Auth: password único + cookie firmada HMAC-SHA256; las mutaciones exigen `Origin` válido (CSRF); sin `SESSION_SECRET` la app falla cerrada.
 - El cliente (`lib/format.ts`) suma en centavos enteros; los montos viajan como string en los DTO.
+- **Responsive por definición**: el layout se adapta al espacio disponible; nada de ajustarse
+  a una lista de teléfonos. Son **invariantes**: sin scroll horizontal (el contenido no puede
+  imponer su ancho mínimo al viewport), **el contenido entra en su caja** (un número cortado
+  dentro de su tarjeta es una mentira) y targets táctiles de **44 px o más** en **cualquier
+  pantalla que se opere con el dedo** (`any-pointer: coarse`: el corte es por **modalidad del
+  puntero**, no por ancho — un teléfono en landscape también cumple). La auditoría
+  (`scripts/responsive/audit-mobile.mjs`) **barre un rango** de anchos (320→1024) **y las dos
+  orientaciones** sobre las 6 vistas y los 11 modales, y es un gate de toda ronda que toque UI.
+  Se prefieren soluciones fluidas (wrap, `min-w-0`, scroll propio, container queries) sobre
+  media queries por teléfono.
 
 ## Cómo levantar el entorno
 
@@ -48,13 +58,15 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 449 tests (unitarios + integración contra finanzas_test)
+npm test                  # 456 tests (unitarios + integración contra finanzas_test)
 npm run smoke             # 658 aserciones end-to-end (servidor arriba)
 node scripts/tester-fase4/NN-*.mjs   # 989 checks adversariales server-side (Fase 4 r1; servidor arriba)
 node scripts/tester-fase4/ui-*.mjs   # 286 checks adversariales de la UI (Fase 4 r2; servidor arriba)
 node scripts/tester-fase5/NN-*.mjs   # 582 checks adversariales server-side (Fase 5; servidor arriba)
 node scripts/tester-fase7/*.mjs      # 463 checks adversariales de carga rápida (Fase 7 r1; servidor arriba)
 node scripts/tester-fase7r2/*.mjs    # 770 checks adversariales de la segunda capa (Fase 7 r2; servidor arriba)
+node scripts/responsive/audit-mobile.mjs  # auditoría responsive: 8 anchos × 6 vistas + 10 modales (Fase 9)
+node scripts/tester-responsive/*.mjs      # 326 checks adversariales de responsive (Fase 9; servidor arriba)
 npm run flows             # 25 flows de Maestro: siembra la base y corre; ~57m
 ```
 
@@ -69,9 +81,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 7 completa (2026-10-19) — desarrollo en pausa.** La ronda 2 cerró la segunda capa de la carga rápida: autocompletado de descripción (`GET /api/transactions/suggestions` sobre 400 recientes; «monto típico» = mediana en centavos; precarga categoría/cuenta siempre y monto sólo si está vacío), plantillas/favoritos (`FavoriteTemplate` con migración `20261019120000`, tope 24), paleta `Ctrl+K` (sonda CDP `scripts/probe-palette.mjs`, 46 checks; Maestro web no emite la combinación) e import CSV (preview, commit todo-o-nada, conciliación al centavo, advisory lock; formato en `docs/import-csv.md`). El tester adversarial arregló **4 bugs** con repro que falla primero (doble submit del CSV duplicaba filas; Escape cerraba el form entero; precarga de favorito con punto decimal; TRANSFER «A → A»), sumó **770 checks** (`scripts/tester-fase7r2/`, 9 baterías) y dejó la suite **25/25 en 56m 47s** (el flow nuevo pasó de `23` a `04b` pegado al `04`); criterio A **3 interacciones · 1.027 ms**. Gate del orquestador: typecheck 0 · **449/449**. **El usuario pidió frenar todo el desarrollo después de esta ronda para actualizar el servidor: no arrancar la Fase 9 (ni ninguna otra) hasta su señal.**
+**Fase 9 «responsive» en curso (2026-10-20) — la app se estaba rompiendo en el teléfono.** La causa raíz era **una sola**: el nav del header (`div.flex.items-center.gap-2` de 532 px **sin wrap**) empujaba el documento a **664 px**, así que **las 6 vistas** tenían scroll horizontal en cualquier device más angosto (y 745 targets táctiles de 32-40 px). El dev lo arregló con `components/Nav.tsx` (fila de escritorio con `flex-wrap` + menú «☰» de dos columnas en el teléfono, **un solo conjunto de destinos en el DOM** para no duplicar ids), grillas fluidas, la previsualización del CSV en fichas, `role="dialog"` en 5 modales y la regla de 44 px **atada al puntero** (`pointer: coarse`, no al ancho: un teléfono en landscape también la cumple). Resultado medido: **32 de 48 mediciones con desborde y 745 targets chicos → 0 y 0**; auditoría `RESULT ok=202 fail=0`; 456 tests · smoke 658 · build 0 · suite **25/25**. El tester adversarial **verificó la auditoría con fixtures reales** (detecta una fuga real y aborta si la emulación no aplicó), encontró 2 bugs (la paleta en landscape; los montos de 18 caracteres que rompían el documento) y dejó **3 huecos del gate** → ronda r2 abierta: la zona muerta del pie que puede **descartar lo cargado**, el check «contenido que no entra en su caja» que no fallaba, y el barrido que era sólo portrait. **Gate nuevo de toda ronda que toque UI:** `node scripts/responsive/audit-mobile.mjs` (8 anchos × 6 vistas + 10 modales; falla con exit 1).
 
-La Fase 4 (deudas y préstamos) quedó completa antes, en dos rondas (2026-10-18: ronda 1 server-side con 989 checks; ronda 2 UI de préstamos con 286 checks y suite 23/23 en 51m 17s). La Fase 3 (recurrencia) y la Fase 5 (tarjetas y cuotas) también cerraron completas. Al reanudar el desarrollo, la **Fase 9 (endurecimiento)** es la próxima.
+La **Fase 7** quedó completa antes (2026-10-19, dos rondas: núcleo de carga rápida y segunda capa con autocompletado, plantillas/favoritos, paleta `Ctrl+K` e import CSV; 4 bugs del tester, 770 checks, suite 25/25, criterio A 3 interacciones · 1.027 ms). La Fase 4 (deudas y préstamos) también, en dos rondas (2026-10-18). La Fase 3 (recurrencia) y la Fase 5 (tarjetas y cuotas) cerraron completas. **Al reanudar: cerrar la r2 de responsive y después la migración de «cero CSS suelto»** (el proyecto ya es Tailwind v4; queda borrar el CSS a mano de `app/globals.css`, incluido el `body { font-family: Arial }` que pisa la fuente Geist).
 
 ## Bloqueos que necesitan a la persona
 

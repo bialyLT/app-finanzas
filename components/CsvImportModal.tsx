@@ -173,8 +173,12 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Importar movimientos desde CSV"
-        className="w-full sm:max-w-3xl max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl"
+        className="w-full sm:max-w-3xl max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
       >
+        {/* Columna flex: el encabezado y el pie son `flex-none` y el área
+            que scrollea termina donde empieza el pie (antes el pie era
+            `sticky` dentro del área: los campos pasaban por debajo). */}
+        <div className="flex-none px-5 pt-5">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
             <h2 className="text-xl font-bold">Importar CSV</h2>
@@ -193,6 +197,9 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
             ×
           </button>
         </div>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-4">
 
         {result ? (
           <div
@@ -378,9 +385,70 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                   </p>
                 )}
 
+                {/*
+                  La previsualización tiene dos presentaciones, con la misma
+                  información: la tabla (escritorio) y una lista de fichas
+                  (teléfono).
+
+                  Por qué: la tabla tiene siete columnas y en 375 px mide 496 px
+                  de ancho contra un contenedor de 333 — con `whitespace-nowrap`
+                  en fecha, tipo y monto, la tabla no entra ni scrolleando
+                  comfortablemente: el usuario tiene que arrastrar la tabla
+                  horizontal para ver el monto de cada fila. Eso no es «un
+                  scroll horizontal prohibido» (el documento no crece), pero en
+                  un teléfono es una vista previa que no se puede leer.
+                */}
+                <div
+                  id="csv-rows-movil"
+                  className="sm:hidden mt-2 max-h-64 overflow-y-auto space-y-2 rounded-xl border border-zinc-200 dark:border-zinc-800 p-2"
+                >
+                  {preview.rows.map((row) => {
+                    const status = STATUS_STYLE[row.status];
+                    return (
+                      <div
+                        key={`movil-${row.line}-${row.status}`}
+                        id={`csv-fila-${row.line}`}
+                        className="rounded-lg border border-zinc-100 dark:border-zinc-800 p-2 text-[11px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-zinc-500">Línea {row.line}</span>
+                          <span
+                            className={`rounded-full px-1.5 py-0.5 font-bold ${status.className}`}
+                          >
+                            {status.label}
+                          </span>
+                        </div>
+                        <p className="mt-1 font-semibold">
+                          {row.amount ? formatMoney(row.amount) : "—"}
+                          <span className="font-normal text-zinc-500">
+                            {" · "}
+                            {row.date ?? "—"} ·{" "}
+                            {row.kind ? MOVEMENT_KIND_LABEL[row.kind] : "—"}
+                          </span>
+                        </p>
+                        <p className="text-zinc-600 dark:text-zinc-300">
+                          {row.account}
+                          {row.toAccount ? ` → ${row.toAccount}` : ""}
+                        </p>
+                        {(row.category || row.description) && (
+                          <p className="text-zinc-500">
+                            {row.category || "—"}
+                            {row.description ? ` · ${row.description}` : ""}
+                          </p>
+                        )}
+                        {row.errors.length > 0 && (
+                          <p className="mt-0.5 text-rose-600 dark:text-rose-400">
+                            {row.errors.join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
                 <div
                   id="csv-rows"
-                  className="mt-2 max-h-64 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800"
+                  className="hidden sm:block mt-2 max-h-64 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800"
                 >
                   <table className="w-full text-left text-[11px]">
                     <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800">
@@ -448,8 +516,10 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
           </>
         )}
 
+        </div>
+
         {!result && (
-          <div className="sticky bottom-0 -mx-5 -mb-5 mt-4 px-5 py-3 bg-white dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap justify-end gap-2">
+          <div className="flex-none px-5 py-3 bg-white dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap justify-end gap-2">
             <button
               id="csv-cancel"
               type="button"

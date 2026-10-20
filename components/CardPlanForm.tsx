@@ -174,9 +174,17 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
       onClick={onClose}
     >
       <div
-        className="w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Compra en cuotas · ${card.name}`}
+        className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Columna flex: el encabezado y el pie son `flex-none` y el área
+            que scrollea termina donde empieza el pie (antes el pie era
+            `sticky` dentro del área que scrolleaba y tapaba los campos:
+            trampa 15 — un tap en un campo tapado caía en el pie). */}
+        <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-bold">🧾 Compra en cuotas · {card.name}</h2>
           <button
@@ -188,8 +196,10 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
             ×
           </button>
         </div>
+        </div>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
+        <form id="plan-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
           {/*
             Dos columnas: los campos a la izquierda; a la derecha la categoría
             y la vista previa. La disposición no es estética: el pie del modal
@@ -388,8 +398,10 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
             </div>
           </div>
 
-          {/* Pie fijo: mismo motivo que en el resto de los modales. */}
-          <div className="sticky bottom-0 -mx-6 -mb-6 mt-4 px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+          {/* Pie: hermano del área que scrollea (`flex-none`, no `sticky`). */}
+        </form>
+        </div>
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
             {error && (
               <p
                 id="plan-error"
@@ -412,6 +424,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
               <button
                 id="plan-submit"
                 type="submit"
+                form="plan-form"
                 disabled={saving}
                 className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
               >
@@ -419,7 +432,6 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
               </button>
             </div>
           </div>
-        </form>
       </div>
     </div>
   );

@@ -847,8 +847,30 @@ export default function TransactionForm({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
-      <div className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl">
-        <div className="flex items-center justify-between mb-2 gap-2">
+      {/*
+        EL PANEL ES UNA COLUMNA FLEX: LA ZONA DE SCROLL TERMINA DONDE
+        EMPIEZA EL PIE
+        ────────────────────────────────────────────────────────────────
+        Antes el panel entero scrolleaba y el pie era `sticky` DENTRO de
+        esa área: los campos pasaban POR DEBAJO del pie y quedaban tapados
+        (la trampa 15). Un tap en un control tapado aterriza en el pie: si
+        ese pie tiene un botón, el toque dispara ese botón.
+
+        Ahora el panel es una columna: el encabezado y el pie son `flex-none`
+        (altura propia, nunca se mueven) y el área del formulario es
+        `flex-1 min-h-0 overflow-y-auto`: scrollea, pero TERMINA donde
+        empieza el pie. No hay ni un píxel de formulario debajo del pie, y
+        por lo tanto no hay zona muerta donde un tap pueda caer en un botón
+        que no es el que la persona quiso tocar.
+      */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={style.title}
+        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+      >
+        <div className="flex-none px-6 pt-6">
+          <div className="flex items-center justify-between mb-2 gap-2">
           <h2 className={`text-xl font-bold min-w-0 ${style.accent}`}>
             {style.title}
             {favoriteSourceName && favoriteId && (
@@ -887,7 +909,16 @@ export default function TransactionForm({
               ×
             </button>
           </div>
+          </div>
         </div>
+
+        {/*
+          El área que scrollea. `flex-1 min-h-0` + `overflow-y-auto`: toma
+          lo que sobra del panel y scrollea DENTRO, con su límite EXACTO en
+          el borde superior del pie. Abajo, el pie es `flex-none`: su altura
+          es la suya y no se mueve nunca.
+        */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-3">
 
         {favoriteNotice && (
           <p id="tx-favorite-notice" className="text-xs text-emerald-600 mb-2">
@@ -977,7 +1008,7 @@ export default function TransactionForm({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <form id="tx-form" onSubmit={handleSubmit} className="flex flex-col gap-3">
           {/* ── Monto ─────────────────────────────────────────────────────── */}
           <div>
             <label htmlFor="tx-amount" className="text-sm font-medium">
@@ -1219,35 +1250,33 @@ export default function TransactionForm({
 
           {/* En gasto/ingreso la nota va al final — el porqué, en `descriptionField`. */}
           {!isTransfer && descriptionField}
+        </form>
+        </div>
 
-          {/* ────────────────────────────────────────────────────────────────
-              PIE FIJO: EL BOTÓN DE GUARDAR NO PUEDE IRSE DE PANTALLA
-              ────────────────────────────────────────────────────────────────
-              El formulario no entra completo en una pantalla baja. Medido: en
-              una ventana de 1019×597 el contenido llega hasta el campo
-              "Detalle" y los botones quedaban recortados por el contenedor con
-              scroll, más abajo del borde.
+        {/*
+          PIE FIJO: EL BOTÓN DE GUARDAR NO PUEDE IRSE DE PANTALLA
+          ────────────────────────────────────────────────────────────────
+          El formulario no entra completo en una pantalla baja. Antes el pie
+          era `sticky bottom-0` DENTRO del área que scrolleaba: los campos
+          pasaban por debajo del pie y quedaban tapados, y un tap en un
+          campo tapado caía en el pie (la trampa 15).
 
-              Eso no es un detalle cosmético. Es LA acción de la pantalla: si no
-              se ve, no se guarda — y nada indica que haya que scrollear para
-              encontrarla. En un teléfono en horizontal o en una netbook el
-              usuario toca "Nuevo gasto", llena los campos y se queda sin forma
-              de confirmar.
+          Ahora el pie es un hermano del área que scrollea, no un hijo: la
+          columna flex del panel los separa (encabezado `flex-none`, área
+          `flex-1 min-h-0`, pie `flex-none`). El botón de guardar sigue
+          siempre a la vista —de hecho, ahora está SIEMPRE a la vista, sin
+          depender de que el área scrollee— y el formulario no tiene ni un
+          píxel debajo del pie.
 
-              `sticky bottom-0` lo deja pegado al borde inferior del modal
-              mientras el resto scrollea por detrás. El fondo opaco es parte del
-              arreglo, no decoración: sin él, los campos pasarían por debajo del
-              botón y se leerían los dos textos superpuestos.
+          El pie queda FUERA del `<form>` (el formulario es `#tx-form` y el
+          botón lo referencia con `form="tx-form"`): así el panel de
+          plantillas y los tabs de tipo —que NO son parte del formulario—
+          siguen fuera de él y Enter en el nombre de una plantilla no
+          guarda el movimiento por accidente.
 
-              El `-mx-6 -mb-6` cancela el `p-6` del contenedor para que la
-              franja llegue hasta los bordes; si no, quedaría una isla flotante
-              con el fondo del modal asomando alrededor. El `pb-3` y el `pt-2`
-              recortan el pie a lo esencial: su alto también cuenta — cada píxel
-              de menos es un píxel menos de scroll en una ventana baja.
-
-              El mensaje de error va acá adentro y no entre los campos: un error
-              que aparece fuera de la vista es un error que no se leyó. */}
-          <div className="sticky bottom-0 -mx-6 -mb-6 px-6 pb-3 pt-2 space-y-3 bg-white dark:bg-zinc-900">
+          El mensaje de error va acá adentro y no entre los campos: un error
+          que aparece fuera de la vista es un error que no se leyó. */}
+        <div className="flex-none px-6 pb-3 pt-2 space-y-3 bg-white dark:bg-zinc-900">
             {error && (
               <p
                 role="alert"
@@ -1339,6 +1368,7 @@ export default function TransactionForm({
                 <button
                   id="tx-submit"
                   type="submit"
+                  form="tx-form"
                   disabled={saving}
                   className={`flex-1 rounded-xl py-3 font-bold text-white disabled:opacity-50 ${style.badge}`}
                 >
@@ -1347,7 +1377,6 @@ export default function TransactionForm({
               </div>
             )}
           </div>
-        </form>
       </div>
     </div>
   );
