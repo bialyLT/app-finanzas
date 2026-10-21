@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
+import { CATEGORY_KIND_LABEL } from "@/lib/category-kind";
 import { cleanName, normalizeCategoryName } from "@/lib/finance";
 import {
   categoryLastUsedAt,
@@ -11,6 +12,46 @@ import {
 
 function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
+}
+
+/**
+ * Cuántas cosas usan una categoría: movimientos, reglas de recurrencia y
+ * plantillas.
+ *
+ * "En uso" no es lo mismo que "tiene movimientos": una regla o una plantilla
+ * también se clasifican con una categoría, y cambiarle el tipo las dejaría a
+ * ellas Y a sus movimientos contradiciéndola. La base mira las tres (trigger
+ * `category_kind_immutable_check`); la API tiene que mirar las mismas tres.
+ */
+async function categoryUsages(id: string): Promise<{
+  total: number;
+  detalle: string;
+}> {
+  const [movimientos, reglas, plantillas] = await Promise.all([
+    prisma.movement.count({ where: { categoryId: id } }),
+    prisma.recurrenceRule.count({ where: { categoryId: id } }),
+    prisma.favoriteTemplate.count({ where: { categoryId: id } }),
+  ]);
+
+  const partes: string[] = [];
+  if (movimientos > 0) {
+    partes.push(
+      `${movimientos} ${movimientos === 1 ? "movimiento" : "movimientos"}`,
+    );
+  }
+  if (reglas > 0) {
+    partes.push(`${reglas} ${reglas === 1 ? "regla" : "reglas"}`);
+  }
+  if (plantillas > 0) {
+    partes.push(
+      `${plantillas} ${plantillas === 1 ? "plantilla" : "plantillas"}`,
+    );
+  }
+
+  return {
+    total: movimientos + reglas + plantillas,
+    detalle: partes.join(" y "),
+  };
 }
 
 /**
@@ -138,15 +179,49 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────────────────────────────────
     const existing = await prisma.category.findUnique({
       where: { normalizedName },
-      select: { id: true },
+      select: { id: true, kind: true, name: true },
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EL TIPO DE UNA CATEGORÍA EN USO ES INMUTABLE
+    // ─────────────────────────────────────────────────────────────────────────
+    // Antes el `upsert` tenía `update: {}`: la categoría conservaba su tipo y
+    // la persona se llevaba un 200 con una categoría que NO era la que pidió
+    // (pidió "Ingreso" y le devolvieron un "Gasto": el modelo se contradice a
+    // sí mismo en silencio).
+    //
+    // Ahora el pedido se respeta o se explica:
+    //   · si la categoría NO está en uso, se le cambia el tipo (no hay nada
+    //     que contradecir);
+    //   · si está en uso, se rechaza con 409: cambiarle el tipo dejaría a
+    //     todos sus movimientos contradiciéndola, y nadie los reescribió.
+    //
+    // La base custodia lo mismo con el trigger `category_kind_immutable_check`.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (existing && existing.kind !== kind) {
+      const usos = await categoryUsages(existing.id);
+      if (usos.total > 0) {
+        return NextResponse.json(
+          {
+            error:
+              `La categoría «${existing.name}» ya está en uso (${usos.detalle}): ` +
+              `no se puede cambiar su tipo de ${CATEGORY_KIND_LABEL[existing.kind]} ` +
+              `a ${CATEGORY_KIND_LABEL[kind]}, porque los movimientos que la usan ` +
+              `quedarían contradiciéndola. Usá otra categoría.`,
+          },
+          { status: 409 },
+        );
+      }
+    }
 
     // Upsert igual, y no `create`: entre la consulta de arriba y esta escritura
     // hay una ventana en la que otra petición puede crear la misma categoría.
     // El upsert resuelve esa carrera; el `existing` sólo decide el código HTTP.
     const category = await prisma.category.upsert({
       where: { normalizedName },
-      update: {},
+      // El tipo sólo se toca cuando la categoría NO está en uso (arriba se
+      // rechazó el caso contrario con 409).
+      update: existing && existing.kind !== kind ? { kind } : {},
       create: { name, normalizedName, kind },
     });
 

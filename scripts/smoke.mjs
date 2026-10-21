@@ -608,6 +608,40 @@ async function main() {
     );
     check("«Comida» y «COMIDA» son UNA sola categoría", comidas.length, 1);
     check("y conserva el nombre original", comidas[0]?.name, "Comida");
+    check("y su tipo: es un Gasto", comidas[0]?.kind, "EXPENSE");
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EL INVARIANTE QUE FALTABA: la categoría tiene que ser del mismo tipo que
+    // el movimiento. "Comida" es un Gasto: un Ingreso clasificado con ella es
+    // un dato que se contradice a sí mismo, y la base lo rechaza (trigger
+    // `movement_category_kind_check`). La API lo dice ANTES, con un mensaje
+    // que dice qué se pidió y qué hacer.
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+      const cruzado = await post("/api/transactions", {
+        kind: "INCOME",
+        amount: "1000",
+        date: `${MES}-01`,
+        accountId: banco.body?.id,
+        categoryName: "Comida",
+      });
+      check("rechaza un ingreso con una categoría de gasto (400)", cruzado.status, 400);
+      checkTrue(
+        "y lo explica en castellano",
+        typeof cruzado.body?.error === "string" &&
+          cruzado.body.error.includes("Comida") &&
+          cruzado.body.error.includes("Ingreso"),
+        JSON.stringify(cruzado.body),
+      );
+
+      // Y la categoría NO se cambió de tipo para que el movimiento entrara:
+      // sigue siendo un Gasto.
+      const { body: despues } = await api("/api/categories?kind=EXPENSE");
+      const comida = (despues?.categories ?? []).find(
+        (c) => c.name.toLowerCase() === "comida",
+      );
+      check("la categoría sigue siendo un Gasto", comida?.kind, "EXPENSE");
+    }
 
     for (const id of [primera.body?.id, segunda.body?.id]) {
       if (id) await api(`/api/transactions?id=${id}`, { method: "DELETE" });
@@ -715,6 +749,26 @@ async function main() {
       passed += 1;
       console.log(`  ok    ${movement.kind.padEnd(8)} ${String(movement.amount).padStart(10)} · ${movement.categoryName ?? movement.description}`);
     }
+  }
+
+  // ── El tipo de una categoría en uso es inmutable ───────────────────────────
+  // "Alquiler" acaba de clasificar un gasto: cambiarle el tipo dejaría a ese
+  // movimiento contradiciéndola. La API lo rechaza con 409 y la base lo
+  // custodia con el trigger `category_kind_immutable_check`.
+  {
+    const r = await post("/api/categories", { name: "Alquiler", kind: "INCOME" });
+    check("no deja cambiar el tipo de una categoría en uso (409)", r.status, 409);
+    checkTrue(
+      "y lo explica en castellano",
+      typeof r.body?.error === "string" && r.body.error.includes("Alquiler"),
+      JSON.stringify(r.body),
+    );
+
+    const { body } = await api("/api/categories?kind=EXPENSE");
+    const alquiler = (body?.categories ?? []).find(
+      (c) => c.name.toLowerCase() === "alquiler",
+    );
+    check("la categoría sigue siendo un Gasto", alquiler?.kind, "EXPENSE");
   }
 
   // ── Verificación de los números ────────────────────────────────────────────
@@ -2625,12 +2679,16 @@ async function main() {
 
     // Un INCOME directo a la cuenta por cobrar inflaría un activo sin plata: la
     // base lo prohíbe y la API lo traduce a 400 con explicación.
+    //
+    // La categoría es una de INGRESO a propósito: si fuera de gasto, el
+    // rechazo lo daría el otro invariante (la categoría tiene que ser del
+    // mismo tipo que el movimiento) y este check probaría otra cosa.
     const ingresoInflado = await post("/api/transactions", {
       kind: "INCOME",
       amount: "1000",
       date: "2026-10-09",
       accountId: porCobrar.body?.id,
-      categoryName: "Intereses",
+      categoryName: "Sueldo",
     });
     check("ingreso directo a la cuenta por cobrar: 400", ingresoInflado.status, 400);
     checkTrue(

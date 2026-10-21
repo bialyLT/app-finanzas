@@ -791,14 +791,29 @@ export default function Home() {
           >
             {formatMoney(totals.result, { withSign: true })}
           </p>
+          {/*
+            ─────────────────────────────────────────────────────────────────────
+            EL TEXTO DE ESTA TARJETA ES LO QUE EVITA EL MALENTENDIDO MÁS CARO
+            ─────────────────────────────────────────────────────────────────────
+            "Ahorraste −$6.400" se lee como "la app me está descontando el saldo
+            inicial de 7.000". No es eso: el ahorro es el FLUJO DEL MES (lo que
+            entró menos lo que salió ESTE MES), y el saldo inicial de una cuenta
+            es un STOCK que ya existía antes: sólo aparece en el patrimonio.
+
+            Por eso el subtítulo dice las dos cosas: que el número es de este
+            mes, y que el saldo inicial no cuenta como ganancia.
+          */}
           <p className="text-[11px] opacity-80 mt-1">
             {totals.savingRate !== null ? (
               <>
-                Ahorraste {formatPercent(totals.savingRate)} de lo que ganaste
+                Ahorraste {formatPercent(totals.savingRate)} de lo que ganaste este mes
               </>
             ) : (
               "Sin ingresos este mes"
             )}
+          </p>
+          <p className="text-[11px] opacity-70 mt-0.5">
+            Es el flujo del mes. El saldo inicial no cuenta como ganancia.
           </p>
         </div>
 
@@ -832,6 +847,12 @@ export default function Home() {
               : `${totals.transferCount} ${
                   totals.transferCount === 1 ? "transferencia" : "transferencias"
                 } entre tus cuentas`}
+          </p>
+          {/* El mismo criterio que en "Te quedó": los dos números son del MES.
+              La diferencia entre liquidez y ahorro se ve de un vistazo, pero
+              sólo si los dos dicen que son de este mes. */}
+          <p className="text-[11px] opacity-70 mt-0.5">
+            La plata que entró y salió de tus cuentas este mes.
           </p>
         </div>
       </div>

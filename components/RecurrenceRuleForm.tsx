@@ -1,12 +1,19 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  CATEGORY_KIND_LABEL,
+  MOVEMENT_KIND_LABEL,
+  categoryKindConflicts,
+  ruleCategoryKindMessage,
+} from "@/lib/category-kind";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { isCalendarDate, todayCalendar } from "@/lib/dates";
 import {
   POSTING_MODE_LABEL,
   RECUR_FREQ_LABEL,
   canReceiveIncome,
+  normalizeCategoryName,
   type AccountBalanceDTO,
   type CategoryDTO,
   type MovementKindDTO,
@@ -172,6 +179,37 @@ export default function RecurrenceRuleForm({
     [categories, categoryName],
   );
 
+  /**
+   * La categoría escrita es del OTRO TIPO que la regla.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * POR QUÉ ESTO SE AVISA EN EL FORMULARIO Y NO SÓLO EN EL SERVIDOR
+   *
+   * "Alquiler" es un Gasto: usarlo para una regla de Ingreso es imposible (la
+   * base lo rechaza y el generador no postearía el movimiento). Dejar el error
+   * para después del viaje es una forma de hacer que la persona descubra una
+   * regla que nunca va a funcionar cuando intente usarla.
+   *
+   * Y derivar el tipo es MEJOR que dejar el error: si la categoría dice "Gasto",
+   * la regla tiene que ser un Gasto. El botón de abajo hace eso, sin perder
+   * nada de lo escrito.
+   *
+   * La comparación usa la MISMA normalización que el servidor
+   * (`normalizeCategoryName`): "Alquiler" y "ALQUILER" son la misma categoría.
+   * ─────────────────────────────────────────────────────────────────────────────
+   */
+  const categoryConflict = useMemo(() => {
+    if (isTransfer) return null;
+    const typed = normalizeCategoryName(categoryName);
+    if (!typed) return null;
+    const found = categories.find(
+      (c) => normalizeCategoryName(c.name) === typed,
+    );
+    if (!found) return null;
+    if (!categoryKindConflicts(kind, found.kind)) return null;
+    return found;
+  }, [categories, categoryName, kind, isTransfer]);
+
   // La fecha de inicio sugiere el ancla cuando está vacía: "vacío = el día de
   // la fecha de inicio" es la semántica del servidor, y sin decirlo el campo
   // parece una decisión obligatoria.
@@ -208,6 +246,15 @@ export default function RecurrenceRuleForm({
     if (!isTransfer && !categoryName.trim()) {
       setError(
         isIncome ? "Escribí de dónde viene el ingreso." : "Escribí en qué se gasta.",
+      );
+      return;
+    }
+    // La categoría escrita es del otro tipo: la regla no puede postear ese
+    // movimiento. Se corta acá (el servidor también lo rechaza) con el mismo
+    // mensaje que usa la API, para que las dos capas digan lo mismo.
+    if (categoryConflict) {
+      setError(
+        ruleCategoryKindMessage(categoryConflict.name, kind, categoryConflict.kind),
       );
       return;
     }
@@ -580,12 +627,16 @@ export default function RecurrenceRuleForm({
                 className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400"
               />
               <datalist id="rec-categories">
-                {categories.map((category) => (
-                  <option key={category.id} value={category.name} />
-                ))}
+                {/* Sólo las categorías del tipo activo: ofrecer una combinación
+                    imposible es peor que no ofrecerla (la base la rechaza). */}
+                {categories
+                  .filter((c) => c.kind === (isIncome ? "INCOME" : "EXPENSE"))
+                  .map((category) => (
+                    <option key={category.id} value={category.name} />
+                  ))}
               </datalist>
 
-              {categoryName.trim() !== "" && (
+              {categoryName.trim() !== "" && !categoryConflict && (
                 <p className="mt-1 text-xs text-zinc-500">
                   {categoryExists ? (
                     <>
@@ -599,6 +650,38 @@ export default function RecurrenceRuleForm({
                     </>
                   )}
                 </p>
+              )}
+
+              {/* ── La categoría contradice el tipo de la regla ──────────────
+                  El aviso va ACÁ, junto al campo, y no en el pie: el pie es
+                  pegajoso y el aviso tiene que estar donde la persona está
+                  escribiendo. El botón deriva el tipo de la regla, que es la
+                  salida que no tira nada de lo escrito. */}
+              {categoryConflict && (
+                <div
+                  id="rec-category-conflict"
+                  role="alert"
+                  className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2 text-xs"
+                >
+                  <p>
+                    <b>“{categoryConflict.name}”</b> es una categoría de{" "}
+                    {CATEGORY_KIND_LABEL[categoryConflict.kind].toLowerCase()} y
+                    esta regla es {MOVEMENT_KIND_LABEL[kind].toLowerCase()}: no
+                    puede postear ese movimiento.
+                  </p>
+                  <button
+                    id="rec-category-fix"
+                    type="button"
+                    onClick={() =>
+                      setKind(
+                        categoryConflict.kind === "INCOME" ? "INCOME" : "EXPENSE",
+                      )
+                    }
+                    className="mt-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold"
+                  >
+                    Usarla como {CATEGORY_KIND_LABEL[categoryConflict.kind].toLowerCase()}
+                  </button>
+                </div>
               )}
 
               {suggestions.length > 0 && (

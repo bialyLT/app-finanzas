@@ -35,6 +35,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
+import { categoryKindMessage } from "./category-kind";
 import {
   CSV_MAX_ROWS,
   parseCsv,
@@ -677,12 +678,12 @@ export async function importCsv(
         },
       });
 
-      // Si otra pestaña creó la categoría con el tipo contrario justo entre el
-      // recálculo y este upsert, no se puede usar: mejor rollback que guardar
-      // un gasto con una categoría de ingreso.
+      // La categoría existe con el tipo contrario (o lo cambió otra pestaña
+      // entre el recálculo y este upsert): no se puede usar. Mejor rollback
+      // que guardar un gasto con una categoría de ingreso.
       if (category.kind !== planned.kind) {
         throw new CsvImportError(
-          `La categoría “${planned.name}” cambió de tipo mientras se importaba. No se guardó nada.`,
+          `${categoryKindMessage(category.name, planned.kind, category.kind)} No se guardó nada.`,
           409,
         );
       }

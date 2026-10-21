@@ -3,6 +3,11 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
+import {
+  CategoryKindError,
+  categoryKindConflicts,
+  categoryKindMessage,
+} from "@/lib/category-kind";
 import { calendarToDb, isCalendarDate, todayCalendar } from "@/lib/dates";
 import { parseMoneyInput } from "@/lib/money";
 import type { MovementsResponse } from "@/lib/finance";
@@ -304,6 +309,24 @@ export async function POST(req: Request) {
             kind: kind === "INCOME" ? "INCOME" : "EXPENSE",
           },
         });
+
+        // ── EL TIPO DE LA CATEGORÍA Y EL DEL MOVIMIENTO TIENEN QUE SER EL MISMO ──
+        //
+        // El `upsert` de arriba conserva el tipo de la categoría que ya existía
+        // (`update: {}`): si "Alquiler" es un Gasto y el movimiento es un
+        // Ingreso, el movimiento queda clasificado con una categoría del otro
+        // tipo — un dato que se contradice a sí mismo.
+        //
+        // La base lo rechaza con el trigger `movement_category_kind_check` (por
+        // eso el error nunca es un 500), pero acá se corta antes, con un
+        // mensaje que dice qué se pidió y qué hacer.
+        if (categoryKindConflicts(kind, category.kind)) {
+          throw new CategoryKindError(
+            400,
+            categoryKindMessage(category.name, kind, category.kind),
+          );
+        }
+
         categoryId = category.id;
       }
 
@@ -329,6 +352,16 @@ export async function POST(req: Request) {
 
     return NextResponse.json(toMovementDTO(movement), { status: 201 });
   } catch (error) {
+    // El invariante de la categoría: un movimiento cuyo tipo contradice el de
+    // su categoría. Es un error de DOMINIO (la petición), no del servidor: 400
+    // con el mensaje que dice qué hacer.
+    if (error instanceof CategoryKindError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.status },
+      );
+    }
+
     console.error(error);
 
     // Traduce las restricciones de la base a mensajes que se entienden.

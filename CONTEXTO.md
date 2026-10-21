@@ -58,8 +58,12 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 456 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 658 aserciones end-to-end (servidor arriba)
+npm test                  # 496 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 665 aserciones end-to-end (servidor arriba)
+npm run gates             # smoke + 25 flows contra la INSTANCIA DE TESTS (:3101 / finanzas_test)
+                          #   → nunca toca finanzas_dev (la base de la persona): el script lo
+                          #   comprueba antes y después y aborta si un flow apunta al :3000
+node scripts/db-state.mjs # snapshot de SOLO LECTURA de finanzas_dev (para verificar)
 node scripts/tester-fase4/NN-*.mjs   # 989 checks adversariales server-side (Fase 4 r1; servidor arriba)
 node scripts/tester-fase4/ui-*.mjs   # 286 checks adversariales de la UI (Fase 4 r2; servidor arriba)
 node scripts/tester-fase5/NN-*.mjs   # 582 checks adversariales server-side (Fase 5; servidor arriba)

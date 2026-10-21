@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import {
+  categoryKindConflicts,
+  ruleCategoryKindMessage,
+} from "@/lib/category-kind";
+import {
   calendarToDb,
   dbToCalendar,
   isCalendarDate,
@@ -13,6 +17,7 @@ import { cleanName, normalizeCategoryName } from "@/lib/finance";
 import { parseMoneyInput } from "@/lib/money";
 import { describeDatabaseError } from "@/lib/queries";
 import {
+  RecurrenceError,
   describeRecurrenceError,
   recurrenceRuleInclude,
   toRecurrenceRuleDTO,
@@ -586,10 +591,15 @@ export async function PATCH(req: Request) {
 async function createOrUpdateRule(fields: RuleFields, id: string | null) {
   return prisma.$transaction(async (tx) => {
     let categoryId = fields.categoryId;
+    let category: {
+      id: string;
+      kind: "INCOME" | "EXPENSE";
+      name: string;
+    } | null = null;
 
     if (fields.categoryName) {
       const normalizedName = normalizeCategoryName(fields.categoryName);
-      const category = await tx.category.upsert({
+      category = await tx.category.upsert({
         where: { normalizedName },
         // Si ya existe, se conserva el nombre ORIGINAL y su tipo (mismo
         // criterio que POST /api/transactions).
@@ -601,6 +611,27 @@ async function createOrUpdateRule(fields: RuleFields, id: string | null) {
         },
       });
       categoryId = category.id;
+    } else if (categoryId) {
+      // En una EDICIÓN la categoría puede venir de la regla existente: el
+      // `upsert` de arriba no corre y, sin esta lectura, el cruce de tipos
+      // no se haría (y una regla que cambia de Ingreso a Gasto conservaría la
+      // categoría vieja sin que nadie lo note).
+      category = await tx.category.findUnique({ where: { id: categoryId } });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EL TIPO DE LA REGLA Y EL DE SU CATEGORÍA TIENEN QUE SER EL MISMO
+    // ─────────────────────────────────────────────────────────────────────────
+    // Una regla es la PROMESA de un movimiento: si su tipo y el de su categoría
+    // se contradicen, TODOS los movimientos que postee serían imposibles. La
+    // base lo rechaza con el trigger `recurrence_category_kind_check`; acá se
+    // corta antes, con un mensaje que dice qué hacer.
+    // ─────────────────────────────────────────────────────────────────────────
+    if (category && categoryKindConflicts(fields.kind, category.kind)) {
+      throw new RecurrenceError(
+        400,
+        ruleCategoryKindMessage(category.name, fields.kind, category.kind),
+      );
     }
 
     const data = {

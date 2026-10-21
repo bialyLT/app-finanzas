@@ -14,6 +14,8 @@
     "test:watch": "vitest",
     "db:push": "prisma db push",
     "db:test:setup": "node scripts/db-test-setup.mjs",
+    "db:state": "node scripts/db-state.mjs",
+    "gates": "powershell -ExecutionPolicy Bypass -File scripts/gates.ps1",
     "smoke": "node scripts/smoke.mjs",
     "flows": "powershell -ExecutionPolicy Bypass -File scripts/flows.ps1",
     "db:migrate": "prisma migrate dev",

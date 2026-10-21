@@ -30,6 +30,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
 import { getAccountBalances } from "./balance";
+import { categoryKindMessage } from "./category-kind";
 import { cardPeriodLabel } from "./cards";
 import {
   calendarToDb,
@@ -814,24 +815,55 @@ interface PayResult {
  * El interés de un pago: la categoría por defecto y su resolución.
  *
  * La categoría se resuelve por nombre NORMALIZADO (igual que en movimientos):
- * "Intereses" y "INTERESES" son la misma. El kind depende de la dirección: el
- * interés que pagás es un GASTO; el que cobrás es un INGRESO.
+ * "Intereses" y "INTERESES" son la misma.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EL NOMBRE POR DEFECTO DEPENDE DE LA DIRECCIÓN
+ *
+ * El interés que pagás es un GASTO y el que cobrás es un INGRESO. Una
+ * categoría tiene UN solo tipo, así que los dos intereses NO pueden llamarse
+ * igual: "Intereses" (el que pagás) y "Intereses cobrados" (el que cobrás).
+ *
+ * Antes se usaba "Intereses" para los dos, con un `upsert` de `update: {}`: la
+ * categoría conservaba el tipo del primer uso y el segundo interés se
+ * guardaba con una categoría del tipo contrario. Eso lo destapó el invariante
+ * nuevo (trigger `movement_category_kind_check`): el cobro de un préstamo a
+ * cobrar devolvía 400, y con razón.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
+const DEFAULT_INTEREST_CATEGORY: Record<"INCOME" | "EXPENSE", string> = {
+  EXPENSE: "Intereses",
+  INCOME: "Intereses cobrados",
+};
+
 async function resolveInterestCategory(
   tx: Prisma.TransactionClient,
   categoryName: string,
   kind: "INCOME" | "EXPENSE",
 ): Promise<string> {
-  const name = cleanName(categoryName) || "Intereses";
+  const name = cleanName(categoryName) || DEFAULT_INTEREST_CATEGORY[kind];
+  const normalizedName = normalizeCategoryName(name);
+
+  // El `upsert` (y no un `find` + `create`) porque dos pagos simultáneos
+  // pueden necesitar la misma categoría: con el `upsert`, el segundo INSERT
+  // espera al primero en vez de morir por violar el índice único.
   const category = await tx.category.upsert({
-    where: { normalizedName: normalizeCategoryName(name) },
+    where: { normalizedName },
     update: {},
-    create: {
-      name,
-      normalizedName: normalizeCategoryName(name),
-      kind,
-    },
+    create: { name, normalizedName, kind },
   });
+
+  // La categoría existe con el tipo contrario: no se puede usar (el
+  // movimiento sería imposible). Se dice cuál es el problema y qué hacer.
+  if (category.kind !== kind) {
+    throw new LoanError(
+      400,
+      `${categoryKindMessage(category.name, kind, category.kind)} ` +
+        `Si no querés clasificarla, no envíes el nombre de la categoría: ` +
+        `se usa «${DEFAULT_INTEREST_CATEGORY[kind]}».`,
+    );
+  }
+
   return category.id;
 }
 
@@ -1239,7 +1271,7 @@ async function createInterestLeg(
   const kind = args.direction === "I_OWE" ? "EXPENSE" : "INCOME";
   const categoryId = await resolveInterestCategory(
     tx,
-    args.categoryName ?? "Intereses",
+    args.categoryName ?? DEFAULT_INTEREST_CATEGORY[kind],
     kind,
   );
 

@@ -19,6 +19,7 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
+import { categoryKindMessage } from "./category-kind";
 import { canReceiveIncome, cleanName, normalizeCategoryName } from "./finance";
 import type { FavoriteDTO } from "./finance";
 import { money, parseMoneyInput, type Money } from "./money";
@@ -256,8 +257,11 @@ export async function createFavorite(
       if (existing) {
         const expected = input.kind === "INCOME" ? "INCOME" : "EXPENSE";
         if (existing.kind !== expected) {
+          // El MISMO mensaje que usan el alta de movimientos, la de reglas y
+          // el formulario: la regla "la categoría tiene que ser del mismo tipo
+          // que el movimiento" no puede tener cinco redactados distintos.
           throw new FavoriteError(
-            `La categoría “${existing.name}” es de ${existing.kind === "INCOME" ? "ingreso" : "gasto"}. Elegí una del tipo de la plantilla.`,
+            categoryKindMessage(existing.name, input.kind, existing.kind),
           );
         }
         categoryId = existing.id;

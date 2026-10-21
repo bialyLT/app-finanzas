@@ -1514,6 +1514,29 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     message:
       "No se puede registrar un ingreso en un préstamo, un préstamo a cobrar o una tarjeta. Usá una transferencia desde la cuenta de deuda hacia tu cuenta de dinero; el interés cobrado es un ingreso, pero entra a tu cuenta de dinero.",
   },
+  // ── El tipo de la categoría y el del movimiento (Fase 9 r3) ─────────────────
+  // El trigger `movement_category_kind_check`: un movimiento no puede
+  // clasificarse con una categoría del otro tipo. La API lo rechaza antes con
+  // un mensaje más específico (ver `categoryKindMessage`); estas reglas son la
+  // red de seguridad para lo que escriba en la base sin pasar por la API.
+  {
+    marker: "[finanzas:categoria_no_corresponde]",
+    status: 400,
+    message:
+      "La categoría no es del mismo tipo que el movimiento: un ingreso necesita una categoría de Ingreso y un gasto una de Gasto. Revisá el tipo de la categoría o usá otra.",
+  },
+  {
+    marker: "[finanzas:regla_categoria_no_corresponde]",
+    status: 400,
+    message:
+      "La regla y su categoría son de tipos distintos: una regla de Ingreso necesita una categoría de Ingreso y una de Gasto, una de Gasto. Corregí el tipo de la regla o usá otra categoría.",
+  },
+  {
+    marker: "[finanzas:categoria_en_uso_no_cambia_tipo]",
+    status: 409,
+    message:
+      "Esa categoría ya está en uso: no se puede cambiar su tipo, porque los movimientos que la usan quedarían contradiciéndola. Usá otra categoría.",
+  },
   {
     // Postgres 22003: el número no entra en NUMERIC(18,2). Sin esta regla, un
     // monto de 20 dígitos salía como 500 genérico aunque el problema es de la

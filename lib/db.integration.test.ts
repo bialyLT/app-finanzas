@@ -795,6 +795,245 @@ describeDb("Invariantes del modelo en la base de datos", () => {
     });
   });
 
+  describe("El tipo de la categoría y el del movimiento (trigger)", () => {
+    // ─────────────────────────────────────────────────────────────────────────
+    // EL INVARIANTE QUE FALTABA
+    //
+    // Una categoría de INCOME no puede acompañar a un EXPENSE (ni al revés).
+    // El proyecto lo declaraba, el schema lo suponía y NADA lo custodiaba: la
+    // API resolvía la categoría con un `upsert` de `update: {}` (la categoría
+    // conserva su tipo) y guardaba el movimiento con la categoría equivocada.
+    //
+    // Acá se intenta guardar el dato imposible DE VERDAD: si el trigger no
+    // dispara, el dato entra y el modelo vuelve a mentir.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    it("rechaza un ingreso clasificado con una categoría de GASTO", async () => {
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const category = await db.category.create({
+        data: { name: "Alquiler", normalizedName: "alquiler", kind: "EXPENSE" },
+      });
+
+      await expect(
+        db.movement.create({
+          data: {
+            kind: "INCOME",
+            amount: "325000",
+            date: calendarToDb("2026-10-19"),
+            accountId: account.id,
+            categoryId: category.id,
+          },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("rechaza un gasto clasificado con una categoría de INGRESO", async () => {
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const category = await db.category.create({
+        data: { name: "Sueldo", normalizedName: "sueldo", kind: "INCOME" },
+      });
+
+      await expect(
+        db.movement.create({
+          data: {
+            kind: "EXPENSE",
+            amount: "1000",
+            date: calendarToDb("2026-10-19"),
+            accountId: account.id,
+            categoryId: category.id,
+          },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("el rechazo se traduce a un 400 con mensaje (nunca un 500)", async () => {
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const category = await db.category.create({
+        data: { name: "Alquiler", normalizedName: "alquiler", kind: "EXPENSE" },
+      });
+
+      let caught: unknown = null;
+      try {
+        await db.movement.create({
+          data: {
+            kind: "INCOME",
+            amount: "325000",
+            date: calendarToDb("2026-10-19"),
+            accountId: account.id,
+            categoryId: category.id,
+          },
+        });
+      } catch (error) {
+        caught = error;
+      }
+
+      const described = describeDatabaseError(caught);
+      expect(described?.status).toBe(400);
+      expect(described?.message).toBeTruthy();
+    });
+
+    it("ACEPTA los dos casos que sí son correctos", async () => {
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const gasto = await db.category.create({
+        data: { name: "Alquiler", normalizedName: "alquiler", kind: "EXPENSE" },
+      });
+      const ingreso = await db.category.create({
+        data: { name: "Sueldo", normalizedName: "sueldo", kind: "INCOME" },
+      });
+
+      const exp = await db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "325000",
+          date: calendarToDb("2026-10-19"),
+          accountId: account.id,
+          categoryId: gasto.id,
+        },
+      });
+      const inc = await db.movement.create({
+        data: {
+          kind: "INCOME",
+          amount: "500000",
+          date: calendarToDb("2026-10-01"),
+          accountId: account.id,
+          categoryId: ingreso.id,
+        },
+      });
+
+      expect(exp.id).toBeTruthy();
+      expect(inc.id).toBeTruthy();
+    });
+
+    it("NO rompe una fila que ya venía violando el invariante", async () => {
+      // Hay una fila así en la base de la persona (un INCOME con una categoría
+      // de gasto). Los triggers no se disparan sobre las filas que ya existen,
+      // así que la fila queda como está — y tiene que poder ACTUALIZARSE sin
+      // quedar trancada: el trigger no revalida un UPDATE que no cambia ni el
+      // tipo ni la categoría.
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const category = await db.category.create({
+        data: { name: "Alquiler", normalizedName: "alquiler", kind: "EXPENSE" },
+      });
+
+      // El trigger se apaga UN MOMENTO para simular la fila que ya existía
+      // (los triggers no ven las filas anteriores a ellos).
+      await db.$executeRawUnsafe(
+        `ALTER TABLE "Movement" DISABLE TRIGGER "movement_category_kind_check"`,
+      );
+      let legacy: { id: string };
+      try {
+        legacy = await db.movement.create({
+          data: {
+            kind: "INCOME",
+            amount: "325000",
+            date: calendarToDb("2026-10-19"),
+            accountId: account.id,
+            categoryId: category.id,
+          },
+        });
+      } finally {
+        await db.$executeRawUnsafe(
+          `ALTER TABLE "Movement" ENABLE TRIGGER "movement_category_kind_check"`,
+        );
+      }
+
+      // La fila sigue ahí, con su contradicción: no se "arregló" sola.
+      const antes = await db.movement.findUnique({ where: { id: legacy.id } });
+      expect(antes?.kind).toBe("INCOME");
+      expect(antes?.categoryId).toBe(category.id);
+
+      // Y se puede actualizar (cambiar la descripción no cambia el tipo ni la
+      // categoría: no hay nada nuevo que validar).
+      const despues = await db.movement.update({
+        where: { id: legacy.id },
+        data: { description: "Alquiler (corregido a mano)" },
+      });
+      expect(despues.description).toBe("Alquiler (corregido a mano)");
+
+      // Pero cambiar su tipo a algo que siga contradiciéndose, NO.
+      await expect(
+        db.movement.update({
+          where: { id: legacy.id },
+          data: { kind: "TRANSFER", toAccountId: account.id },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("el tipo de una categoría EN USO es inmutable", async () => {
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const category = await db.category.create({
+        data: { name: "Alquiler", normalizedName: "alquiler", kind: "EXPENSE" },
+      });
+      await db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "325000",
+          date: calendarToDb("2026-10-19"),
+          accountId: account.id,
+          categoryId: category.id,
+        },
+      });
+
+      // Cambiarle el tipo dejaría al movimiento contradiciéndola.
+      await expect(
+        db.category.update({
+          where: { id: category.id },
+          data: { kind: "INCOME" },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it("una categoría que NO está en uso puede cambiar de tipo", async () => {
+      const category = await db.category.create({
+        data: { name: "Sueldo", normalizedName: "sueldo", kind: "EXPENSE" },
+      });
+
+      const cambiada = await db.category.update({
+        where: { id: category.id },
+        data: { kind: "INCOME" },
+      });
+
+      expect(cambiada.kind).toBe("INCOME");
+    });
+
+    it("rechaza una REGLA cuyo tipo contradice el de su categoría", async () => {
+      // La regla es la PROMESA de un movimiento: si es imposible, el
+      // generador no puede postear nunca y el fallo aparece meses después.
+      const account = await db.account.create({
+        data: { name: "Efectivo", kind: "CASH" },
+      });
+      const category = await db.category.create({
+        data: { name: "Alquiler", normalizedName: "alquiler", kind: "EXPENSE" },
+      });
+
+      await expect(
+        db.recurrenceRule.create({
+          data: {
+            title: "Alquiler",
+            kind: "INCOME",
+            amount: "325000",
+            accountId: account.id,
+            categoryId: category.id,
+            freq: "MONTHLY",
+            startDate: calendarToDb("2026-10-01"),
+          },
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
   describe("Los préstamos no se pueden crear a medias", () => {
     it("rechaza un préstamo sin tasa", async () => {
       // Sin tasa no se puede descomponer la cuota en capital e interés, y sin
@@ -3426,6 +3665,63 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
     expect(overview.rules.map((r) => r.title)).toEqual(["Pausada"]);
   });
 
+  it("una regla con la categoría del OTRO tipo no postea y dice por qué", async () => {
+    // El generador cruzaba `rule.kind` con `rule.categoryId` sin cruzarlos
+    // entre sí: una regla de Ingreso con una categoría de Gasto posteaba un
+    // movimiento imposible. Ahora la regla NO postea, sus ocurrencias quedan en
+    // la bandeja y la corrida dice qué hay que arreglar.
+    const { bank, gastos } = await seedBase();
+
+    // El trigger de la base no deja crear la regla imposible: para reproducir
+    // el caso se apaga UN MOMENTO (así se ven las filas que ya existían antes
+    // del trigger).
+    await db.$executeRawUnsafe(
+      `ALTER TABLE "RecurrenceRule" DISABLE TRIGGER "recurrence_category_kind_check"`,
+    );
+    let rule: { id: string };
+    try {
+      rule = await db.recurrenceRule.create({
+        data: {
+          title: "Alquiler",
+          kind: "INCOME",
+          amount: "325000",
+          accountId: bank.id,
+          categoryId: gastos.id, // `gastos` es de tipo EXPENSE
+          freq: "MONTHLY",
+          startDate: calendarToDb(TODAY),
+          postingMode: "AUTO",
+        },
+      });
+    } finally {
+      await db.$executeRawUnsafe(
+        `ALTER TABLE "RecurrenceRule" ENABLE TRIGGER "recurrence_category_kind_check"`,
+      );
+    }
+
+    const run = await runDueOccurrences(db, { today: TODAY });
+
+    // No posteó NADA y lo dijo.
+    expect(run.posted).toBe(0);
+    expect(run.blocked).toHaveLength(1);
+    expect(run.blocked[0].title).toBe("Alquiler");
+    expect(run.blocked[0].reason).toContain("Gasto");
+    expect(run.blocked[0].reason).toContain("Ingreso");
+
+    // Y no existe ningún movimiento imposible.
+    expect(await db.movement.count()).toBe(0);
+
+    // La ocurrencia quedó en la bandeja (espera decisión, no es plata).
+    const overview = await getRecurrenceOverview(db, { today: TODAY });
+    expect(overview.pending).toHaveLength(1);
+
+    // Aceptarla a mano tampoco postea un movimiento imposible: el 409 explica
+    // por qué.
+    await expect(acceptOccurrence(db, overview.pending[0].id)).rejects.toThrow(
+      /no puede postear/i,
+    );
+    expect(await db.movement.count()).toBe(0);
+  });
+
   it("borrar un movimiento posteado reabre su ocurrencia en la bandeja", async () => {
     const { bank, gastos } = await seedBase();
 
@@ -5060,6 +5356,12 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     });
     expect(cobro.movements[1].account.id).toBe(bank.id);
 
+    // La categoría del interés cobrado es de INGRESO: es plata que entra. Si
+    // fuera la misma que usa el interés que se PAGA ("Intereses", un Gasto),
+    // el movimiento sería imposible — y la base lo rechaza.
+    expect(cobro.movements[1].category?.name).toBe("Intereses cobrados");
+    expect(cobro.movements[1].category?.kind).toBe("INCOME");
+
     // La vista: dirección invertida, sin "deuda", con lo que te deben.
     const { loans } = await getLoansView(db, { today: TODAY });
     expect(loans).toHaveLength(1);
@@ -5077,9 +5379,13 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     // La categoría se pide con upsert: el cobro de la cuota ya la creó (misma
     // normalización de nombre), y un create chocaría con su unicidad.
     const categoria = await db.category.upsert({
-      where: { normalizedName: "intereses" },
+      where: { normalizedName: "intereses cobrados" },
       update: {},
-      create: { name: "Intereses", normalizedName: "intereses", kind: "INCOME" },
+      create: {
+        name: "Intereses cobrados",
+        normalizedName: "intereses cobrados",
+        kind: "INCOME",
+      },
     });
     await expect(
       db.movement.create({

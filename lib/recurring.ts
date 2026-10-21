@@ -49,6 +49,11 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
 import {
+  CATEGORY_KIND_LABEL,
+  MOVEMENT_KIND_LABEL,
+  categoryKindConflicts,
+} from "./category-kind";
+import {
   calendarToDb,
   dbToCalendar,
   type CalendarDate,
@@ -236,16 +241,47 @@ function movementDataFromRule(
 }
 
 /**
- * ¿La regla puede postear sola? Una transferencia siempre puede (no lleva
- * categoría); un ingreso o gasto necesita su categoría. Si la categoría fue
- * borrada (el FK es `SetNull`), postear violaría `movement_shape_by_kind` en la
- * base: la ocurrencia se encola en la bandeja y la corrida sigue.
+ * ¿La regla puede postear sola? Y si NO puede, por qué.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DOS MOTIVOS DISTINTOS, DOS MENSAJES DISTINTOS
+ *
+ *   1. La categoría fue BORRADA (el FK es `SetNull`): postear violaría
+ *      `movement_shape_by_kind` en la base.
+ *   2. La categoría es del OTRO TIPO: la regla es un Ingreso y su categoría es
+ *      un Gasto (o al revés). Este es el motivo nuevo —el invariante que la
+ *      base ahora custodia con el trigger `movement_category_kind_check`— y es
+ *      el que hacía que el generador creara movimientos imposibles: copiaba
+ *      `rule.kind` y `rule.categoryId` sin cruzarlos.
+ *
+ * Cuando hay un motivo, la REGLA NO POSTEA: sus ocurrencias van a la bandeja y
+ * la corrida sigue. Un movimiento imposible no se escribe nunca; lo que se
+ * escribe es el motivo, para que la persona lo arregle.
+ *
+ * Devuelve `null` cuando la regla puede postear sola.
  */
-function canAutoPost(rule: {
+function autoPostBlocker(rule: {
   kind: "INCOME" | "EXPENSE" | "TRANSFER";
   categoryId: string | null;
-}): boolean {
-  return rule.kind === "TRANSFER" || rule.categoryId !== null;
+  category?: { kind: "INCOME" | "EXPENSE"; name: string } | null;
+}): string | null {
+  // Una transferencia no lleva categoría: siempre puede postear sola.
+  if (rule.kind === "TRANSFER") return null;
+
+  if (!rule.categoryId) {
+    return "La regla quedó sin categoría y no puede postear sola: sus ocurrencias esperan en la bandeja.";
+  }
+
+  if (rule.category && categoryKindConflicts(rule.kind, rule.category.kind)) {
+    return (
+      `La categoría «${rule.category.name}» es de tipo ` +
+      `${CATEGORY_KIND_LABEL[rule.category.kind]} y la regla es de tipo ` +
+      `${MOVEMENT_KIND_LABEL[rule.kind]}: no puede postear sola. ` +
+      `Sus ocurrencias esperan en la bandeja.`
+    );
+  }
+
+  return null;
 }
 
 /**
@@ -279,6 +315,11 @@ export async function runDueOccurrences(
       const now = new Date();
       const rules = await tx.recurrenceRule.findMany({
         where: { status: "ACTIVE" },
+        // La categoría de la regla viaja porque el generador tiene que cruzarla
+        // con el tipo de la regla ANTES de postear (ver `autoPostBlocker`): una
+        // regla de Ingreso con una categoría de Gasto postearía un movimiento
+        // imposible.
+        include: { category: true },
         // Orden estable: la respuesta (y el orden de las filas creadas) no
         // cambia entre corridas idénticas.
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -306,18 +347,18 @@ export async function runDueOccurrences(
 
         if (dates.length === 0) continue;
 
-        // La decisión se toma UNA vez por regla: si la categoría falta, todas
-        // sus ocurrencias de esta corrida van a la bandeja (y se avisa).
-        const postable = canAutoPost(rule);
-        if (rule.postingMode === "AUTO" && !postable) {
+        // La decisión se toma UNA vez por regla: si la categoría falta o es del
+        // otro tipo, todas sus ocurrencias de esta corrida van a la bandeja (y
+        // se avisa con el motivo).
+        const blocker = autoPostBlocker(rule);
+        if (rule.postingMode === "AUTO" && blocker) {
           blocked.push({
             ruleId: rule.id,
             title: rule.title,
-            reason:
-              "La regla quedó sin categoría y no puede postear sola: sus ocurrencias esperan en la bandeja.",
+            reason: blocker,
           });
         }
-        const autoPost = rule.postingMode === "AUTO" && postable;
+        const autoPost = rule.postingMode === "AUTO" && blocker === null;
 
         let posted = 0;
 
@@ -430,10 +471,11 @@ export async function acceptOccurrence(
       }
 
       const rule = occurrence.rule;
-      if (!canAutoPost(rule)) {
+      const blocker = autoPostBlocker(rule);
+      if (blocker) {
         throw new RecurrenceError(
           409,
-          `La regla «${rule.title}» quedó sin categoría. Editala antes de aceptar la ocurrencia.`,
+          `La regla «${rule.title}» no puede postear: ${blocker} Editala antes de aceptar la ocurrencia.`,
         );
       }
 

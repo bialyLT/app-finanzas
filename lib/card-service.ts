@@ -32,6 +32,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
 import { getAccountBalances, type AccountBalance } from "./balance";
+import { categoryKindMessage } from "./category-kind";
 import {
   addMonthsToPeriod,
   cardPeriodLabel,
@@ -271,6 +272,10 @@ function emptyCommitments(): CardCommitmentsDTO {
  * La compra es un EXPENSE, así que la categoría es obligatoria en la práctica.
  * Se hace el mismo upsert por nombre normalizado que `POST /api/transactions`:
  * escribir "Tecnología" y "tecnologia" no puede partir el gráfico en dos.
+ *
+ * Y si la categoría existe con el tipo contrario (un Ingreso), NO se usa: el
+ * gasto quedaría clasificado con una categoría de ingreso, que es un dato que
+ * se contradice a sí mismo. Se dice cuál es el problema y qué hacer.
  */
 async function resolveExpenseCategory(
   tx: Prisma.TransactionClient,
@@ -279,12 +284,22 @@ async function resolveExpenseCategory(
   const name = cleanName(rawName);
   const normalizedName = normalizeCategoryName(name);
 
+  // El `upsert` (y no un `find` + `create`) porque dos compras simultáneas
+  // pueden necesitar la misma categoría: con el `upsert`, el segundo INSERT
+  // espera al primero en vez de morir por violar el índice único.
   const category = await tx.category.upsert({
     where: { normalizedName },
     // Si ya existe, se conserva el nombre ORIGINAL que había puesto la persona.
     update: {},
     create: { name, normalizedName, kind: "EXPENSE" },
   });
+
+  if (category.kind !== "EXPENSE") {
+    throw new CardError(
+      400,
+      categoryKindMessage(category.name, "EXPENSE", category.kind),
+    );
+  }
 
   return category.id;
 }
