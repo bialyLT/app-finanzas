@@ -265,6 +265,65 @@ export const geometria = (ui, selector, bandaSelector = null) =>
     };
   })()`);
 
+/**
+ * La geometría de la parte VISIBLE de un control, y a quién le llega el punto
+ * de toque EN ESA PARTE.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ HACE FALTA (y por qué la geometría simple engaña)
+ *
+ * Un control que quedó a medias bajo el pie pegajoso tiene un rectángulo
+ * ENTERO que se mete debajo de la banda: si se hit-testea el CENTRO de ese
+ * rectángulo, el `elementFromPoint` devuelve el pie y parece un tap muerto.
+ * Pero la persona sólo ve la parte de arriba, y el tap REAL cae sobre la
+ * parte visible.
+ *
+ * El criterio del proyecto (y el de la auditoría, `scripts/responsive/
+ * measure.mjs`) es: se mide el rect VISIBLE (recortado por los contenedores
+ * con overflow) y se hit-testea SU centro. Con una orla menor a 8 px el control
+ * no se ve (no hay nada que tocar) y no se cuenta.
+ *
+ * Ésta es la misma definición, escrita para el tester: por eso los dos
+ * caminos miden lo mismo. (La primera versión de la batería 23 usaba la
+ * geometría simple y reportó un tap muerto que NO existía.)
+ */
+export const geometriaVisible = (ui, selector) =>
+  ui.evalJs(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return { existe: false };
+    const r = el.getBoundingClientRect();
+    let top = r.top, bottom = r.bottom, left = r.left, right = r.right;
+    let p = el.parentElement;
+    while (p) {
+      const cs = getComputedStyle(p);
+      if (cs.overflowX !== "visible" || cs.overflowY !== "visible") {
+        const pr = p.getBoundingClientRect();
+        top = Math.max(top, pr.top);
+        bottom = Math.min(bottom, pr.bottom);
+        left = Math.max(left, pr.left);
+        right = Math.min(right, pr.right);
+      }
+      p = p.parentElement;
+    }
+    top = Math.max(top, 0);
+    bottom = Math.min(bottom, window.innerHeight);
+    left = Math.max(left, 0);
+    right = Math.min(right, window.innerWidth);
+    const orla = { top, bottom, left, right, h: bottom - top, w: right - left };
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+    const hit = document.elementFromPoint(cx, cy);
+    return {
+      existe: true,
+      rect: { top: r.top, bottom: r.bottom, h: r.height, w: r.width },
+      orla,
+      cx, cy,
+      vacio: orla.h < 8 || orla.w < 8,
+      hit: hit ? (hit.id || hit.tagName.toLowerCase()) : null,
+      llega: !!hit && (hit === el || el.contains(hit)),
+    };
+  })()`);
+
 /* ────────────────────────────────────────────────────────────────────────────
  * SERVIDOR DE FIXTURES (para probar la auditoría sin tocar la app)
  * ──────────────────────────────────────────────────────────────────────────── */

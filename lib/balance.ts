@@ -33,6 +33,7 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { calendarToDb } from "./dates";
+import { incomeMonthToDto } from "./declared-income";
 import type { AmortizationSystem } from "./loans";
 import { money, sum, zero, type Money } from "./money";
 
@@ -69,6 +70,14 @@ export interface AccountBalance {
 
   /** Lo que la cuenta tenía antes de empezar a cargar movimientos. */
   opening: Money;
+  /**
+   * El mes en el que el saldo inicial cuenta como ingreso (`"2026-10"`), o
+   * `null` si la bandera está apagada (el comportamiento de siempre).
+   *
+   * Viaja con el saldo porque la tarjeta de la cuenta tiene que poder mostrar
+   * la banderita sin una consulta aparte.
+   */
+  openingIncomeMonth: string | null;
   /** Todo lo que entró: ingresos + transferencias recibidas. */
   inflow: Money;
   /** Todo lo que salió: gastos + transferencias enviadas. */
@@ -129,6 +138,7 @@ export async function getAccountBalances(
         kind: true,
         archived: true,
         openingBalance: true,
+        openingIncomeMonth: true,
         closingDay: true,
         dueDay: true,
         creditLimit: true,
@@ -213,6 +223,7 @@ export async function getAccountBalances(
       creditLimit: account.creditLimit === null ? null : money(account.creditLimit),
       amortizationSystem: account.amortizationSystem,
       opening,
+      openingIncomeMonth: incomeMonthToDto(account.openingIncomeMonth),
       inflow,
       outflow,
       balance,

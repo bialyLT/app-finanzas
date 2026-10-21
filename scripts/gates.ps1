@@ -225,13 +225,30 @@ function Copy-FlowsForTest {
         # ─────────────────────────────────────────────────────────────────────
         # UN FLOW QUE APUNTA AL :3000 NO SE CORRE EN LOS GATES
         #
-        # Si después de reescribir el puerto todavía queda un ":3000", el flow
-        # tiene el :3000 metido en otro lugar (una URL escrita a mano, un
-        # comentario que no es un comentario). Ese flow correría contra la
-        # instancia de la persona: se OMITE y se avisa, porque la alternativa
-        # (correrlo contra :3000) tocaría los datos reales.
+        # Si después de reescribir el puerto todavía queda un ":3000" en una
+        # línea que NO es un comentario, el flow tiene el :3000 metido en otro
+        # lugar (una URL escrita a mano, un `openLink` con la URL de la
+        # instancia de la persona, `localhost:3000`...). Ese flow correría
+        # contra la instancia de la persona: se OMITE y se avisa, porque la
+        # alternativa (correrlo contra :3000) tocaría los datos reales.
+        #
+        # POR QUÉ ":3000" Y NO "127.0.0.1:3000"
+        #
+        # La reescritura sólo arranca con "http://127.0.0.1:3000". Un flow que
+        # dice "http://localhost:3000" (o con la IP de la máquina) NO se
+        # reescribe y, con el chequeo anterior, se copiaba y se CORRÍA contra
+        # la instancia de la persona. El puerto es lo que identifica a la
+        # instancia, no el nombre de host.
+        #
+        # Y POR QUÉ SE IGNORAN LOS COMENTARIOS
+        #
+        # El flow 01 documenta un comando de ejemplo con "localhost:3000" y no
+        # lo ejecuta: sin esta excepción, ese flow se omitiría siempre y la
+        # suite no podría correr nunca. Un comentario no abre ninguna
+        # conexión.
         # ─────────────────────────────────────────────────────────────────────
-        if ($texto -match "127\.0\.0\.1:3000") {
+        $sinComentarios = ($texto -split "`r?`n" | Where-Object { $_ -notmatch "^\s*#" }) -join "`n"
+        if ($sinComentarios -match ":3000") {
             $omitidos += $file.Name
             continue
         }

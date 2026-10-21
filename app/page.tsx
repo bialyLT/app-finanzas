@@ -57,6 +57,7 @@ type Modal = MovementKindDTO | "ACCOUNT" | null;
  */
 const EMPTY_TOTALS: PeriodTotalsDTO = {
   income: "0.00",
+  declaredIncome: "0.00",
   expenses: "0.00",
   transfers: "0.00",
   cashFlow: "0.00",
@@ -214,6 +215,18 @@ export default function Home() {
   const [deleteNotice, setDeleteNotice] = useState<{ id: string; message: string } | null>(
     null,
   );
+
+  /**
+   * La banderita de cada cuenta: «contar este saldo como ingreso de este mes».
+   *
+   * El error va en una franja INLINE (nunca en un `window.alert`: el driver de
+   * Maestro no puede contestarlo y el hilo de JS se queda bloqueado).
+   */
+  const [incomeToggleBusyId, setIncomeToggleBusyId] = useState<string | null>(null);
+  const [incomeToggleNotice, setIncomeToggleNotice] = useState<{
+    id: string;
+    message: string;
+  } | null>(null);
 
   /**
    * El aviso de "Deshacer" posterior a un guardado, con el movimiento recién
@@ -571,6 +584,15 @@ export default function Home() {
 
     return {
       income: serverTotals.income,
+      /**
+       * La parte del ingreso que NO viene de un movimiento: la plata que la
+       * persona declaró como ingreso de este mes (la banderita de la cuenta).
+       *
+       * Viaja APARTE porque la pantalla tiene que poder decir de dónde sale el
+       * número: un ingreso que nadie ganó no se puede presentar como "lo que
+       * ganaste".
+       */
+      declared: serverTotals.declaredIncome,
       expenses: serverTotals.expenses,
       result: centsToString(resultCents),
       savingRate,
@@ -650,8 +672,54 @@ export default function Home() {
     }
   }
 
-  function shiftMonth(delta: number) {
-    // `shiftPeriod` devuelve el primer día del mes desplazado; el mes es el
+  /**
+   * Activa o desactiva la banderita de una cuenta, sin entrar a editarla.
+   *
+   * Encenderla declara el saldo inicial como ingreso DEL MES EN CURSO (el
+   * "de este mes" de la persona); apagarla lo deja como estaba: plata anterior,
+   * que no entra en los ingresos de ningún mes.
+   *
+   * El doble toque está blindado con `incomeToggleBusyId`: dos PATCH seguidos
+   * dejarían la cuenta en un estado que la persona no pidió.
+   */
+  async function toggleDeclaredIncome(account: AccountBalanceDTO) {
+    if (incomeToggleBusyId) return;
+    setIncomeToggleBusyId(account.id);
+    setIncomeToggleNotice(null);
+
+    try {
+      const response = await fetch("/api/accounts", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: account.id,
+          openingIncomeMonth: account.openingIncomeMonth
+            ? null
+            : todayCalendar().slice(0, 7),
+        }),
+      });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error?: string };
+        setIncomeToggleNotice({
+          id: account.id,
+          message: data.error ?? "No se pudo cambiar la cuenta.",
+        });
+        return;
+      }
+
+      await load();
+    } catch {
+      setIncomeToggleNotice({
+        id: account.id,
+        message: "No se pudo cambiar la cuenta.",
+      });
+    } finally {
+      setIncomeToggleBusyId(null);
+    }
+  }
+
+  function shiftMonth(delta: number) {    // `shiftPeriod` devuelve el primer día del mes desplazado; el mes es el
     // prefijo. Se usa la función del módulo de fechas y no aritmética de `Date`
     // suelta, que es donde viven los bugs de fin de mes.
     setMonth(shiftPeriod("month", `${month}-01`, delta).slice(0, 7));
@@ -758,6 +826,12 @@ export default function Home() {
           <p className="text-[11px] opacity-80 mt-1">
             {totals.incomeCount}{" "}
             {totals.incomeCount === 1 ? "movimiento" : "movimientos"}
+            {totals.declared !== "0.00" && (
+              <>
+                {" · "}
+                <b>{formatMoney(totals.declared)}</b> declarados
+              </>
+            )}
           </p>
         </div>
 
@@ -806,14 +880,27 @@ export default function Home() {
           <p className="text-[11px] opacity-80 mt-1">
             {totals.savingRate !== null ? (
               <>
-                Ahorraste {formatPercent(totals.savingRate)} de lo que ganaste este mes
+                {/* La etiqueta cambia con la banderita: la plata declarada
+                    cuenta como ingreso del mes, pero nadie la ganó (ya la
+                    tenías). Decir "de lo que ganaste" sobre un número que
+                    incluye plata declarada sería mentir. */}
+                {totals.declared !== "0.00"
+                  ? `Ahorraste ${formatPercent(totals.savingRate)} de lo que entró este mes`
+                  : `Ahorraste ${formatPercent(totals.savingRate)} de lo que ganaste este mes`}
               </>
             ) : (
               "Sin ingresos este mes"
             )}
           </p>
           <p className="text-[11px] opacity-70 mt-0.5">
-            Es el flujo del mes. El saldo inicial no cuenta como ganancia.
+            {totals.declared !== "0.00" ? (
+              <>
+                Incluye <b>{formatMoney(totals.declared)}</b> que declaraste
+                como ingreso (ya los tenías).
+              </>
+            ) : (
+              "Es el flujo del mes. El saldo inicial no cuenta como ganancia."
+            )}
           </p>
         </div>
 
@@ -854,6 +941,27 @@ export default function Home() {
           <p className="text-[11px] opacity-70 mt-0.5">
             La plata que entró y salió de tus cuentas este mes.
           </p>
+          {/* ─────────────────────────────────────────────────────────────────
+              LA NOTA DE LA PLATA DECLARADA (la coherencia de las dos tarjetas)
+
+              Con la banderita encendida, "Te quedó" da +$ 600,00 y "Flujo de
+              caja" da -$ 6.400,00. Los dos números son ciertos y NO se
+              contradicen: el flujo de caja es el MOVIMIENTO del dinero (325.000
+              entraron y 331.400 salieron) y la plata declarada no es un
+              movimiento: ya estaba en las cuentas.
+
+              Pero al lado de la otra tarjeta, un -$ 6.400,00 al lado de un
+              +$ 600,00 parece un error. La diferencia es exactamente la plata
+              declarada, y por eso la nota la dice: NO cambia la fórmula del
+              flujo (es el movimiento del dinero), sólo explica por qué el flujo
+              no coincide con el ahorro.
+              ───────────────────────────────────────────────────────────────── */}
+          {totals.declared !== "0.00" && (
+            <p className="text-[11px] opacity-70 mt-0.5">
+              No cuenta {formatMoney(totals.declared)} que declaraste: esa
+              plata ya estaba en tus cuentas.
+            </p>
+          )}
         </div>
       </div>
 
@@ -883,28 +991,107 @@ export default function Home() {
             </div>
           </div>
 
+          {/*
+            ── Las cuentas: la tarjeta de cada una ──────────────────────────
+            Cada cuenta es una ficha con su nombre, su saldo y —si es una
+            cuenta de DINERO con plata— la banderita: «contar este saldo como
+            ingreso de este mes». La banderita está ACÁ (y no sólo en el
+            formulario de alta) para poder activarla sin entrar a editar.
+
+            La banderita sólo se ofrece donde tiene sentido: una tarjeta o un
+            préstamo NO pueden declarar su saldo como ingreso (su saldo
+            negativo es una deuda). La API también lo rechaza, con el mismo
+            criterio.
+          */}
           {accounts.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-              {accounts.map((account) => (
-                <span key={account.id} className="text-zinc-500">
-                  {account.name}{" "}
-                  <b
-                    className={
-                      account.isLiability ? "text-rose-600" : "text-zinc-700 dark:text-zinc-300"
-                    }
+            <div
+              id="account-cards"
+              className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 grid grid-cols-1 min-[420px]:grid-cols-2 gap-2"
+            >
+              {accounts.map((account) => {
+                const declarada = account.openingIncomeMonth !== null;
+                const puedeDeclarar =
+                  (account.kind === "CASH" || account.kind === "BANK") &&
+                  toCents(account.openingBalance) > 0;
+
+                return (
+                  <div
+                    key={account.id}
+                    className="@container min-w-0 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2 flex flex-col gap-1"
                   >
-                    {/* En una cuenta de deuda se muestra `debt`, con la
-                        palabra que le corresponde: "debe $ 50.000" cuando se
-                        debe y "a favor $ 50.000" cuando se pagó de más y la
-                        cuenta quedó con saldo a favor. `formatLiability`
-                        centraliza la regla; mostrar `balance` daría
-                        "−$ 500.000", que todo el mundo lee como un error. */}
-                    {account.isLiability
-                      ? formatLiability(account.debt ?? "0.00")
-                      : formatMoney(account.balance)}
-                  </b>
-                </span>
-              ))}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] text-zinc-500 truncate">
+                          {account.name}
+                          {declarada && (
+                            <span className="text-sky-600 dark:text-sky-300">
+                              {" "}
+                              · ingreso de{" "}
+                              {formatCalendar(
+                                `${account.openingIncomeMonth}-01`,
+                                LOCALE,
+                                { month: "short", year: "numeric" },
+                              )}
+                            </span>
+                          )}
+                        </p>
+                        <p
+                          className={`monto-ficha font-bold ${
+                            account.isLiability ? "text-rose-600" : ""
+                          }${claseMontoLargo(
+                            formatMoney(
+                              account.isLiability
+                                ? account.debt ?? "0.00"
+                                : account.balance,
+                            ),
+                          )}`}
+                        >
+                          {account.isLiability
+                            ? formatLiability(account.debt ?? "0.00")
+                            : formatMoney(account.balance)}
+                        </p>
+                      </div>
+
+                      {puedeDeclarar && (
+                        <button
+                          type="button"
+                          id={`acc-income-toggle-${account.id}`}
+                          role="checkbox"
+                          aria-checked={declarada}
+                          aria-label={
+                            declarada
+                              ? `Dejar de contar el saldo de ${account.name} como ingreso`
+                              : `Contar el saldo de ${account.name} como ingreso de este mes`
+                          }
+                          title={
+                            declarada
+                              ? "Dejar de contarlo como ingreso"
+                              : "Contarlo como ingreso de este mes"
+                          }
+                          onClick={() => toggleDeclaredIncome(account)}
+                          disabled={incomeToggleBusyId !== null}
+                          className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg border-2 text-base font-bold transition-colors ${
+                            declarada
+                              ? "border-sky-600 bg-sky-600 text-white"
+                              : "border-zinc-300 dark:border-zinc-600 text-transparent"
+                          } disabled:opacity-50`}
+                        >
+                          <span aria-hidden="true">✓</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {incomeToggleNotice?.id === account.id && (
+                      <p
+                        role="alert"
+                        className="text-[11px] text-rose-700 dark:text-rose-300"
+                      >
+                        {incomeToggleNotice.message}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -1093,7 +1280,9 @@ export default function Home() {
                     {formatMoney(reconciliation.saving, { withSign: true })}
                   </p>
                   <p className="text-[11px] text-zinc-400">
-                    ingresos ganados − gastos consumidos
+                    {reconciliation.declaredIncome !== "0.00"
+                      ? "ingresos del mes − gastos del mes"
+                      : "ingresos ganados − gastos consumidos"}
                   </p>
                 </div>
 
@@ -1126,10 +1315,36 @@ export default function Home() {
                       reconciliation.balanced ? "text-emerald-600" : "text-rose-600"
                     }`}
                   >
-                    {reconciliation.balanced ? "cuadra al centavo" : "no cuadra"}
+                    {reconciliation.balanced
+                      ? reconciliation.declaredIncome !== "0.00"
+                        ? `cuadra con ${formatMoney(reconciliation.declaredIncome)} declarados`
+                        : "cuadra al centavo"
+                      : "no cuadra"}
                   </p>
                 </div>
               </div>
+
+              {/*
+                ── La plata declarada: la diferencia que NO es un error ───────
+                Declarar $ 7.000 que ya tenías hace que el patrimonio del mes
+                baje 6.400 (los gastos) y que el ahorro del mes sea +600. Los
+                dos números son ciertos: la plata declarada YA estaba en el
+                patrimonio, y ahora además cuenta como ingreso del mes. Por
+                eso la app lo EXPLICA: sin esta nota, la persona vería un
+                "cuadra" que no entiende.
+              */}
+              {reconciliation.declaredIncome !== "0.00" && (
+                <p
+                  id="reconciliation-declared"
+                  className="mt-2 text-xs rounded-lg bg-sky-50 dark:bg-sky-950 text-sky-800 dark:text-sky-200 px-3 py-2"
+                >
+                  Declaraste <b>{formatMoney(reconciliation.declaredIncome)}</b>{" "}
+                  que ya tenías: esa plata entra como ingreso de este mes, pero
+                  ya estaba en tu patrimonio. Por eso el patrimonio Bajó{" "}
+                  {formatMoney(reconciliation.netDelta, { withSign: true })} y el
+                  ahorro del mes es {formatMoney(reconciliation.saving, { withSign: true })}.
+                </p>
+              )}
 
               {!reconciliation.balanced && (
                 <p
@@ -1296,7 +1511,13 @@ export default function Home() {
                 : `${debtReport.dti.planCount} ${
                     debtReport.dti.planCount === 1 ? "plan" : "planes"
                   } con cuotas pendientes.`}{" "}
-              Cuota mensual de los planes ÷ ingresos ganados del mes.
+              {/* El denominador del DTI es el ingreso DEL MES, que con la
+                  banderita encendida incluye la plata declarada: esa plata
+                  nadie la ganó, así que decir «ingresos ganados» sería
+                  mentir. Con la banderita apagada el texto es el de siempre. */}
+              {totals.declared !== "0.00"
+                ? "Cuota mensual de los planes ÷ ingresos del mes."
+                : "Cuota mensual de los planes ÷ ingresos ganados del mes."}
             </p>
           </div>
         </div>

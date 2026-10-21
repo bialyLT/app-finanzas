@@ -58,20 +58,23 @@ La contraseña de desarrollo vive en `.env` (no versionado) como `APP_PASSWORD`.
 
 ```powershell
 npm run typecheck         # tipos
-npm test                  # 496 tests (unitarios + integración contra finanzas_test)
-npm run smoke             # 665 aserciones end-to-end (servidor arriba)
+npm test                  # 517 tests (unitarios + integración contra finanzas_test)
+npm run smoke             # 688 aserciones end-to-end (servidor arriba)
 npm run gates             # smoke + 25 flows contra la INSTANCIA DE TESTS (:3101 / finanzas_test)
                           #   → nunca toca finanzas_dev (la base de la persona): el script lo
-                          #   comprueba antes y después y aborta si un flow apunta al :3000
-node scripts/db-state.mjs # snapshot de SOLO LECTURA de finanzas_dev (para verificar)
+                          #   comprueba antes y después y ABORTA si un flow apunta al :3000.
+                          #   El smoke con --reset y los flows también abortan si se los corre
+                          #   contra la base o la instancia de la persona (--allow-personal-db /
+                          #   -AllowPersonalInstance para exceptuar a propósito).
+node scripts/db-state.mjs # snapshot de SOLO LECTURA de finanzas_dev (incluye la banderita)
 node scripts/tester-fase4/NN-*.mjs   # 989 checks adversariales server-side (Fase 4 r1; servidor arriba)
 node scripts/tester-fase4/ui-*.mjs   # 286 checks adversariales de la UI (Fase 4 r2; servidor arriba)
 node scripts/tester-fase5/NN-*.mjs   # 582 checks adversariales server-side (Fase 5; servidor arriba)
 node scripts/tester-fase7/*.mjs      # 463 checks adversariales de carga rápida (Fase 7 r1; servidor arriba)
 node scripts/tester-fase7r2/*.mjs    # 770 checks adversariales de la segunda capa (Fase 7 r2; servidor arriba)
 node scripts/responsive/audit-mobile.mjs  # auditoría responsive: 8 anchos × 6 vistas + 10 modales (Fase 9)
-node scripts/tester-responsive/*.mjs      # 326 checks adversariales de responsive (Fase 9; servidor arriba)
-npm run flows             # 25 flows de Maestro: siembra la base y corre; ~57m
+node scripts/tester-responsive/*.mjs      # 705 checks adversariales de responsive (Fase 9; servidor arriba)
+npm run flows             # 25 flows de Maestro: siembra la base y corre; ~57m (usar npm run gates: va contra la instancia de tests)
 ```
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
@@ -85,7 +88,9 @@ Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nu
 
 ## Próximo paso recomendado
 
-**Fase 9 «responsive» en curso (2026-10-20) — la app se estaba rompiendo en el teléfono.** La causa raíz era **una sola**: el nav del header (`div.flex.items-center.gap-2` de 532 px **sin wrap**) empujaba el documento a **664 px**, así que **las 6 vistas** tenían scroll horizontal en cualquier device más angosto (y 745 targets táctiles de 32-40 px). El dev lo arregló con `components/Nav.tsx` (fila de escritorio con `flex-wrap` + menú «☰» de dos columnas en el teléfono, **un solo conjunto de destinos en el DOM** para no duplicar ids), grillas fluidas, la previsualización del CSV en fichas, `role="dialog"` en 5 modales y la regla de 44 px **atada al puntero** (`pointer: coarse`, no al ancho: un teléfono en landscape también la cumple). Resultado medido: **32 de 48 mediciones con desborde y 745 targets chicos → 0 y 0**; auditoría `RESULT ok=202 fail=0`; 456 tests · smoke 658 · build 0 · suite **25/25**. El tester adversarial **verificó la auditoría con fixtures reales** (detecta una fuga real y aborta si la emulación no aplicó), encontró 2 bugs (la paleta en landscape; los montos de 18 caracteres que rompían el documento) y dejó **3 huecos del gate** → ronda r2 abierta: la zona muerta del pie que puede **descartar lo cargado**, el check «contenido que no entra en su caja» que no fallaba, y el barrido que era sólo portrait. **Gate nuevo de toda ronda que toque UI:** `node scripts/responsive/audit-mobile.mjs` (8 anchos × 6 vistas + 10 modales; falla con exit 1).
+**Fase 9 «responsive» + cálculo: la app ya se usa en personal (2026-10-21).** Cerrado: el mobile roto (el nav de 532 px sin wrap empujaba el documento a 664 px → scroll horizontal en las 6 vistas) · el Tailwind puro (cero estilos a mano, con un gate que lo impide) · el **invariante que faltaba** (la categoría de un movimiento tiene que ser del mismo tipo: trigger en la base + API + generador, aplicado en los seis caminos que crean movimientos) · los **gates que no tocan los datos de la persona** (`npm run gates`: segunda instancia en `:3101` con `finanzas_test`, compara `finanzas_dev` antes/después y **aborta** si un flow apunta al `:3000`) · y la **banderita por cuenta** («Contar este saldo como ingreso de este mes», con selector de mes): el modelo de la cuenta no cambia, la plata declarada entra a los ingresos del mes en que la declaraste (con la banderita de la persona encendida: ingresos 332.000 · ahorro **+600** · patrimonio 600 · reconciliación 0,00 explicando los 7.000). **Dos cosas que cambiaron de reglas:** (a) la app tiene **datos reales** → nada de agentes ni gates tocan `finanzas_dev`, y los que siembran corren contra `finanzas_test`; (b) el **dev no corre la suite completa** (la corre el tester) y las rondas son de **un solo ítem** con presupuesto de tiempo.
+
+**Queda de la Fase 9**: el **denominador del ahorro** ("de lo que tenías disponible": el saldo de efectivo y bancos al inicio del mes + los ingresos, para los meses en que se gasta de lo acumulado) y el resto (backups automáticos, log de errores, rate limiting, CSP, CI, índices/performance, export a CSV/JSON). Y lo único que bloquea el **deploy real**: **Neon** (rotar credenciales y respaldar antes de migrar) y **Vercel** (reactivar la protección de deployment).
 
 La **Fase 7** quedó completa antes (2026-10-19, dos rondas: núcleo de carga rápida y segunda capa con autocompletado, plantillas/favoritos, paleta `Ctrl+K` e import CSV; 4 bugs del tester, 770 checks, suite 25/25, criterio A 3 interacciones · 1.027 ms). La Fase 4 (deudas y préstamos) también, en dos rondas (2026-10-18). La Fase 3 (recurrencia) y la Fase 5 (tarjetas y cuotas) cerraron completas.
 

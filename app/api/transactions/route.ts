@@ -19,7 +19,7 @@ import {
 import {
   describeDatabaseError,
   movementInclude,
-  movementTotals,
+  periodTotals,
   toMovementDTO,
 } from "@/lib/queries";
 import { touchFavorite } from "@/lib/favorites";
@@ -103,7 +103,14 @@ export async function GET(req: Request) {
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       take: MOVEMENTS_MAX_ROWS + 1,
     }),
-    movementTotals(prisma, where),
+    // Los totales del PERÍODO: los movimientos más la plata declarada como
+    // ingreso de ese mes (la banderita de las cuentas). `periodTotals` resuelve
+    // las dos fuentes en un solo lugar, así que ningún cliente puede olvidarse
+    // de la segunda.
+    periodTotals(prisma, where, {
+      from: from && isCalendarDate(from) ? from : null,
+      to: to && isCalendarDate(to) ? to : null,
+    }),
   ]);
 
   const truncated = movements.length > MOVEMENTS_MAX_ROWS;

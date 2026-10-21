@@ -237,6 +237,22 @@ model Account {
   /// debés (en negativo).
   openingBalance Decimal @default(0) @db.Decimal(18, 2)
 
+  /// Mes en el que el saldo inicial cuenta como INGRESO de ese mes.
+  ///
+  /// NULL = la bandera apagada, que es el comportamiento de siempre: el saldo
+  /// inicial es un STOCK (la plata que ya tenías) y no entra en los ingresos de
+  /// ningún mes.
+  ///
+  /// Con valor, el mes (el PRIMER día, en calendario) es el período al que el
+  /// saldo se suma como ingreso: "esta plata que declaré, contala como ingreso
+  /// de este mes".
+  ///
+  /// Sólo tiene sentido en cuentas de DINERO (CASH/BANK) con saldo POSITIVO:
+  /// un saldo negativo es un pasivo (una deuda ya desembolsada) y una deuda no
+  /// es un ingreso. Un CHECK en la base lo hace cumplir (migración
+  /// `20261021120000_banderita_ingreso_de_saldo`).
+  openingIncomeMonth DateTime? @db.Date
+
   // ── Parámetros del préstamo. Sólo se usan si kind = LOAN o RECEIVABLE ────
 
   /// Monto original que te prestaron (LOAN) o que prestaste (RECEIVABLE).

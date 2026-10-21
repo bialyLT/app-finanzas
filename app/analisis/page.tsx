@@ -96,6 +96,7 @@ const SEARCH_DEBOUNCE_MS = 300;
  */
 const EMPTY_TOTALS: PeriodTotalsDTO = {
   income: "0.00",
+  declaredIncome: "0.00",
   expenses: "0.00",
   transfers: "0.00",
   cashFlow: "0.00",
@@ -329,6 +330,13 @@ export default function AnalisisPage() {
       savingRate:
         incomeCents === 0 ? null : ((resultCents / incomeCents) * 100).toFixed(2),
       positive: resultCents >= 0,
+      /**
+       * La parte del ingreso que NO viene de un movimiento: la plata que la
+       * persona declaró como ingreso de este mes (la banderita de la cuenta).
+       * Viaja APARTE para que la pantalla diga de dónde sale el número (y para
+       * no llamarlo «ganado»: esa plata ya estaba).
+       */
+      declared: totals.declaredIncome,
       pie,
       bars,
       incomeCount: totals.incomeCount,
@@ -483,6 +491,16 @@ export default function AnalisisPage() {
                 {stats.incomeCount}{" "}
                 {stats.incomeCount === 1 ? "movimiento" : "movimientos"}
               </p>
+              {/* La plata declarada (la banderita de la cuenta) NO es un
+                  movimiento: es ingreso del mes sin que entre por la puerta de
+                  los movimientos. Sin esta línea, el total de ingresos sería un
+                  número sin explicación (y la torta no lo muestra: la plata
+                  declarada no tiene categoría). */}
+              {stats.declared !== "0.00" && (
+                <p className="text-[11px] opacity-80">
+                  + {formatMoney(stats.declared)} declarados
+                </p>
+              )}
             </div>
 
             <div className="@container min-w-0 bg-rose-600 text-white rounded-2xl p-4">
@@ -517,7 +535,13 @@ export default function AnalisisPage() {
               </p>
               <p className="text-[11px] opacity-80">
                 {stats.savingRate !== null
-                  ? `${formatPercent(stats.savingRate)} de lo que ganaste`
+                  ? // La plata declarada (la banderita) entra en el ingreso del
+                    // mes, pero nadie la ganó: ya la tenías. Decir «de lo que
+                    // ganaste» sobre ese número sería mentir, igual que en el
+                    // panel. Con la banderita apagada el texto es el de siempre.
+                    `${formatPercent(stats.savingRate)} de lo que ${
+                      stats.declared !== "0.00" ? "entró" : "ganaste"
+                    }${stats.declared !== "0.00" ? " este mes" : ""}`
                   : "Sin ingresos"}
               </p>
             </div>

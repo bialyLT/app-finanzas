@@ -92,7 +92,22 @@ async function main() {
   for (const account of accounts) {
     console.log(
       `  · ${account.name} · ${account.kind} · saldo inicial ${account.openingBalance.toFixed(2)}` +
-        `${account.archived ? " · archivada" : ""}`,
+        `${account.archived ? " · archivada" : ""}` +
+        // ─────────────────────────────────────────────────────────────────────
+        // LA BANDERITA (el mes en el que el saldo inicial cuenta como ingreso)
+        //
+        // Esta línea NO es decorativa: la comparación "antes y después" de los
+        // gates (ver `scripts/gates.ps1`) es una comparación de TEXTO. Si la
+        // banderita no está en el texto, un gate que la apagara (o la
+        // encendiera) daría «finanzas_dev quedó INTACTA» con la mentira
+        // adentro. La banderita es una decisión de la persona: si se pierde, no
+        // se puede recuperar (es una declaración, no un saldo).
+        // ─────────────────────────────────────────────────────────────────────
+        `${
+          account.openingIncomeMonth
+            ? ` · ingreso de ${account.openingIncomeMonth.toISOString().slice(0, 7)}`
+            : ""
+        }`,
     );
   }
 

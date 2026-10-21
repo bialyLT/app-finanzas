@@ -3,6 +3,8 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { calendarToDb, isCalendarDate } from "@/lib/dates";
+import { declaredIncomeInPeriod } from "@/lib/declared-income";
+import { zero } from "@/lib/money";
 import type { ReportsResponse } from "@/lib/finance";
 import {
   categoriesInPeriod,
@@ -114,6 +116,18 @@ export async function GET(req: Request) {
     ...textFilter,
   };
 
+  // ── La plata declarada del período (la banderita de las cuentas) ──────────
+  //
+  // Es ingreso DEL PERÍODO, así que entra en los totales... PERO con un filtro
+  // de categoría o de texto NO: la plata declarada no tiene categoría, y
+  // sumarla a un total filtrado sería atribuírsela a la categoría que la
+  // persona está mirando. En ese caso los totales son los del subconjunto
+  // (y `declaredIncome` viaja en 0,00, que lo dice sin ambigüedad).
+  const declared =
+    categoryId || q
+      ? zero()
+      : await declaredIncomeInPeriod(prisma, { from, to });
+
   // ── Las consultas, en paralelo ─────────────────────────────────────────────
   //
   // No dependen entre sí y todas van a la misma base: en serie sumarían
@@ -127,7 +141,7 @@ export async function GET(req: Request) {
   // consulta ni se hace y el campo viaja `null`.
   const [totals, byCategory, byDate, categories, burnCandidates, burn] =
     await Promise.all([
-      movementTotals(prisma, where),
+      movementTotals(prisma, where, declared),
       movementCategoryBreakdown(prisma, where),
       movementDateBreakdown(prisma, where),
       categoriesInPeriod(prisma, from, to),

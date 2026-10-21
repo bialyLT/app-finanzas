@@ -31,6 +31,10 @@
 import type { Prisma } from "@prisma/client";
 import { getAccountBalances, getNetWorth, type AccountBalance, type Db } from "./balance";
 import {
+  declaredIncomeInPeriod,
+  incomeMonthToDto,
+} from "./declared-income";
+import {
   calendarToDb,
   dbToCalendar,
   addMonths,
@@ -117,10 +121,20 @@ export const movementInclude = {
  * @param db Cliente de Prisma inyectado, igual que en `lib/balance.ts`. Existe
  *           para que los tests de integración puedan apuntarlo a
  *           `finanzas_test` en vez de a la base de desarrollo.
+ * @param declared La plata declarada como ingreso del período (la banderita).
+ *                 Viaja APARTE de los movimientos porque NO es un movimiento:
+ *                 es un saldo inicial que la persona declaró como ingreso de
+ *                 este mes. Con la banderita apagada es cero y los totales son
+ *                 exactamente los de siempre.
+ *
+ *                 Para el caso normal (los totales de UN período) está
+ *                 `periodTotals`, que resuelve la plata declarada sola: así
+ *                 ningún cliente puede olvidarse de sumarla.
  */
 export async function movementTotals(
   db: Db,
   where: Prisma.MovementWhereInput,
+  declared: Money = zero(),
 ): Promise<PeriodTotalsDTO> {
   // El `groupBy` y el flujo de caja no dependen entre sí: van en paralelo.
   const [grouped, cashFlow] = await Promise.all([
@@ -138,6 +152,7 @@ export async function movementTotals(
   // "no hay datos" de "el campo no vino".
   const totals: PeriodTotalsDTO = {
     income: "0.00",
+    declaredIncome: "0.00",
     expenses: "0.00",
     transfers: "0.00",
     cashFlow,
@@ -162,6 +177,15 @@ export async function movementTotals(
       totals.transfers = amount;
       totals.transferCount = row._count._all;
     }
+  }
+
+  // La plata declarada se SUMA al ingreso del período (y no se mezcla con los
+  // movimientos): es ingreso de este mes, y por eso el mes no queda en rojo.
+  // El arreglo es en DECIMAL (no en float): el string del servidor vuelve a
+  // pasar por `money`, que es el único normalizador del proyecto.
+  if (!isZero(declared)) {
+    totals.income = money(totals.income).plus(declared).toFixed(2);
+    totals.declaredIncome = declared.toFixed(2);
   }
 
   return totals;
@@ -255,6 +279,32 @@ export async function movementCashFlow(
   const outflow = sum([expense._sum.amount ?? zero(), transferOut._sum.amount ?? zero()]);
 
   return inflow.minus(outflow).toFixed(2);
+}
+
+/**
+ * Los totales de UN PERÍODO: los movimientos más la plata declarada.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ ESTA FUNCIÓN EXISTE (y no alcanza con `movementTotals`)
+ *
+ * El ingreso de un período tiene DOS fuentes: los movimientos de INCOME y la
+ * plata que la persona declaró como ingreso de ese mes (la banderita de la
+ * cuenta). Si cada cliente de `movementTotals` resolviera la segunda por su
+ * cuenta, el día que uno la olvide el período daría un ingreso más bajo — y
+ * sin ningún error: un número mal que se ve tan confiable como uno bien.
+ *
+ * Acá está escrito UNA vez: el que llama pasa el período (sus dos extremos) y
+ * esta función resuelve la plata declarada y la suma. Los casos especiales
+ * (los que necesitan el valor de la plata declarada por separado, como la
+ * reconciliación) usan `movementTotals` con el valor ya resuelto.
+ */
+export async function periodTotals(
+  db: Db,
+  where: Prisma.MovementWhereInput,
+  period: { from: string | null; to: string | null },
+): Promise<PeriodTotalsDTO> {
+  const declared = await declaredIncomeInPeriod(db, period);
+  return movementTotals(db, where, declared);
 }
 
 /**
@@ -390,8 +440,16 @@ export async function movementBurn(
   if (input.from && date < input.from) return null;
   if (input.to && date > input.to) return null;
 
-  const totals = await movementTotals(db, dateRangeWhere(input.from, input.to));
+  const declared = await declaredIncomeInPeriod(db, {
+    from: input.from,
+    to: input.to,
+  });
 
+  const totals = await movementTotals(
+    db,
+    dateRangeWhere(input.from, input.to),
+    declared,
+  );
   const amount = movement.amount;
   const income = money(totals.income);
   const expenses = money(totals.expenses);
@@ -738,23 +796,48 @@ export async function getMonthReconciliation(
   // Las tres consultas van en paralelo y ninguna depende de las otras. La
   // ventana del lado del ahorro es [inicio del mes, corte]: exactamente el mismo
   // conjunto de movimientos que separa a las dos fotos de saldos.
-  const [before, after, totals] = await Promise.all([
+  //
+  // La plata DECLARADA del mes se busca aparte (es una cuenta, no un
+  // movimiento) y después se le pasa a `movementTotals`: entra en el ingreso del
+  // mes, que es lo que pidió la persona.
+  const [before, after, declared] = await Promise.all([
     getNetWorth(db, { asOf: asOfStart }),
     getNetWorth(db, { asOf: asOfEnd }),
-    movementTotals(db, {
+    declaredIncomeInPeriod(db, { from: monthStart, to: asOfEnd }),
+  ]);
+
+  const totals = await movementTotals(
+    db,
+    {
       date: {
         gte: calendarToDb(monthStart),
         lte: calendarToDb(asOfEnd),
       },
-    }),
-  ]);
+    },
+    declared,
+  );
 
   // La aritmética final es de `lib/money`: Decimal exacto, sin `Number` en el
   // medio. `netDelta − saving` es el número que se muestra tal cual, y `isZero`
   // (y no un redondeo ni un épsilon) es el único criterio de "cuadra".
   const netDelta = after.net.minus(before.net);
   const saving = money(totals.income).minus(totals.expenses);
-  const difference = netDelta.minus(saving);
+  // ─────────────────────────────────────────────────────────────────────────────
+  // LA IDENTIDAD CON PLATA DECLARADA
+  //
+  // La plata declarada NO enricheció a nadie: ya estaba en el patrimonio. Por
+  // eso la comparación de los dos caminos es
+  //
+  //     ΔPatrimonio = Ahorro − PlataDeclarada
+  //
+  // y no `ΔPatrimonio = Ahorro`. Con la banderita apagada, `declared` es cero y
+  // la identidad es la de siempre (y `difference` sigue siendo "0.00").
+  //
+  // Sin este ajuste, declarar $ 7.000 que ya tenías haría que la
+  // reconciliación gritara "no cuadra" y la persona buscaría un error que no
+  // existe: el número que no cuadra es la plata que ella misma declaró.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const difference = netDelta.minus(saving).plus(declared);
   const balanced = isZero(difference);
 
   return {
@@ -763,6 +846,7 @@ export async function getMonthReconciliation(
     netEnd: after.net.toFixed(2),
     netDelta: netDelta.toFixed(2),
     saving: saving.toFixed(2),
+    declaredIncome: declared.toFixed(2),
     // Cuando cuadra se normaliza a "0.00": un difference "-0.00" haría que la
     // pantalla muestre un menos delante de un cero que no significa nada.
     difference: balanced ? zero().toFixed(2) : difference.toFixed(2),
@@ -925,12 +1009,20 @@ export async function getDebtReport(
 
   // La deuda viva y el ingreso del mes (el denominador del DTI) no dependen
   // entre sí: van en paralelo.
-  const [balances, totals] = await Promise.all([
+  const [balances, declared] = await Promise.all([
     getAccountBalances(db, { asOf: asOfEnd }),
-    movementTotals(db, {
-      date: { gte: calendarToDb(monthStart), lte: calendarToDb(asOfEnd) },
-    }),
+    declaredIncomeInPeriod(db, { from: monthStart, to: asOfEnd }),
   ]);
+
+  // El ingreso del mes incluye la plata declarada como ingreso (la banderita):
+  // es ingreso del mes, y el DTI se mide contra el ingreso del mes.
+  const totals = await movementTotals(
+    db,
+    {
+      date: { gte: calendarToDb(monthStart), lte: calendarToDb(asOfEnd) },
+    },
+    declared,
+  );
 
   const debtAccounts = balances.filter(
     (balance): balance is DebtBalance =>
@@ -1286,6 +1378,12 @@ export interface AccountRowLike {
   // préstamos lo piden, y `null` significa "no configurado / anterior a la
   // Fase 4", que se lee como francés.
   amortizationSystem?: AmortizationSystem | null;
+
+  // El mes en el que el saldo inicial cuenta como ingreso. Opcional en la
+  // interfaz estructural por la misma razón que los de arriba: los `select`
+  // históricos no lo piden y `null` significa "no configurado" (la bandera
+  // apagada, que es el comportamiento de siempre).
+  openingIncomeMonth?: Date | string | null;
 }
 
 export function toAccountDTO(account: AccountRowLike): AccountDTO {
@@ -1310,6 +1408,8 @@ export function toAccountDTO(account: AccountRowLike): AccountDTO {
           ? account.creditLimit
           : account.creditLimit.toFixed(2),
     amortizationSystem: account.amortizationSystem ?? null,
+    // El mes de la banderita, en el formato del DTO ("2026-10" o `null`).
+    openingIncomeMonth: incomeMonthToDto(account.openingIncomeMonth),
   };
 }
 

@@ -67,6 +67,7 @@ import {
   movementCategoryBreakdown,
   movementDateBreakdown,
   movementTotals,
+  periodTotals,
   DUPLICATES_MAX_ROWS,
 } from "./queries";
 import {
@@ -2469,6 +2470,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
       netEnd: "410000.00",
       netDelta: "310000.00",
       saving: "310000.00",
+      declaredIncome: "0.00",
       difference: "0.00",
       balanced: true,
       partial: false,
@@ -2497,6 +2499,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
       netEnd: "100000.00",
       netDelta: "0.00",
       saving: "0.00",
+      declaredIncome: "0.00",
       difference: "0.00",
       balanced: true,
       partial: false,
@@ -2521,6 +2524,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
       netEnd: "100000.00",
       netDelta: "0.00",
       saving: "0.00",
+      declaredIncome: "0.00",
       difference: "0.00",
       balanced: true,
       partial: false,
@@ -2602,6 +2606,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
       netEnd: "115000.00",
       netDelta: "-10000.00",
       saving: "-10000.00",
+      declaredIncome: "0.00",
       difference: "0.00",
       balanced: true,
       partial: true,
@@ -6144,5 +6149,229 @@ describeDb("Importación CSV · Fase 7 r2", () => {
     });
     expect(result.imported).toBe(1);
     expect(await db.movement.count({ where: { accountId: bank.id } })).toBe(1);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA BANDERITA: «esta plata que declaré, contala como ingreso de este mes»
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * El escenario es el de la persona, con sus números: la cuenta "Efectivo" con
+ * 7.000 de saldo inicial, un ingreso de 325.000 (Zully) y dos gastos que suman
+ * 331.400. El patrimonio pasa de 7.000 a 600.
+ *
+ * Con la banderita APAGADA (el default, y el estado de toda cuenta que ya
+ * existía) el mes da −6.400 de ahorro: el saldo inicial es un stock y no cuenta
+ * como ganancia. Con la banderita TILDADA, el mismo mes da +600: los 7.000
+ * declarados entran como ingreso de octubre.
+ */
+describeDb("La banderita del ingreso declarado", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+  });
+
+  /**
+   * El escenario de la persona: la cuenta, el ingreso y los dos gastos.
+   *
+   * `conBanderita` decide si la cuenta declara su saldo como ingreso de
+   * octubre: es el ÚNICO cambio entre los dos caminos que se comparan.
+   */
+  async function seedEscenario(conBanderita: boolean) {
+    const { gastos, sueldo } = await seedCategories();
+
+    const efectivo = await db.account.create({
+      data: {
+        name: "Efectivo",
+        kind: "CASH",
+        openingBalance: "7000",
+        ...(conBanderita
+          ? { openingIncomeMonth: calendarToDb("2026-10-01") }
+          : {}),
+      },
+    });
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "INCOME",
+          amount: "325000",
+          date: calendarToDb("2026-10-19"),
+          accountId: efectivo.id,
+          categoryId: sueldo.id,
+          description: "Zully",
+        },
+        {
+          kind: "EXPENSE",
+          amount: "325000",
+          date: calendarToDb("2026-10-20"),
+          accountId: efectivo.id,
+          categoryId: gastos.id,
+          description: "Alquiler",
+        },
+        {
+          kind: "EXPENSE",
+          amount: "6400",
+          date: calendarToDb("2026-10-20"),
+          accountId: efectivo.id,
+          categoryId: gastos.id,
+          description: "Kiosco",
+        },
+      ],
+    });
+
+    return { efectivo };
+  }
+
+  const octubre = {
+    where: { date: { gte: calendarToDb("2026-10-01"), lte: calendarToDb("2026-10-31") } },
+    period: { from: "2026-10-01", to: "2026-10-31" },
+  };
+
+  it("APAGADA (el default): el ingreso del mes es el de los movimientos y el ahorro es −6.400", async () => {
+    await seedEscenario(false);
+
+    const totals = await periodTotals(db, octubre.where, octubre.period);
+
+    expect(totals.income).toBe("325000.00");
+    expect(totals.declaredIncome).toBe("0.00");
+    expect(totals.expenses).toBe("331400.00");
+    // El ahorro del mes: 325.000 − 331.400. El saldo inicial NO es ganancia.
+    expect(money(totals.income).minus(totals.expenses).toFixed(2)).toBe("-6400.00");
+  });
+
+  it("TILDADA: el ingreso del mes suma el saldo declarado (332.000) y el ahorro queda en +600", async () => {
+    await seedEscenario(true);
+
+    const totals = await periodTotals(db, octubre.where, octubre.period);
+
+    expect(totals.income).toBe("332000.00");
+    expect(totals.declaredIncome).toBe("7000.00");
+    expect(totals.expenses).toBe("331400.00");
+    expect(money(totals.income).minus(totals.expenses).toFixed(2)).toBe("600.00");
+    // El conteo de movimientos NO cambia: la plata declarada no es un
+    // movimiento (y por eso no puede contarse dos veces).
+    expect(totals.incomeCount).toBe(1);
+  });
+
+  it("la plata declarada cuenta en SU mes y en ninguno más", async () => {
+    await seedEscenario(true);
+
+    const septiembre = await periodTotals(
+      db,
+      { date: { gte: calendarToDb("2026-09-01"), lte: calendarToDb("2026-09-30") } },
+      { from: "2026-09-01", to: "2026-09-30" },
+    );
+    const noviembre = await periodTotals(
+      db,
+      { date: { gte: calendarToDb("2026-11-01"), lte: calendarToDb("2026-11-30") } },
+      { from: "2026-11-01", to: "2026-11-30" },
+    );
+
+    expect(septiembre.declaredIncome).toBe("0.00");
+    expect(noviembre.declaredIncome).toBe("0.00");
+    expect(septiembre.income).toBe("0.00");
+  });
+
+  it("un saldo NEGATIVO no es ingreso: es un pasivo (y la base no lo deja declarar)", async () => {
+    // El pasivo: una cuenta de dinero con saldo negativo (plata que debés).
+    await expect(
+      db.account.create({
+        data: {
+          name: "Debo",
+          kind: "CASH",
+          openingBalance: "-1000",
+          openingIncomeMonth: calendarToDb("2026-10-01"),
+        },
+      }),
+    ).rejects.toThrow(/opening_income_month_check/);
+  });
+
+  it("una tarjeta o un préstamo NO pueden declarar su saldo como ingreso (la base lo rechaza)", async () => {
+    await expect(
+      db.account.create({
+        data: {
+          name: "Visa",
+          kind: "CREDIT_CARD",
+          openingBalance: "500000",
+          openingIncomeMonth: calendarToDb("2026-10-01"),
+        },
+      }),
+    ).rejects.toThrow(/opening_income_month_check/);
+
+    await expect(
+      db.account.create({
+        data: {
+          name: "Prestamo",
+          kind: "LOAN",
+          openingBalance: "500000",
+          openingIncomeMonth: calendarToDb("2026-10-01"),
+        },
+      }),
+    ).rejects.toThrow(/opening_income_month_check/);
+  });
+
+  it("un saldo en cero tampoco se puede declarar (no hay plata declarada)", async () => {
+    await expect(
+      db.account.create({
+        data: {
+          name: "Vacia",
+          kind: "CASH",
+          openingBalance: "0",
+          openingIncomeMonth: calendarToDb("2026-10-01"),
+        },
+      }),
+    ).rejects.toThrow(/opening_income_month_check/);
+  });
+
+  it("la reconciliación SIGUE cuadrando y explica la plata declarada", async () => {
+    await seedEscenario(true);
+
+    const rec = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    // El patrimonio bajó 6.400 (de 7.000 a 600)...
+    expect(rec.netStart).toBe("7000.00");
+    expect(rec.netEnd).toBe("600.00");
+    expect(rec.netDelta).toBe("-6400.00");
+    // ...pero el ahorro del mes es +600, porque los 7.000 declarados son
+    // ingreso de octubre.
+    expect(rec.saving).toBe("600.00");
+    expect(rec.declaredIncome).toBe("7000.00");
+    // La diferencia es la plata declarada: la identidad del mes es
+    // ΔPatrimonio = Ahorro − PlataDeclarada.
+    expect(rec.difference).toBe("0.00");
+    expect(rec.balanced).toBe(true);
+  });
+
+  it("sin la banderita, la reconciliación de octubre es la de siempre (0,00 de diferencia)", async () => {
+    await seedEscenario(false);
+
+    const rec = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+    });
+
+    expect(rec.saving).toBe("-6400.00");
+    expect(rec.declaredIncome).toBe("0.00");
+    expect(rec.difference).toBe("0.00");
+    expect(rec.balanced).toBe(true);
+  });
+
+  it("el patrimonio NO cambia por la banderita: el saldo de la cuenta es el mismo", async () => {
+    await seedEscenario(true);
+
+    const balances = await getAccountBalances(db, {});
+    const efectivo = balances.find((b) => b.name === "Efectivo");
+
+    // 7.000 + 325.000 − 325.000 − 6.400 = 600
+    expect(efectivo?.balance.toFixed(2)).toBe("600.00");
+    expect(efectivo?.openingIncomeMonth).toBe("2026-10");
   });
 });

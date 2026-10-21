@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { getAccountBalances, getNetWorth } from "@/lib/balance";
-import { isCalendarDate, todayCalendar } from "@/lib/dates";
+import { calendarToDb, isCalendarDate, todayCalendar } from "@/lib/dates";
 import { cleanName } from "@/lib/finance";
 import {
   createLoanAccount,
@@ -17,6 +17,10 @@ import {
   type ImportedInstallmentInput,
 } from "@/lib/loans";
 import { money, parseMoneyInput } from "@/lib/money";
+import {
+  canDeclareIncome,
+  parseIncomeMonth,
+} from "@/lib/declared-income";
 import {
   describeDatabaseError,
   getNetWorthSeries,
@@ -207,6 +211,10 @@ export async function GET(req: Request) {
           dueDay: balance.dueDay,
           creditLimit: balance.creditLimit,
           amortizationSystem: balance.amortizationSystem,
+          // La banderita: el mes en el que el saldo inicial cuenta como ingreso
+          // (`"2026-10"`), o `null` si está apagada (el comportamiento de
+          // siempre).
+          openingIncomeMonth: balance.openingIncomeMonth,
         }),
         /** Saldo contable. Negativo en las cuentas de deuda. */
         balance: balance.balance.toFixed(2),
@@ -468,6 +476,26 @@ export async function POST(req: Request) {
     );
   }
 
+  // ── La banderita: «esta plata cuenta como ingreso de este mes» ────────────
+  //
+  // El MES (no un día): la persona dice "de este mes". `null` (o ausente) es la
+  // bandera apagada, que es el estado de todas las cuentas que ya existían.
+  const parsedIncomeMonth = parseIncomeMonth(body.openingIncomeMonth);
+  if (!parsedIncomeMonth.ok) {
+    return badRequest(parsedIncomeMonth.error);
+  }
+  const incomeMonth = parsedIncomeMonth.month;
+
+  if (incomeMonth !== null) {
+    // Las reglas (sólo dinero, sólo saldo positivo) las valida la app para
+    // poder EXPLICAR el error, y las hace cumplir un CHECK en la base: si
+    // alguien escribe la columna por afuera de la app, la fila no entra.
+    const canDeclare = canDeclareIncome(kind, openingBalance);
+    if (!canDeclare.ok) {
+      return badRequest(canDeclare.error);
+    }
+  }
+
   try {
     let account: Prisma.AccountGetPayload<object>;
 
@@ -507,6 +535,11 @@ export async function POST(req: Request) {
           closingDay,
           dueDay,
           creditLimit,
+          // El mes declarado, en el primer día del mes (calendario). `null` es
+          // la bandera apagada: no se escribe el campo y queda como estaba.
+          ...(incomeMonth
+            ? { openingIncomeMonth: calendarToDb(`${incomeMonth}-01`) }
+            : {}),
         },
       });
     }
@@ -614,7 +647,44 @@ export async function PATCH(req: Request) {
     closingDay?: number | null;
     dueDay?: number | null;
     creditLimit?: string | null;
+    openingIncomeMonth?: Date | null;
   } = {};
+
+  // ── La banderita: activarla o apagarla desde la tarjeta de la cuenta ─────
+  //
+  // Las reglas (sólo dinero, sólo saldo positivo) necesitan el `kind` y el
+  // saldo de la cuenta, así que hay que leerla antes de decidir. Si la cuenta
+  // no existe, 404; si no puede declarar, 400 con el motivo.
+  if (body.openingIncomeMonth !== undefined) {
+    const parsed = parseIncomeMonth(body.openingIncomeMonth);
+    if (!parsed.ok) {
+      return badRequest(parsed.error);
+    }
+
+    const account = await prisma.account.findUnique({
+      where: { id },
+      select: { kind: true, openingBalance: true },
+    });
+    if (!account) {
+      return NextResponse.json({ error: "Esa cuenta no existe." }, { status: 404 });
+    }
+
+    if (parsed.month !== null) {
+      const canDeclare = canDeclareIncome(
+        account.kind,
+        money(account.openingBalance),
+      );
+      if (!canDeclare.ok) {
+        return badRequest(canDeclare.error);
+      }
+    }
+
+    // `null` apaga la bandera: la cuenta vuelve al comportamiento de siempre
+    // (su saldo inicial es plata anterior, no ingreso de ningún mes).
+    data.openingIncomeMonth = parsed.month
+      ? calendarToDb(`${parsed.month}-01`)
+      : null;
+  }
 
   if (body.name !== undefined) {
     const name = cleanName(typeof body.name === "string" ? body.name : "");

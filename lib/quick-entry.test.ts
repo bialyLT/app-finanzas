@@ -38,6 +38,7 @@ function account(
     kind,
     archived: false,
     openingBalance: "0.00",
+    openingIncomeMonth: null,
     closingDay: null,
     dueDay: null,
     creditLimit: null,

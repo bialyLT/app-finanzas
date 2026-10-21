@@ -28,6 +28,8 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 try {
   process.loadEnvFile();
@@ -130,11 +132,100 @@ async function post(path, body) {
 
 const MES = "2026-10";
 
+/* ──────────────────────────────────────────────────────────────────────────────
+ * EL CANDADO DE LA BASE DE LA PERSONA
+ *
+ * `process.loadEnvFile()` NO pisa una variable que ya está en el entorno: si
+ * el proceso tiene `DATABASE_URL`, ese manda (y el `PrismaClient` de abajo usa
+ * EXACTAMENTE ese DSN). El smoke con `--reset` VACÍA la base a la que apunte
+ * ese DSN.
+ *
+ * Con el `.env` de este proyecto, ese DSN es la base de la persona
+ * (`finanzas_dev`): sin este candado, `node scripts/smoke.mjs --reset` en una
+ * consola nueva borra sus datos. YA PASÓ: el dev borró la base dos veces y la
+ * restauró desde un snapshot (el incidente está escrito en su informe de
+ * ronda).
+ *
+ * El candado compara el DSN EFECTIVO (el que va a usar Prisma) con el
+ * `DATABASE_URL` del `.env` (la base de la persona), por NOMBRE de base: si
+ * son la misma, el reset se aborta y se dice por qué y cómo correrlo bien.
+ *
+ * Los dos caminos que CORREN contra la base de pruebas siguen funcionando:
+ *   · `scripts/gates.ps1` (fija `DATABASE_URL` a la de pruebas en la MISMA
+ *     consola que corre el smoke: el smoke la hereda y `loadEnvFile` no la
+ *     pisa);
+ *   · `DATABASE_URL=<la de pruebas> node scripts/smoke.mjs --reset`.
+ *
+ * Y si de verdad hay que tocar la base de la persona, se dice EXPLÍCITAMENTE:
+ * `--allow-personal-db`.
+ * ────────────────────────────────────────────────────────────────────────────── */
+
+/** El `DATABASE_URL` del `.env`, leído del archivo (no del entorno). */
+function dotEnvDatabaseUrl() {
+  try {
+    const text = readFileSync(resolve(process.cwd(), ".env"), "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const match = line.match(/^\s*DATABASE_URL\s*=\s*(.*)$/);
+      if (!match) continue;
+      return match[1].trim().replace(/^["']|["']$/g, "");
+    }
+  } catch {
+    // Sin `.env` no hay contra qué comparar.
+  }
+  return "";
+}
+
+/** El nombre de la base de un DSN (lo que la identifica de verdad). */
+function databaseName(url) {
+  try {
+    return new URL(url).pathname.replace(/^\//, "");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * ¿El smoke está a punto de vaciar la base de la persona?
+ *
+ * Si lo está, se aborta con un mensaje que dice qué hacer. Devuelve el
+ * motivo (o `null` si se puede seguir).
+ */
+function checkPersonalDatabase() {
+  if (!shouldReset) return null;
+  if (args.has("--allow-personal-db")) return null;
+
+  const personalUrl = dotEnvDatabaseUrl();
+  if (!personalUrl) return null; // No hay `.env`: no hay contra qué comparar.
+
+  const personal = databaseName(personalUrl);
+  const effective = databaseName(process.env.DATABASE_URL ?? "");
+
+  if (!personal || !effective || personal !== effective) return null;
+
+  return (
+    `\n  El smoke --reset apuntaría a la base «${personal}», que es la BASE DE LA PERSONA.\n` +
+    `  (El DSN efectivo sale de process.env.DATABASE_URL, y process.loadEnvFile()\n` +
+    `  NO pisa una variable que ya está en el entorno.)\n\n` +
+    `  Abortado: sembrar acá vaciaría los datos reales.\n\n` +
+    `  Para correr contra la base de pruebas:\n` +
+    `    · powershell -ExecutionPolicy Bypass -File scripts/gates.ps1   (levanta :3101 y siembra ahí)\n` +
+    `    · $env:DATABASE_URL = "<DATABASE_URL_TEST del .env>"; node scripts/smoke.mjs --reset\n\n` +
+    `  Si de verdad hay que tocar la base de la persona, se dice explícitamente:\n` +
+    `    · node scripts/smoke.mjs --reset --allow-personal-db\n`
+  );
+}
+
 async function main() {
   console.log(`Smoke test contra ${BASE_URL}`);
 
   // ── Reset ──────────────────────────────────────────────────────────────────
   if (shouldReset) {
+    const candado = checkPersonalDatabase();
+    if (candado) {
+      console.error(candado);
+      process.exit(1);
+    }
+
     section("Preparando la base");
     const prisma = new PrismaClient();
     // El orden importa. Las OCURRENCIAS van primero: borrar un movimiento
@@ -3469,6 +3560,224 @@ async function main() {
     );
 
     await prisma.$disconnect();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // LA BANDERITA: «esta plata que declaré, contala como ingreso de este mes»
+  // ─────────────────────────────────────────────────────────────────────────────
+  //
+  // Esta sección es AISLADA: crea su propia cuenta, verifica y la BORRA al
+  // final. Los números del seed (octubre) no se mueven en ningún momento:
+  //
+  //   · la cuenta se declara en JULIO (un mes sin movimientos), así que
+  //     octubre —el mes que el seed siembra— queda exactamente como estaba;
+  //   · la cuenta no tiene movimientos, así que se puede borrar (la base no
+  //     deja borrar una cuenta con historia) y la base queda como al empezar.
+  //
+  // La cuenta DENTRO de la sección sí cambia el patrimonio (7.000 de saldo
+  // inicial): por eso vive al FINAL del smoke, cuando todos los números
+  // canónicos ya están verificados.
+  section("La banderita: la plata declarada cuenta como ingreso de su mes");
+  {
+    // ── Crear la cuenta con la banderita tildada ───────────────────────────
+    const declarada = await post("/api/accounts", {
+      name: "Cuenta declarada",
+      kind: "CASH",
+      openingBalance: "7000",
+      openingIncomeMonth: "2026-07",
+    });
+    check("crea la cuenta con la banderita (201)", declarada.status, 201);
+    check(
+      "la cuenta vuelve con el mes declarado",
+      declarada.body?.openingIncomeMonth,
+      "2026-07",
+    );
+
+    // ── El ingreso de SU mes cambia; el de los demás, no ───────────────────
+    const { body: julio } = await api(
+      "/api/transactions?from=2026-07-01&to=2026-07-31",
+    );
+    check(
+      "julio · el ingreso del mes suma la plata declarada",
+      julio?.totals?.income,
+      "7000.00",
+    );
+    check(
+      "julio · y se sabe cuánta parte es declarada",
+      julio?.totals?.declaredIncome,
+      "7000.00",
+    );
+
+    const { body: octubreAntes } = await api(
+      `/api/transactions?from=${MES}-01&to=${MES}-31`,
+    );
+    check(
+      "octubre · el ingreso del seed NO se mueve",
+      octubreAntes?.totals?.income,
+      "800000.00",
+    );
+    check(
+      "octubre · no hay plata declarada en octubre",
+      octubreAntes?.totals?.declaredIncome,
+      "0.00",
+    );
+
+    // ── La API rechaza lo imposible (400, nunca 500) ───────────────────────
+    {
+      const r = await post("/api/accounts", {
+        name: "Bandera rota",
+        kind: "CASH",
+        openingBalance: "1000",
+        openingIncomeMonth: "basura",
+      });
+      check("rechaza un mes que no es un mes (400)", r.status, 400);
+    }
+
+    {
+      const r = await post("/api/accounts", {
+        name: "Bandera numero",
+        kind: "CASH",
+        openingBalance: "1000",
+        openingIncomeMonth: 42,
+      });
+      check("rechaza un mes que no es un texto (400)", r.status, 400);
+    }
+
+    {
+      const r = await post("/api/accounts", {
+        name: "Tarjeta declarada",
+        kind: "CREDIT_CARD",
+        openingBalance: "500000",
+        openingIncomeMonth: "2026-07",
+      });
+      check(
+        "rechaza declarar el saldo de una tarjeta (400: es una deuda)",
+        r.status,
+        400,
+      );
+    }
+
+    {
+      const r = await post("/api/accounts", {
+        name: "Negativo declarado",
+        kind: "CASH",
+        openingBalance: "-1000",
+        openingIncomeMonth: "2026-07",
+      });
+      check(
+        "rechaza declarar un saldo negativo (400: es un pasivo)",
+        r.status,
+        400,
+      );
+    }
+
+    {
+      const r = await post("/api/accounts", {
+        name: "Cero declarado",
+        kind: "CASH",
+        openingBalance: "0",
+        openingIncomeMonth: "2026-07",
+      });
+      check(
+        "rechaza declarar un saldo en cero (400: no hay plata declarada)",
+        r.status,
+        400,
+      );
+    }
+
+    // ── El mes de la declaración se puede cambiar (y apagar) ───────────────
+    const cambiado = await api("/api/accounts", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: declarada.body?.id,
+        openingIncomeMonth: MES,
+      }),
+    });
+    check("cambia el mes de la declaración (200)", cambiado.status, 200);
+
+    const { body: octubreCon } = await api(
+      `/api/transactions?from=${MES}-01&to=${MES}-31`,
+    );
+    check(
+      "octubre · ahora el ingreso suma la plata declarada",
+      octubreCon?.totals?.income,
+      "807000.00",
+    );
+    check(
+      "octubre · la parte declarada viaja aparte",
+      octubreCon?.totals?.declaredIncome,
+      "7000.00",
+    );
+
+    // ── La reconciliación sigue cuadrando y explica la plata declarada ────
+    const { body: recCon } = await api(
+      `/api/reconciliation?month=${MES}&asOf=${MES}-31`,
+    );
+    check(
+      "octubre · la reconciliación sigue cuadrando",
+      recCon?.reconciliation?.balanced,
+      true,
+    );
+    check(
+      "octubre · la reconciliación dice cuánta plata fue declarada",
+      recCon?.reconciliation?.declaredIncome,
+      "7000.00",
+    );
+    check(
+      "octubre · la diferencia sigue siendo 0,00 (la identidad no se rompe)",
+      recCon?.reconciliation?.difference,
+      "0.00",
+    );
+
+    // ── Apagarla: la app vuelve al comportamiento de siempre ───────────────
+    const apagada = await api("/api/accounts", {
+      method: "PATCH",
+      body: JSON.stringify({
+        id: declarada.body?.id,
+        openingIncomeMonth: null,
+      }),
+    });
+    check("apaga la banderita (200)", apagada.status, 200);
+
+    const { body: octubreDespues } = await api(
+      `/api/transactions?from=${MES}-01&to=${MES}-31`,
+    );
+    check(
+      "octubre · el ingreso vuelve al del seed",
+      octubreDespues?.totals?.income,
+      "800000.00",
+    );
+    check(
+      "octubre · y no queda nada declarado",
+      octubreDespues?.totals?.declaredIncome,
+      "0.00",
+    );
+
+    // ── Limpieza: la base queda como estaba ────────────────────────────────
+    const borrada = await api(
+      `/api/accounts?id=${encodeURIComponent(declarada.body?.id ?? "")}`,
+      { method: "DELETE" },
+    );
+    check("borra la cuenta de prueba (204)", borrada.status, 204);
+
+    const { body: cuentasFinales } = await api(
+      "/api/accounts?includeArchived=false",
+    );
+    checkTrue(
+      "la cuenta de prueba no quedó en la base",
+      !(cuentasFinales?.accounts ?? []).some(
+        (a) => a.name === "Cuenta declarada",
+      ),
+    );
+
+    const { body: octubreFinal } = await api(
+      `/api/transactions?from=${MES}-01&to=${MES}-31`,
+    );
+    check(
+      "octubre · el ingreso del seed sigue igual después de la sección",
+      octubreFinal?.totals?.income,
+      "800000.00",
+    );
   }
 
   // ── Logout: CSRF y atributos de la cookie ──────────────────────────────────

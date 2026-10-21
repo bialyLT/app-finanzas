@@ -40,7 +40,12 @@ param(
 
     # Saltarse el sembrado (para correr un flow de sólo lectura sobre datos que
     # ya están como querés).
-    [switch]$NoSeed
+    [switch]$NoSeed,
+
+    # Correr los flows contra la instancia de la PERSONA (:3000). Por defecto
+    # el script se NIEGA: los flows AGREGAN movimientos y la app de la persona
+    # tiene datos reales. Para correrlos ahí hay que decirlo explícitamente.
+    [switch]$AllowPersonalInstance
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,6 +53,40 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
 $Base = if ($env:FINANZAS_BASE) { $env:FINANZAS_BASE } else { "http://127.0.0.1:3000" }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 0. LA INSTANCIA DE LA PERSONA: LOS FLOWS NO CORREN AHÍ SIN PERMISO
+#
+# Los flows de Maestro AGREGAN movimientos a la app contra la que corren. La
+# instancia de la persona (:3000, `finanzas_dev`) tiene datos reales: correr
+# los flows ahí ensucia la base de la persona (y el sembrado previo la
+# vacía). Ya pasó: la primera corrida del dev hizo 24 flows contra la base
+# personal.
+#
+# Por defecto, este script se NIEGA a correr contra el :3000 y dice cómo
+# hacerlo bien (contra la instancia de pruebas, :3101, que levanta
+# `scripts/gates.ps1` con su propia base).
+#
+# Para correrlos contra la instancia de la persona hay que PASARLE el permiso
+# explícito: `-AllowPersonalInstance`.
+# ─────────────────────────────────────────────────────────────────────────────
+if (-not $AllowPersonalInstance) {
+    $puerto = ""
+    try { $puerto = ([uri]$Base).Port } catch { $puerto = "" }
+    if ($puerto -eq "3000" -or $Base -match ":3000(/|$)") {
+        Write-Host ""
+        Write-Host "ABORTE: los flows NO se corren contra el :3000 (la instancia de la persona)." -ForegroundColor Red
+        Write-Host "  Los flows agregan movimientos y esa base tiene datos reales." -ForegroundColor Red
+        Write-Host "" -ForegroundColor DarkGray
+        Write-Host "  Para correrlos contra la instancia de pruebas (la que se usa):" -ForegroundColor Yellow
+        Write-Host "    powershell -ExecutionPolicy Bypass -File scripts/gates.ps1" -ForegroundColor Yellow
+        Write-Host "    (levanta :3101 contra finanzas_test, corre el smoke y TODOS los flows)" -ForegroundColor DarkGray
+        Write-Host "" -ForegroundColor DarkGray
+        Write-Host "  Si de verdad los querés correr contra la instancia de la persona:" -ForegroundColor Yellow
+        Write-Host "    powershell -ExecutionPolicy Bypass -File scripts/flows.ps1 -AllowPersonalInstance" -ForegroundColor Yellow
+        exit 1
+    }
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. El servidor tiene que estar arriba

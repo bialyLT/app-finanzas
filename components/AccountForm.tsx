@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { cardDaysError } from "@/lib/card-form";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
+import { todayCalendar } from "@/lib/dates";
 import {
   ACCOUNT_KIND_LABEL,
   type AccountKindDTO,
@@ -34,6 +35,14 @@ export default function AccountForm({ onClose, onSaved }: Props) {
   const [kind, setKind] = useState<AccountKindDTO>("BANK");
   const [openingBalance, setOpeningBalance] = useState("");
 
+  // ── La banderita: «contar este saldo como ingreso de este mes» ───────────
+  //
+  // El saldo inicial sigue siendo un STOCK (la plata que ya tenías). La
+  // banderita no cambia el modelo: dice en qué MES esa plata cuenta como
+  // ingreso. Apagada (el default) es el comportamiento de siempre.
+  const [declareIncome, setDeclareIncome] = useState(false);
+  const [incomeMonth, setIncomeMonth] = useState(() => todayCalendar().slice(0, 7));
+
   // Parámetros del préstamo.
   const [principal, setPrincipal] = useState("");
   const [tnaPercent, setTnaPercent] = useState("");
@@ -52,6 +61,9 @@ export default function AccountForm({ onClose, onSaved }: Props) {
 
   const isLoan = kind === "LOAN";
   const isCard = kind === "CREDIT_CARD";
+  // La banderita sólo existe en las cuentas de DINERO: en una tarjeta o un
+  // préstamo ese saldo es una deuda, y una deuda no es un ingreso.
+  const isMoney = kind === "CASH" || kind === "BANK";
 
   // ── Vista previa del préstamo ──────────────────────────────────────────────
   // Se pide al servidor DESPUÉS de que la persona deja de escribir (300 ms), no
@@ -154,6 +166,12 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             ? { closingDay: Number(closingDay), dueDay: Number(dueDay) }
             : {}),
           ...(isCard && creditLimit.trim() ? { creditLimit } : {}),
+          // La banderita: el mes en el que este saldo cuenta como ingreso.
+          // Apagada no se manda nada (la cuenta queda con la bandera apagada,
+          // que es su comportamiento de siempre).
+          ...(isMoney && declareIncome && incomeMonth
+            ? { openingIncomeMonth: incomeMonth }
+            : {}),
         }),
       });
 
@@ -449,6 +467,69 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                   )}
                 </p>
               </div>
+
+              {/* ── La banderita ─────────────────────────────────────────── */}
+              {/*
+                Un botón con `role="checkbox"`, no un `<input type="checkbox">`:
+                el input nativo mide 13×13 px y la regla de ergonomía del
+                proyecto pide 44×44 en cualquier pantalla que se opere con el
+                dedo. El botón es el control, con la fila entera de área de
+                toque.
+              */}
+              {isMoney && (
+                <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
+                  <button
+                    type="button"
+                    id="acc-declare-income"
+                    role="checkbox"
+                    aria-checked={declareIncome}
+                    onClick={() => setDeclareIncome((valor) => !valor)}
+                    className="flex w-full items-center gap-3 min-h-11 text-left"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`grid h-6 w-6 shrink-0 place-items-center rounded border-2 text-sm font-bold ${
+                        declareIncome
+                          ? "border-sky-600 bg-sky-600 text-white"
+                          : "border-zinc-400 dark:border-zinc-500"
+                      }`}
+                    >
+                      {declareIncome ? "✓" : ""}
+                    </span>
+                    <span className="text-sm font-medium">
+                      Contar este saldo como ingreso de este mes
+                    </span>
+                  </button>
+
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Sirve cuando cargás una cuenta con la plata que ya tenías y no
+                    querés que el mes te quede en rojo. El saldo NO cambia: sólo
+                    se dice en qué mes esa plata cuenta como ingreso.
+                  </p>
+
+                  {declareIncome && (
+                    <div className="mt-3">
+                      <label
+                        htmlFor="acc-income-month"
+                        className="text-sm font-medium"
+                      >
+                        Mes en el que cuenta como ingreso
+                      </label>
+                      <input
+                        id="acc-income-month"
+                        type="month"
+                        value={incomeMonth}
+                        onChange={(e) => setIncomeMonth(e.target.value)}
+                        className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                      />
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Por defecto, el mes en que creás la cuenta. Si la plata es
+                        de un mes anterior, elegí ese mes.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
 

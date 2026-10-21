@@ -59,6 +59,16 @@ export interface AccountDTO {
   /** Monto como string decimal exacto. Ver la nota de arriba. */
   openingBalance: string;
 
+  /**
+   * El mes en el que el saldo inicial cuenta como INGRESO de ese mes
+   * (`"2026-10"`), o `null` si la bandera está apagada.
+   *
+   * `null` es el default y el comportamiento de siempre: el saldo inicial es un
+   * STOCK (plata que ya tenías) y no entra en los ingresos de ningún mes. Con
+   * un mes, esa plata se suma a los ingresos de ESE mes — y sólo de ese.
+   */
+  openingIncomeMonth: string | null;
+
   // ── Parámetros de tarjeta (sólo tienen sentido en CREDIT_CARD) ──────────
 
   /**
@@ -246,6 +256,19 @@ export interface ReconciliationDTO {
   netDelta: string;
   /** Ingreso ganado − gasto consumido del mes (§5.2 del ROADMAP). */
   saving: string;
+  /**
+   * La plata que declaraste como ingreso de ESTE mes (la banderita de la
+   * cuenta), o `"0.00"` si no declaraste nada.
+   *
+   * No es un error ni una diferencia: es plata que YA TENÍAS y que recién ahora
+   * el sistema conoce. Por eso la identidad del mes es
+   *
+   *     ΔPatrimonio = Ahorro − PlataDeclarada
+   *
+   * (con la banderita apagada, `declaredIncome` es 0 y la identidad es la de
+   * siempre). La pantalla tiene que explicar esta plata, no esconderla.
+   */
+  declaredIncome: string;
   /** `netDelta − saving`. Exactamente `"0.00"` cuando cuadra al centavo. */
   difference: string;
   /** `true` si `difference` es exactamente cero. */
@@ -431,6 +454,15 @@ export const MOVEMENTS_MAX_ROWS = 500;
 export interface PeriodTotalsDTO {
   /** Suma de los INCOME del período. */
   income: string;
+  /**
+   * La parte de `income` que NO viene de un movimiento: la plata que declaraste
+   * como ingreso de este mes (la banderita de la cuenta).
+   *
+   * Viaja APARTE para que la pantalla pueda decir de dónde sale el número en
+   * vez de mostrar un ingreso sin explicación. Con la banderita apagada es
+   * `"0.00"` y `income` es exactamente lo de siempre.
+   */
+  declaredIncome: string;
   /** Suma de los EXPENSE del período. */
   expenses: string;
   /** Suma de los TRANSFER. Se informa, pero NO entra en ingresos ni gastos. */
