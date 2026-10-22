@@ -64,12 +64,13 @@ npm test                  # 545 tests (unitarios + integración contra finanzas_
 npm run smoke             # 720 aserciones end-to-end (servidor arriba)
 npm run check:estilo      # candado del estilo propio: 746 checks (Fase 10 F0a)
 npm run check:css         # cero CSS a mano (Fase 9)
-npm run gates             # smoke + 25 flows contra la INSTANCIA DE TESTS (:3101 / finanzas_test)
+npm run gates             # smoke contra la INSTANCIA DE TESTS (:3101 / finanzas_test)
                           #   → nunca toca finanzas_dev (la base de la persona): el script lo
                           #   comprueba antes y después y ABORTA si un flow apunta al :3000.
                           #   El smoke con --reset y los flows también abortan si se los corre
                           #   contra la base o la instancia de la persona (--allow-personal-db /
                           #   -AllowPersonalInstance para exceptuar a propósito).
+                          #   La suite de FLOWS es OPT-IN: `npm run gates -- -Flows` (tarda ~1 h).
 node scripts/db-state.mjs # snapshot de SOLO LECTURA de finanzas_dev (incluye la banderita)
 node scripts/tester-fase4/NN-*.mjs   # 989 checks adversariales server-side (Fase 4 r1; servidor arriba)
 node scripts/tester-fase4/ui-*.mjs   # 286 checks adversariales de la UI (Fase 4 r2; servidor arriba)
@@ -78,8 +79,15 @@ node scripts/tester-fase7/*.mjs      # 463 checks adversariales de carga rápida
 node scripts/tester-fase7r2/*.mjs    # 770 checks adversariales de la segunda capa (Fase 7 r2; servidor arriba)
 node scripts/responsive/audit-mobile.mjs  # auditoría responsive: 8 anchos × 6 vistas + 10 modales (Fase 9)
 node scripts/tester-responsive/*.mjs      # 1.190 checks adversariales de responsive (705 de la Fase 9 + 485 de la F0a; servidor arriba)
-npm run flows             # 25 flows de Maestro: siembra la base y corre; ~57m (usar npm run gates: va contra la instancia de tests)
+npm run flows             # 25 flows de Maestro: siembra la base y corre; ~57m (OPT-IN: `npm run gates -- -Flows`)
 ```
+
+> ⛔ **La suite completa de flows NO se corre salvo que la persona la pida** (decisión del
+> 2026-10-22: *"no quiero que se ejecuten los flows, tarda demasiado"*): son ~25 flows en
+> Chromium real y tardan **cerca de una hora**. El gate por defecto es `npm run gates` (smoke +
+> comparación de `finanzas_dev`), la auditoría responsive, las baterías adversariales, `npm test`
+> y los gates de estilo. Si una ronda toca un flujo, se corre **ese** flow, no todos.
+> El switch `-SkipFlows` pasó a ser `-Flows` (opt-in) en `scripts/gates.ps1`.
 
 Dos reglas de oro: el servidor tiene que estar arriba para smoke y flows, y **nunca correr Maestro en paralelo** (trampa 11: los JVMs comparten `~/.maestro/sessions` y pelean el lock; el síntoma es un flow que tarda el doble o falla en el primer `openLink`).
 
@@ -95,6 +103,7 @@ positivos; (c) el gate tiene que esperar al servidor con paciencia (el primer re
 - Mensajes de commit en ASCII simple: PowerShell interpreta `$`, backticks y comillas dobles.
 - Al terminar cada tarea: actualizar `ROADMAP.md` con el estado REAL verificado (no el planeado) y commitear.
 - No usar `npm audit fix --force` (degradaría prisma). Los avisos de `braces` y `deepmerge-ts` son solo de herramientas de desarrollo.
+- **La suite completa de flows es opt-in**: son ~25 flows y tardan cerca de una hora (decisión de la persona, 2026-10-22). Los agentes no la corren por inercia; se pide con `npm run gates -- -Flows` y sólo tiene sentido si la ronda toca los flujos de UI.
 
 ## Próximo paso recomendado
 

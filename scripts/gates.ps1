@@ -30,7 +30,9 @@
 #   2. Se aplican las migraciones a `finanzas_test` (Prisma, no a mano).
 #   3. Se levanta la segunda instancia en :3101, apuntando a `finanzas_test`.
 #   4. Corre el SMOKE contra :3101 (siembra y verifica la base de tests).
-#   5. Corren los FLOWS contra :3101.
+#   5. Corren los FLOWS contra :3101 — SOLO si se pidieron con `-Flows`:
+#      la suite son ~25 flows y tarda cerca de una hora (56m 47s medido), así
+#      que por defecto el gate se queda en el smoke.
 #   6. Se baja la segunda instancia SIEMPRE (incluso si algo falló).
 #   7. Se imprime el estado de `finanzas_dev` ANTES y DESPUÉS: la prueba de que
 #      los datos de la persona quedaron intactos.
@@ -50,8 +52,17 @@ param(
     # Puerto de la segunda instancia.
     [int]$Port = 3101,
 
-    # Correr sólo el smoke (para iterar rápido). Los flows son largos.
-    [switch]$SkipFlows
+    # Correr la suite de FLOWS de Maestro (Chromium real).
+    #
+    # SON LENTOS: la suite completa son ~25 flows y tarda cerca de una hora
+    # (medido: 56m 47s). Por defecto el gate corre SOLO el smoke, que es lo
+    # que verifica los datos y las invariantes en minutos.
+    #
+    # La suite de flows es OPT-IN: se pide con `-Flows` y sólo tiene sentido
+    # cuando la ronda toca los flujos de UI o la persona la pide explícita.
+    # (Decisión de la persona, 2026-10-22: "no quiero que se ejecuten los
+    # flows, tarda demasiado".)
+    [switch]$Flows
 )
 
 $ErrorActionPreference = "Stop"
@@ -440,7 +451,7 @@ try {
     # ─────────────────────────────────────────────────────────────────────────
     # 5 · LOS FLOWS
     # ─────────────────────────────────────────────────────────────────────────
-    if (-not $SkipFlows -and $exitCode -eq 0) {
+    if ($Flows -and $exitCode -eq 0) {
         Write-Host ""
         Write-Host "5 · Flows de Maestro contra $testBase" -ForegroundColor Cyan
         $env:FINANZAS_BASE = $testBase
@@ -595,9 +606,9 @@ try {
                 Write-Host "Flows OK" -ForegroundColor Green
             }
         }
-    } elseif ($SkipFlows) {
+    } elseif (-not $Flows) {
         Write-Host ""
-        Write-Host "5 · Flows salteados (-SkipFlows)" -ForegroundColor DarkGray
+        Write-Host "5 · Flows salteados (opt-in: -Flows los corre; tardan ~1 hora)" -ForegroundColor DarkGray
     }
 } finally {
     # ─────────────────────────────────────────────────────────────────────────

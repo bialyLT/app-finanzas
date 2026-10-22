@@ -69,7 +69,7 @@ npm run build
 npm start
 ```
 
-### La suite completa, en un comando
+### La suite completa, en un comando — **opt-in, no por defecto**
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/flows.ps1
@@ -81,6 +81,22 @@ Para un flujo puntual:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/flows.ps1 -Flow flows/04-transferencia.yaml
 ```
+
+> ⚠️ **La suite completa NO se corre salvo que la persona la pida.** Son 25 flows
+> y tardan **cerca de una hora** (medido: 56m 47s) — es el gate más caro del
+> proyecto y el que más tiempo de máquina come (además pelea por el lock de
+> `~/.maestro/sessions`). Decisión de la persona (2026-10-22): *"no quiero que se
+> ejecuten los flows, tarda demasiado"*.
+>
+> **Qué corre en su lugar** (minutos, y alcanza para el 95 % de los hallazgos):
+> `npm run gates` (smoke contra la instancia de pruebas en `:3101` + la
+> comparación de `finanzas_dev` antes/después) · `node scripts/responsive/audit-mobile.mjs`
+> (geometría en 8 anchos × 6 vistas + 11 modales) · las baterías de
+> `scripts/tester-responsive/` y `scripts/tester-fase*` · `npm test` ·
+> `npm run check:estilo` y `npm run check:css`.
+>
+> Corré **un flow puntual** cuando la ronda toque justo ese camino de UI o
+> cuando un bug sólo se vea en el navegador real.
 
 ---
 
