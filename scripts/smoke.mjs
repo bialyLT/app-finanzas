@@ -2982,6 +2982,238 @@ async function main() {
     );
   }
 
+  // ── Préstamos cargados por lo que uno sabe (Fase 9 r6) ──────────────────────
+  // La persona no sabe calcular una tasa: sabe la cuota que va a pagar o el
+  // total que va a devolver. Esta sección verifica el camino COMPLETO contra
+  // la API real:
+  //
+  //   1. La tasa DEDUCIDA (bisección sobre la cuota) y el cronograma idéntico
+  //      al que sale de cargar la tasa a mano.
+  //   2. El alta por cuota y por total (la tasa derivada se guarda en la
+  //      columna que ya existe: no hay migración).
+  //   3. Los bordes con su mensaje: cuota insuficiente, cuota cero, total
+  //      menor que el capital, modo inválido, cuerpo hostil. NUNCA un 500.
+  section("Préstamos por cuota y por total: la tasa sale sola (Fase 9 r6)");
+  {
+    // ── La vista previa por CUOTA ───────────────────────────────────────────
+    const previewPorTasa = await api(
+      "/api/loans/preview?principal=500000&tnaPercent=60&installmentCount=12",
+    );
+    check("la vista previa por tasa responde 200", previewPorTasa.status, 200);
+    const cuotaEsperada = previewPorTasa.body?.payment;
+    check("la cuota de referencia es 56.412,71", cuotaEsperada, "56412.71");
+
+    const previewPorCuota = await api(
+      `/api/loans/preview?principal=500000&installmentCount=12&mode=PAYMENT&payment=${cuotaEsperada}`,
+    );
+    check("la vista previa por cuota responde 200", previewPorCuota.status, 200);
+    check("devuelve la misma cuota", previewPorCuota.body?.payment, cuotaEsperada);
+    check("deriva la tasa: 60,0000 %", previewPorCuota.body?.tnaPercent, "60.0000");
+    check("y dice que el número es exacto", previewPorCuota.body?.exact, true);
+    check(
+      "el cronograma por cuota es el mismo que por tasa",
+      JSON.stringify(
+        previewPorCuota.body?.schedule?.map((i) => [
+          i.payment,
+          i.interest,
+          i.principal,
+          i.remainingBalance,
+        ]),
+      ),
+      JSON.stringify(
+        previewPorTasa.body?.schedule?.map((i) => [
+          i.payment,
+          i.interest,
+          i.principal,
+          i.remainingBalance,
+        ]),
+      ),
+    );
+    check(
+      "el cronograma derivado cierra en 0 exacto",
+      previewPorCuota.body?.schedule?.at(-1)?.remainingBalance,
+      "0.00",
+    );
+    check(
+      "y amortiza exactamente el capital",
+      previewPorCuota.body?.totalPrincipal,
+      "500000.00",
+    );
+    check(
+      "la cuota mínima es el capital repartido",
+      previewPorCuota.body?.minimumPayment,
+      "41666.67",
+    );
+
+    // ── La vista previa por TOTAL ───────────────────────────────────────────
+    const totalEsperado = previewPorTasa.body?.totalPaid;
+    const previewPorTotal = await api(
+      `/api/loans/preview?principal=500000&installmentCount=12&mode=TOTAL&total=${totalEsperado}`,
+    );
+    check("la vista previa por total responde 200", previewPorTotal.status, 200);
+    check("deriva la misma tasa desde el total", previewPorTotal.body?.tnaPercent, "60.0000");
+    check("y el mismo total", previewPorTotal.body?.totalPaid, totalEsperado);
+
+    // ── El POST de la vista previa (el mismo contrato, en un cuerpo) ────────
+    const previewPost = await post("/api/loans/preview", {
+      principal: "500000",
+      installmentCount: 12,
+      mode: "PAYMENT",
+      payment: cuotaEsperada,
+    });
+    check("el POST de la vista previa responde 200", previewPost.status, 200);
+    check("y devuelve la cuota pedida", previewPost.body?.payment, cuotaEsperada);
+    const previewPostNulo = await post("/api/loans/preview", null);
+    check("un cuerpo null en la vista previa: 400", previewPostNulo.status, 400);
+    const previewPostSinSesion = await fetch(`${BASE_URL}/api/loans/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      body: JSON.stringify({ principal: "500000", installmentCount: 12, mode: "PAYMENT" }),
+    });
+    check("la vista previa sin sesión: 401", previewPostSinSesion.status, 401);
+
+    // ── Los bordes: SIEMPRE un 4xx con mensaje, nunca un 500 ────────────────
+    const cuotaInsuficiente = await api(
+      "/api/loans/preview?principal=500000&installmentCount=12&mode=PAYMENT&payment=40000",
+    );
+    check("una cuota que no amortiza el capital: 400", cuotaInsuficiente.status, 400);
+    checkTrue(
+      "y dice que no alcanza y cuánto es la mínima",
+      String(cuotaInsuficiente.body?.error ?? "").includes("no alcanza para cubrir el capital") &&
+        String(cuotaInsuficiente.body?.error ?? "").includes("41666.67"),
+      JSON.stringify(cuotaInsuficiente.body),
+    );
+
+    const cuotaCero = await api(
+      "/api/loans/preview?principal=500000&installmentCount=12&mode=PAYMENT&payment=0",
+    );
+    check("una cuota de cero: 400", cuotaCero.status, 400);
+
+    const totalChico = await api(
+      "/api/loans/preview?principal=500000&installmentCount=12&mode=TOTAL&total=100000",
+    );
+    check("un total menor que el capital: 400", totalChico.status, 400);
+    checkTrue(
+      "y lo explica",
+      String(totalChico.body?.error ?? "").includes("no puede ser menor que el capital"),
+      JSON.stringify(totalChico.body),
+    );
+
+    const modoInvalido = await api(
+      "/api/loans/preview?principal=500000&installmentCount=12&mode=BANANA&payment=1000",
+    );
+    check("un modo inválido: 400", modoInvalido.status, 400);
+
+    const sinDato = await api(
+      "/api/loans/preview?principal=500000&installmentCount=12&mode=PAYMENT",
+    );
+    check("el modo cuota sin la cuota: 400", sinDato.status, 400);
+
+    // ── El ALTA por cuota y por total ───────────────────────────────────────
+    const altaPorCuota = await post("/api/accounts", {
+      name: "Préstamo por cuota (smoke)",
+      kind: "LOAN",
+      principal: "500000",
+      installmentCount: 12,
+      firstInstallmentDate: "2026-10-05",
+      mode: "PAYMENT",
+      payment: cuotaEsperada,
+    });
+    check("crea el préstamo por cuota (201)", altaPorCuota.status, 201);
+
+    const altaPorTasa = await post("/api/accounts", {
+      name: "Préstamo por tasa (smoke)",
+      kind: "LOAN",
+      principal: "500000",
+      installmentCount: 12,
+      firstInstallmentDate: "2026-10-05",
+      mode: "RATE",
+      tnaPercent: "60",
+    });
+    check("crea el préstamo por tasa (201)", altaPorTasa.status, 201);
+
+    const altaPorTotal = await post("/api/accounts", {
+      name: "Préstamo por total (smoke)",
+      kind: "LOAN",
+      principal: "500000",
+      installmentCount: 12,
+      firstInstallmentDate: "2026-10-05",
+      mode: "TOTAL",
+      total: totalEsperado,
+    });
+    check("crea el préstamo por total (201)", altaPorTotal.status, 201);
+
+    // El INTEGRACIÓN: el préstamo cargado por cuota tiene el MISMO cronograma
+    // que el cargado por tasa (mismo capital, misma cantidad, misma cuota).
+    const { body: vistaDerivados } = await api("/api/loans?asOf=2026-12-31");
+    const loanPorCuota = (vistaDerivados?.loans ?? []).find(
+      (l) => l.id === altaPorCuota.body?.id,
+    );
+    const loanPorTasa = (vistaDerivados?.loans ?? []).find(
+      (l) => l.id === altaPorTasa.body?.id,
+    );
+    const loanPorTotal = (vistaDerivados?.loans ?? []).find(
+      (l) => l.id === altaPorTotal.body?.id,
+    );
+    const cronograma = (l) =>
+      JSON.stringify(
+        (l?.installments ?? []).map((i) => [
+          i.dueDate,
+          i.payment,
+          i.interest,
+          i.principal,
+        ]),
+      );
+    check("el préstamo por cuota tiene 12 cuotas", loanPorCuota?.installments?.length, 12);
+    check(
+      "el cronograma por cuota es IDÉNTICO al cargado por tasa",
+      cronograma(loanPorCuota),
+      cronograma(loanPorTasa),
+    );
+    check(
+      "y el del total también",
+      cronograma(loanPorTotal),
+      cronograma(loanPorTasa),
+    );
+
+    // El alta por cuota con una cuota que no amortiza el capital: 400 y NADA
+    // escrito (el error es de datos, no del servidor).
+    const altaImposible = await post("/api/accounts", {
+      name: "Préstamo imposible (smoke)",
+      kind: "LOAN",
+      principal: "500000",
+      installmentCount: 12,
+      firstInstallmentDate: "2026-10-05",
+      mode: "PAYMENT",
+      payment: "40000",
+    });
+    check("crear un préstamo con cuota insuficiente: 400", altaImposible.status, 400);
+
+    // ── Limpieza: la base queda como estaba ─────────────────────────────────
+    const idsDerivados = [
+      altaPorCuota.body?.id,
+      altaPorTasa.body?.id,
+      altaPorTotal.body?.id,
+    ].filter(Boolean);
+    const prismaDerivados = new PrismaClient();
+    await prismaDerivados.movement.deleteMany({
+      where: {
+        OR: [
+          { accountId: { in: idsDerivados } },
+          { toAccountId: { in: idsDerivados } },
+        ],
+      },
+    });
+    await prismaDerivados.account.deleteMany({ where: { id: { in: idsDerivados } } });
+    await prismaDerivados.$disconnect();
+
+    const { body: vistaSinDerivados } = await api("/api/loans?asOf=2026-12-31");
+    checkTrue(
+      "los préstamos de esta sección ya no están",
+      !(vistaSinDerivados?.loans ?? []).some((l) => idsDerivados.includes(l.id)),
+    );
+  }
+
   // ── Carga rápida: la categoría opcional y la red de duplicados ─────────────
   //
   // La Fase 7 hizo OPCIONAL la categoría en gastos e ingresos. Esta sección

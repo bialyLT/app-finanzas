@@ -687,6 +687,31 @@ export interface CategoriesResponse {
 export interface LoanPreviewDTO {
   /** El sistema con el que se calculó el cronograma. */
   system: AmortizationSystemDTO;
+  /**
+   * El modo de la vista previa: `RATE` (la tasa la dio la persona), `PAYMENT`
+   * (la cuota) o `TOTAL` (lo que devuelve en total). Es el discriminante
+   * EXPLÍCITO del contrato: un número puede ser cuota o total y la API no
+   * puede deducirlo.
+   */
+  mode: "RATE" | "PAYMENT" | "TOTAL";
+  /**
+   * La tasa (TNA %) que corresponde a lo que se pidió: la que vino o la que la
+   * app DERIVÓ de la cuota o del total. Con 4 decimales (es lo que se guarda
+   * en la base).
+   */
+  tnaPercent: string;
+  /**
+   * La cuota mínima: el capital repartido en las cuotas (tasa 0). Es el
+   * número que se le muestra a la persona cuando su cuota no alcanza para
+   * amortizar el capital.
+   */
+  minimumPayment: string;
+  /**
+   * `false` cuando la grilla de 4 decimales de la tasa no alcanza para clavar
+   * el número pedido: el cronograma usa el valor más cercano. La interfaz
+   * muestra SIEMPRE los números reales, nunca los tipeados.
+   */
+  exact: boolean;
   /** El pago de la PRIMERA cuota (en el americano es sólo interés). */
   payment: string;
   /** Total desembolsado a lo largo de todo el préstamo. */

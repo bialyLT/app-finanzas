@@ -297,6 +297,33 @@ export function installmentPayment(
   tnaPercent: Money | string,
   installmentCount: number,
 ): Money {
+  return round(
+    installmentPaymentExact(principal, tnaPercent, installmentCount),
+  );
+}
+
+/**
+ * La cuota del francés SIN redondear: la función CONTINUA de la cuota.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ EXISTE LA VERSIÓN SIN REDONDEAR
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `installmentPayment` redondea a centavos, y eso la convierte en una función
+ * ESCALONADA: un montón de tasas distintas dan la misma cuota. La bisección
+ * (la que deriva la tasa de una cuota, en `lib/loan-terms.ts`) necesita una
+ * función suave y monótona: sobre un escalón no converge a nada útil.
+ *
+ * Por eso la aritmética vive acá, sin redondear, y las dos funciones la
+ * comparten: la redondeada es `round` de la sin redondear. Un solo lugar con
+ * la fórmula: no pueden divergir.
+ *
+ * Con tasa 0 la cuota es el capital repartido (evita dividir por cero).
+ */
+export function installmentPaymentExact(
+  principal: Money | string,
+  tnaPercent: Money | string,
+  installmentCount: number,
+): Money {
   const p =
     typeof principal === "string" ? money(principal) : principal;
   const i = monthlyRateFromTna(tnaPercent);
@@ -306,13 +333,13 @@ export function installmentPayment(
   }
   // Sin interés, la cuota es el capital repartido. Evita dividir por cero.
   if (i.isZero()) {
-    return round(p.dividedBy(installmentCount));
+    return p.dividedBy(installmentCount);
   }
 
   const factor = new Prisma.Decimal(1).minus(
     new Prisma.Decimal(1).plus(i).pow(-installmentCount),
   );
-  return round(p.times(i).dividedBy(factor));
+  return p.times(i).dividedBy(factor);
 }
 
 /**

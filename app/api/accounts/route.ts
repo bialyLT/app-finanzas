@@ -16,6 +16,13 @@ import {
   type AmortizationSystem,
   type ImportedInstallmentInput,
 } from "@/lib/loans";
+import {
+  assertUnSoloDatoDelModo,
+  esFormaDeMonto,
+  isLoanInputMode,
+  resolveLoanTerms,
+  type LoanInputMode,
+} from "@/lib/loan-terms";
 import { money, parseMoneyInput } from "@/lib/money";
 import {
   canDeclareIncome,
@@ -328,6 +335,9 @@ export async function POST(req: Request) {
   } = {};
 
   if (body.principal !== undefined && body.principal !== "" && body.principal !== null) {
+    if (!esFormaDeMonto(body.principal)) {
+      return badRequest("El monto del préstamo no se entiende como un número.");
+    }
     const parsed = parseMoneyInput(String(body.principal));
     if (parsed === null || parsed.lessThanOrEqualTo(0)) {
       return badRequest("El monto del préstamo tiene que ser mayor a cero.");
@@ -336,6 +346,9 @@ export async function POST(req: Request) {
   }
 
   if (body.tnaPercent !== undefined && body.tnaPercent !== "" && body.tnaPercent !== null) {
+    if (!esFormaDeMonto(body.tnaPercent)) {
+      return badRequest("La tasa (TNA) no se entiende como un número.");
+    }
     const parsed = parseMoneyInput(String(body.tnaPercent));
     if (parsed === null || parsed.isNegative()) {
       return badRequest("La tasa (TNA) no puede ser negativa.");
@@ -369,6 +382,67 @@ export async function POST(req: Request) {
     loanInput.firstInstallmentDate = parsed;
   }
 
+  // ── El modo de carga: la tasa puede ser DEDUCIDA ──────────────────────────
+  //
+  // La persona no sabe la tasa: sabe la cuota que va a pagar o el total que
+  // va a devolver. El discriminante es EXPLÍCITO (un número puede ser cuota o
+  // total: no se puede deducir) y la tasa sale de `lib/loan-terms.ts`.
+  //
+  // Sin `mode`, es `RATE`: el modo de siempre (y el que usan los flows que ya
+  // existen).
+  let mode: LoanInputMode = "RATE";
+  if (body.mode !== undefined && body.mode !== null && body.mode !== "") {
+    if (!isLoanInputMode(body.mode)) {
+      return badRequest(
+        "El modo de carga tiene que ser RATE (la tasa), PAYMENT (la cuota) o TOTAL (lo que devolvés en total).",
+      );
+    }
+    mode = body.mode;
+  }
+
+  // La cuota y el total: los montos que la persona sí sabe.
+  //
+  // Un cuerpo con los DOS es ambiguo (la API no puede deducir cuál es cuál):
+  // se rechaza con un 400 en vez de elegir uno y perder el otro en silencio.
+  try {
+    assertUnSoloDatoDelModo(mode, {
+      tnaPercent: body.tnaPercent,
+      payment: body.payment,
+      total: body.total,
+    });
+  } catch (error) {
+    return badRequest(
+      error instanceof Error
+        ? error.message
+        : "El cuerpo del préstamo no se entiende.",
+    );
+  }
+
+  let paymentParam: string | undefined;
+  let totalParam: string | undefined;
+
+  if (body.payment !== undefined && body.payment !== null && body.payment !== "") {
+    if (!esFormaDeMonto(body.payment)) {
+      return badRequest("La cuota no se entiende como un número.");
+    }
+    const parsed = parseMoneyInput(String(body.payment));
+    if (parsed === null || parsed.lessThanOrEqualTo(0)) {
+      return badRequest("La cuota tiene que ser un monto mayor a cero.");
+    }
+    paymentParam = parsed.toFixed(2);
+  }
+
+  if (body.total !== undefined && body.total !== null && body.total !== "") {
+    if (!esFormaDeMonto(body.total)) {
+      return badRequest("El total a devolver no se entiende como un número.");
+    }
+    const parsed = parseMoneyInput(String(body.total));
+    if (parsed === null || parsed.lessThanOrEqualTo(0)) {
+      return badRequest("El total a devolver tiene que ser un monto mayor a cero.");
+    }
+    totalParam = parsed.toFixed(2);
+  }
+
   // ── El sistema de amortización y el cronograma importado ───────────────────
   // El sistema es OPCIONAL (ausente = FRENCH, el de siempre): así el flujo que
   // no manda el campo sigue funcionando igual. Mandarlo con un valor que no
@@ -394,7 +468,11 @@ export async function POST(req: Request) {
   }
 
   const hasLoanParams =
-    Object.keys(loanInput).length > 0 || systemProvided || imported !== null;
+    Object.keys(loanInput).length > 0 ||
+    systemProvided ||
+    imported !== null ||
+    paymentParam !== undefined ||
+    totalParam !== undefined;
 
   if (isLoanKind) {
     // Se avisa TODO lo que falta de una vez en vez de campo por campo. Si
@@ -416,9 +494,17 @@ export async function POST(req: Request) {
       if (!loanInput.firstInstallmentDate) {
         missing.push("la fecha de la primera cuota");
       }
-      // La tasa es obligatoria salvo en el importado: ahí la composición la
-      // dicta el cronograma del banco y no hay tasa de la que derivar nada.
-      if (!loanInput.tnaPercent) missing.push("la tasa (TNA)");
+      // Lo que falta depende del MODO: en RATE la tasa, en PAYMENT la cuota y
+      // en TOTAL el total a devolver. La tasa es obligatoria salvo en el
+      // importado: ahí la composición la dicta el cronograma del banco y no
+      // hay tasa de la que derivar nada.
+      if (mode === "RATE") {
+        if (!loanInput.tnaPercent) missing.push("la tasa (TNA)");
+      } else if (mode === "PAYMENT") {
+        if (!paymentParam) missing.push("la cuota que vas a pagar");
+      } else if (!totalParam) {
+        missing.push("el total que vas a devolver");
+      }
     }
 
     if (missing.length > 0) {
@@ -507,9 +593,47 @@ export async function POST(req: Request) {
         (system === "IMPORTED"
           ? imported === null
           : loanInput.installmentCount === undefined ||
-            loanInput.firstInstallmentDate === undefined ||
-            loanInput.tnaPercent === undefined)
+            loanInput.firstInstallmentDate === undefined)
       ) {
+        throw new LoanError(400, "Faltan datos del préstamo.");
+      }
+
+      // ── La tasa DEDUCIDA ───────────────────────────────────────────────────
+      // En los modos PAYMENT y TOTAL la persona NO manda la tasa: manda lo que
+      // sabe (la cuota o el total) y la tasa sale de `lib/loan-terms.ts`. La
+      // tasa derivada se guarda en la columna que ya existe (`tnaPercent`):
+      // no hay migración y el cronograma se materializa con esa misma tasa
+      // (es el mismo número que usa la vista previa).
+      let tnaParaGuardar = loanInput.tnaPercent ?? null;
+
+      if (mode !== "RATE" && system !== "IMPORTED") {
+        if (loanInput.installmentCount === undefined) {
+          throw new LoanError(400, "Faltan datos del préstamo.");
+        }
+        try {
+          const terms = resolveLoanTerms({
+            system,
+            principal: money(loanInput.principal),
+            installmentCount: loanInput.installmentCount,
+            mode,
+            tnaPercent: null,
+            payment: paymentParam ?? null,
+            total: totalParam ?? null,
+          });
+          tnaParaGuardar = terms.tnaPercent.toFixed(4);
+        } catch (error) {
+          // Los bordes del dominio (cuota insuficiente, total menor que el
+          // capital) son DATOS del pedido: un 400 con el mensaje, no un 500.
+          throw new LoanError(
+            400,
+            error instanceof Error
+              ? error.message
+              : "El préstamo no se pudo calcular con esos datos.",
+          );
+        }
+      }
+
+      if (system !== "IMPORTED" && tnaParaGuardar === null) {
         throw new LoanError(400, "Faltan datos del préstamo.");
       }
 
@@ -521,7 +645,7 @@ export async function POST(req: Request) {
         openingBalance: openingBalance.toFixed(2),
         system,
         principal: money(loanInput.principal),
-        tnaPercent: loanInput.tnaPercent ? money(loanInput.tnaPercent) : null,
+        tnaPercent: tnaParaGuardar ? money(tnaParaGuardar) : null,
         installmentCount: loanInput.installmentCount ?? null,
         firstInstallmentDate: loanInput.firstInstallmentDate ?? null,
         imported,

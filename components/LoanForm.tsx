@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { addMonths, todayCalendar } from "@/lib/dates";
 import type { AccountBalanceDTO, LoanPreviewDTO } from "@/lib/finance";
@@ -16,6 +16,22 @@ interface Props {
 
 type Direction = "I_OWE" | "OWED_TO_ME";
 type SystemOption = "FRENCH" | "GERMAN" | "AMERICAN" | "INTEREST_ONLY";
+
+/**
+ * Los tres modos de carga: lo que la persona REALMENTE sabe.
+ *
+ * · `PAYMENT`: la cuota que va a pagar por mes (el modo por defecto: nadie
+ *   calcula un porcentaje).
+ * · `TOTAL`: lo que va a devolver en total.
+ * · `RATE`: la tasa, para quien ya la tiene (el modo de siempre, en avanzado).
+ */
+type TermsMode = "PAYMENT" | "TOTAL" | "RATE";
+
+const MODES: { value: TermsMode; label: string; id: string }[] = [
+  { value: "PAYMENT", label: "Por mes", id: "loanalta-mode-PAYMENT" },
+  { value: "TOTAL", label: "En total", id: "loanalta-mode-TOTAL" },
+  { value: "RATE", label: "Por %", id: "loanalta-mode-RATE" },
+];
 
 const SYSTEMS: { value: SystemOption; label: string }[] = [
   { value: "FRENCH", label: "Francés" },
@@ -77,6 +93,43 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
   const [count, setCount] = useState("");
   const [firstDate, setFirstDate] = useState(() => addMonths(todayCalendar(), 1));
 
+  /**
+   * El modo de carga: por defecto, lo que la persona sabe (la cuota).
+   *
+   * La tasa NO se pide: se deriva. El modo `RATE` (la tasa a mano) queda
+   * disponible para quien ya la tiene — y el campo de la tasa, en los otros
+   * modos, es de SOLO LECTURA: muestra la tasa que la app derivó.
+   */
+  const [mode, setMode] = useState<TermsMode>("PAYMENT");
+  /** La cuota mensual (modo PAYMENT). */
+  const [payment, setPayment] = useState("");
+  /** El total a devolver (modo TOTAL). */
+  const [total, setTotal] = useState("");
+  /** El campo de la tasa (para seleccionarlo al cambiar de modo). */
+  const tnaRef = useRef<HTMLInputElement>(null);
+  /** Hay que seleccionar el texto del campo de la tasa (tras cambiar de modo). */
+  const [seleccionarTna, setSeleccionarTna] = useState(false);
+  /**
+   * El número de pedido de la vista previa.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * POR QUÉ
+   * ─────────────────────────────────────────────────────────────────────────────
+   * La respuesta de un pedido VIEJO no puede pisar la de uno nuevo.
+   *
+   * La petición sale 300 ms después de la última tecla (el debounce), pero
+   * puede tardar en volver: con 600 cuotas en el sistema alemán la vista
+   * previa tarda MÁS DE UN SEGUNDO (medido: 1.422 ms). Si en ese rato la
+   * persona borra lo que escribió (o cambia de modo), cuando la respuesta llega
+   * la app pondría en pantalla los números de un dato que YA NO ESTÁ en el
+   * formulario: la vista previa mostraría la cuota de un pago que ya no
+   * existe.
+   *
+   * El contador hace que cada respuesta se descarte si mientras tanto cambió
+   * algo (o si ya llegó otra más nueva).
+   */
+  const previewSeq = useRef(0);
+
   const [preview, setPreview] = useState<LoanPreviewDTO | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -99,6 +152,17 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
 
   const principalRaw = principal.trim();
   const principalPreview = formatAmountInput(principal);
+  /** El eco formateado de lo que se está escribiendo (cuota o total). */
+  const paymentPreview = formatAmountInput(payment);
+  const totalPreview = formatAmountInput(total);
+
+  /**
+   * La tasa que muestra el formulario.
+   *
+   * En los modos derivados sale de la vista previa (la calculó el servidor);
+   * en el modo RATE es la que escribió la persona.
+   */
+  const tnaDerivada = mode === "RATE" ? null : (preview?.tnaPercent ?? null);
 
   // ── Vista previa ───────────────────────────────────────────────────────────
   // Se pide al servidor DESPUÉS de que la persona deja de escribir (300 ms).
@@ -107,23 +171,40 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
   // `app/api/loans/preview/route.ts`).
   useEffect(() => {
     if (step !== "form") return;
-    if (!principalRaw || !tna.trim() || !count.trim()) {
+
+    // Cada modo necesita su propio dato: la tasa, la cuota o el total.
+    const faltaElDato =
+      mode === "RATE"
+        ? !tna.trim()
+        : mode === "PAYMENT"
+          ? !payment.trim()
+          : !total.trim();
+
+    if (!principalRaw || faltaElDato || !count.trim()) {
       setPreview(null);
       setPreviewError("");
       return;
     }
 
     const timer = setTimeout(async () => {
+      // El número de ESTE pedido: si mientras tanto los datos cambiaron (o
+      // llegó otra respuesta más nueva), esta se descarta.
+      const seq = ++previewSeq.current;
       try {
         const params = new URLSearchParams({
           principal: principalRaw,
-          tnaPercent: tna.trim(),
           installmentCount: count.trim(),
           system,
+          mode,
         });
+        if (mode === "RATE") params.set("tnaPercent", tna.trim());
+        if (mode === "PAYMENT") params.set("payment", payment.trim());
+        if (mode === "TOTAL") params.set("total", total.trim());
         if (firstDate !== "") params.set("firstInstallmentDate", firstDate);
 
         const response = await fetch(`/api/loans/preview?${params}`);
+
+        if (seq !== previewSeq.current) return; // llegó una respuesta vieja
 
         if (!response.ok) {
           const body = (await response.json().catch(() => ({}))) as {
@@ -134,9 +215,12 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
           return;
         }
 
-        setPreview((await response.json()) as LoanPreviewDTO);
+        const data = (await response.json()) as LoanPreviewDTO;
+        if (seq !== previewSeq.current) return; // llegó una respuesta vieja
+        setPreview(data);
         setPreviewError("");
       } catch {
+        if (seq !== previewSeq.current) return; // llegó una respuesta vieja
         setPreviewError("No se pudo calcular la cuota.");
         setPreview(null);
       }
@@ -144,9 +228,63 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
 
     // Cancelar el envío pendiente si los valores cambian antes de que se cumpla
     // el tiempo: una respuesta lenta de una consulta vieja no debe pisar a una
-    // nueva.
-    return () => clearTimeout(timer);
-  }, [step, principalRaw, tna, count, system, firstDate]);
+    // nueva. Y, además, INVALIDAR lo que esté en vuelo: si los datos ya
+    // cambiaron, la respuesta que llegue de ese pedido viejo no se muestra.
+    return () => {
+      clearTimeout(timer);
+      previewSeq.current += 1;
+    };
+  }, [
+    step,
+    principalRaw,
+    mode,
+    tna,
+    payment,
+    total,
+    count,
+    system,
+    firstDate,
+  ]);
+
+  /**
+   * Pasar al modo «la tasa a mano».
+   *
+   * En los modos derivados el campo de la tasa es de SOLO LECTURA: muestra la
+   * tasa que la app derivó. Tocarlo es la forma de decir «la tasa la sé yo»:
+   * el campo pasa a ser editable y arranca con el valor derivado, para que
+   * ajustar un número no signifique reescribirlo.
+   *
+   * El texto derivado queda SELECCIONADO: si la persona escribe, reemplaza el
+   * número en vez de pegarse al final («60.000060» no es una tasa: es un
+   * mistake de un dedo).
+   */
+  function activarModoTasa() {
+    if (mode === "RATE") return;
+    if (tna.trim() === "" && tnaDerivada !== null) {
+      setTna(tnaDerivada);
+    }
+    setMode("RATE");
+    setSeleccionarTna(true);
+  }
+
+  /** Cambiar de modo (el botón del selector): mismo criterio que el campo. */
+  function cambiarModo(nuevo: TermsMode) {
+    if (nuevo === mode) return;
+    setMode(nuevo);
+    if (nuevo === "RATE") setSeleccionarTna(true);
+  }
+
+  // El texto del campo de la tasa queda seleccionado al cambiar de modo: lo
+  // que se escriba después REEMPLAZA el número, no se le pega al final.
+  useEffect(() => {
+    if (!seleccionarTna) return;
+    const campo = tnaRef.current;
+    if (campo) {
+      campo.focus();
+      campo.select();
+    }
+    setSeleccionarTna(false);
+  }, [seleccionarTna]);
 
   const kind: "LOAN" | "RECEIVABLE" = direction === "I_OWE" ? "LOAN" : "RECEIVABLE";
   const verb = direction === "I_OWE" ? "pagar" : "cobrar";
@@ -158,7 +296,9 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
     const missing: string[] = [];
     if (!name.trim()) missing.push("el nombre");
     if (!principalRaw) missing.push("el monto");
-    if (!tna.trim()) missing.push("la tasa (TNA)");
+    if (mode === "RATE" && !tna.trim()) missing.push("la tasa (TNA)");
+    if (mode === "PAYMENT" && !payment.trim()) missing.push("la cuota");
+    if (mode === "TOTAL" && !total.trim()) missing.push("el total a devolver");
     if (!count.trim()) missing.push("la cantidad de cuotas");
     if (!firstDate.trim()) missing.push("la fecha de la primera cuota");
     if (missing.length > 0) {
@@ -167,6 +307,14 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
     }
     if (formatAmountInput(principal) === null) {
       setError("El monto tiene que ser un número mayor a cero.");
+      return;
+    }
+    if (mode === "PAYMENT" && formatAmountInput(payment) === null) {
+      setError("La cuota tiene que ser un número mayor a cero.");
+      return;
+    }
+    if (mode === "TOTAL" && formatAmountInput(total) === null) {
+      setError("El total a devolver tiene que ser un número mayor a cero.");
       return;
     }
     const countNumber = Number(count.trim());
@@ -183,6 +331,16 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
 
     setSaving(true);
     try {
+      // El cuerpo lleva el MODO: la API no puede deducir si el número es la
+      // cuota o el total, y en los modos derivados la tasa la calcula el
+      // servidor (no se manda: se guarda la que él deriva).
+      const terms: Record<string, string> =
+        mode === "RATE"
+          ? { tnaPercent: tna.trim() }
+          : mode === "PAYMENT"
+            ? { payment: payment.trim() }
+            : { total: total.trim() };
+
       const response = await fetch("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -190,10 +348,11 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
           name: name.trim(),
           kind,
           principal: principalRaw,
-          tnaPercent: tna.trim(),
           installmentCount: countNumber,
           firstInstallmentDate: firstDate,
           amortizationSystem: system,
+          mode,
+          ...terms,
         }),
       });
 
@@ -347,6 +506,40 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   />
                 </div>
 
+                {/* ── ¿Cómo lo cargás? ────────────────────────────────────────
+                    La persona no sabe la tasa: sabe la cuota o el total. El
+                    modo por defecto es «Por mes». «Por %» es el modo de
+                    siempre, para quien ya tiene la tasa. */}
+                <div>
+                  <p className="text-sm font-medium mb-1">¿Cómo lo cargás? *</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {MODES.map((option) => (
+                      <button
+                        key={option.value}
+                        id={option.id}
+                        type="button"
+                        aria-pressed={mode === option.value}
+                        onClick={() => cambiarModo(option.value)}
+                        className={`min-h-11 rounded-xl px-1 py-2 text-xs font-medium border ${
+                          mode === option.value
+                            ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
+                            : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {mode === "PAYMENT" &&
+                      "Cargá la cuota que vas a pagar por mes: la app calcula la tasa."}
+                    {mode === "TOTAL" &&
+                      "Cargá cuánto vas a devolver en total: la app calcula la cuota y la tasa."}
+                    {mode === "RATE" &&
+                      "Si ya tenés la tasa, cargala acá. Tocá el campo de TNA para volver a editarlo."}
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label
@@ -373,20 +566,89 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   </div>
                   <div>
                     <label htmlFor="loanalta-tna" className="block text-sm font-medium">
-                      TNA % *
+                      {mode === "RATE" ? "TNA % *" : "TNA % (derivada)"}
                     </label>
                     <input
                       id="loanalta-tna"
+                      ref={tnaRef}
                       type="text"
                       inputMode="decimal"
                       autoComplete="off"
-                      value={tna}
+                      value={mode === "RATE" ? tna : (tnaDerivada ?? "")}
+                      readOnly={mode !== "RATE"}
+                      onFocus={activarModoTasa}
+                      onClick={activarModoTasa}
                       onChange={(e) => setTna(e.target.value)}
                       placeholder="60"
-                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      aria-label={
+                        mode === "RATE"
+                          ? "Tasa anual (TNA) en porcentaje"
+                          : "Tasa anual (TNA) en porcentaje: la calculó la app, tocá para cargarla a mano"
+                      }
+                      className={`mt-1 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500 ${
+                        mode === "RATE"
+                          ? "border-zinc-300 dark:border-zinc-700 bg-transparent"
+                          : "border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-300"
+                      }`}
                     />
+                    {mode !== "RATE" && (
+                      <p id="loanalta-tna-derived" className="mt-1 text-xs text-zinc-500">
+                        {tnaDerivada === null
+                          ? "La tasa sale de lo que vas a pagar."
+                          : `Te sale al ${formatPercent(tnaDerivada)} anual`}
+                      </p>
+                    )}
                   </div>
                 </div>
+
+                {/* ── Lo que la persona sabe: la cuota o el total ─────────────── */}
+                {mode !== "RATE" && (
+                  <div>
+                    <label
+                      htmlFor={mode === "PAYMENT" ? "loanalta-payment" : "loanalta-total"}
+                      className="block text-sm font-medium"
+                    >
+                      {mode === "PAYMENT"
+                        ? "Cuota por mes *"
+                        : "Total a devolver *"}
+                    </label>
+                    <input
+                      id={mode === "PAYMENT" ? "loanalta-payment" : "loanalta-total"}
+                      type="text"
+                      inputMode="decimal"
+                      autoComplete="off"
+                      value={mode === "PAYMENT" ? payment : total}
+                      onChange={(e) =>
+                        mode === "PAYMENT"
+                          ? setPayment(e.target.value)
+                          : setTotal(e.target.value)
+                      }
+                      placeholder={
+                        // ─────────────────────────────────────────────────────
+                        // EL EJEMPLO TIENE QUE SER UN VALOR QUE LA APP ACEPTE
+                        // ─────────────────────────────────────────────────────
+                        // El ejemplo es del mismo caso que el resto del
+                        // formulario (500.000 · 12 cuotas · 60 %): la cuota
+                        // 56.412,71 y el total 676.952,44.
+                        //
+                        // El ejemplo anterior de la cuota ("31.412,71") era la
+                        // parte de CAPITAL de la primera cuota: la app lo
+                        // RECHAZA ("esa cuota no alcanza para cubrir el
+                        // capital: con 12 cuotas la mínima es 41666.67"). Un
+                        // ejemplo que la propia app rechaza es una
+                        // contradicción.
+                        mode === "PAYMENT" ? "56.412,71" : "676.952,44"
+                      }
+                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                    {mode === "PAYMENT" && paymentPreview && (
+                      <p className="mt-1 text-xs text-zinc-500">{paymentPreview}</p>
+                    )}
+                    {mode === "TOTAL" && totalPreview && (
+                      <p className="mt-1 text-xs text-zinc-500">{totalPreview}</p>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -510,15 +772,6 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   </p>
                 </div>
 
-                {previewError && (
-                  <p
-                    id="loanalta-preview-error"
-                    className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
-                  >
-                    {previewError}
-                  </p>
-                )}
-
                 {preview ? (
                   <div
                     id="loanalta-preview"
@@ -536,6 +789,22 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       Interés: {formatMoney(preview.totalInterest)} (
                       {formatPercent(preview.interestSharePercent)} del total)
                     </p>
+                    {/* La tasa: DEDUCIDA en los modos por cuota y por total
+                        (o sea, lo que la persona NO tuvo que calcular). */}
+                    <p
+                      id="loanalta-preview-rate"
+                      className="mt-1 text-sky-800 dark:text-sky-200"
+                    >
+                      {mode === "RATE" ? "Tasa" : "Te sale al"}{" "}
+                      <b>{formatPercent(preview.tnaPercent)}</b> anual
+                    </p>
+                    {preview.exact === false && (
+                      <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
+                        Con esa tasa la cuota queda en{" "}
+                        {formatMoney(preview.payment)}: es el valor más cercano
+                        que la tasa guardada permite.
+                      </p>
+                    )}
                     {system === "AMERICAN" && (
                       <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
                         La primera cuota es sólo interés: el capital se paga en
@@ -546,8 +815,9 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 ) : (
                   !previewError && (
                     <p className="text-xs text-zinc-500 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-3 py-3">
-                      La vista previa aparece cuando cargues el monto, la tasa y
-                      la cantidad de cuotas.
+                      {mode === "RATE"
+                        ? "La vista previa aparece cuando cargues el monto, la tasa y la cantidad de cuotas."
+                        : "La vista previa aparece cuando cargues el monto, la cantidad de cuotas y lo que vas a pagar."}
                     </p>
                   )
                 )}
@@ -560,6 +830,21 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
             El botón de guardar referencia al formulario (`#loan-form`) con
             `form=`, así el pie puede vivir fuera del `<form>`. */}
         <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+              {/* El error de la VISTA PREVIA va en el PIE, no en la columna de
+                  la derecha: el pie está SIEMPRE a la vista (aunque el
+                  formulario scrollee) y el error de la cuota insuficiente es
+                  justo el que la persona tiene que ver sin scrollear. La banda
+                  crece con el aviso: no lo desborda. */}
+              {previewError && (
+                <p
+                  id="loanalta-preview-error"
+                  role="alert"
+                  className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                >
+                  {previewError}
+                </p>
+              )}
+
               {error && (
                 <p
                   id="loanalta-error"
@@ -615,7 +900,24 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   id="loanalta-submit"
                   type="submit"
                   form="loan-form"
-                  disabled={saving || cashAccounts.length === 0}
+                  // ─────────────────────────────────────────────────────────────
+                  // POR QUÉ NO SE APAGA EL BOTÓN SIN CUENTAS DE DINERO
+                  // ─────────────────────────────────────────────────────────────
+                  // Antes el botón quedaba DESHABILITADO cuando no había
+                  // cuentas de banco o efectivo, y la única explicación («No
+                  // hay cuentas de banco o efectivo: creá una primero…») vive
+                  // en la columna de la derecha: a 320 px esa columna está
+                  // DEBAJO del pliegue. El resultado era un botón muerto sin
+                  // motivo a la vista.
+                  //
+                  // Ahora el botón valida y EXPLICA: el mensaje ya existe
+                  // («Necesitás una cuenta de banco o efectivo…») y se muestra
+                  // en el PIE, que está siempre a la vista (es el mismo
+                  // criterio con el que el error de la vista previa vive en el
+                  // pie y no en la columna). La regla NO cambia: sin cuentas de
+                  // dinero no se crea el préstamo.
+                  // ─────────────────────────────────────────────────────────────
+                  disabled={saving}
                   className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
                 >
                   {saving ? "Creando…" : "Crear préstamo"}
@@ -625,7 +927,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
           </>
         ) : (
           <>
-          /* ── Paso 2: el desembolso, explícito ──────────────────────────────── */
+          {/* ── Paso 2: el desembolso, explícito ─────────────────────────── */}
           <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
           <div className="flex flex-col gap-4">
             <div className="rounded-xl bg-sky-50 dark:bg-sky-950 px-4 py-3 text-sm text-sky-900 dark:text-sky-100">

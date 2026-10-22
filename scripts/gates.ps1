@@ -100,11 +100,30 @@ function Get-DatabaseName($url) {
     return (($url -split "/")[-1] -split "\?")[0]
 }
 
-function Wait-ForServer($base, $seconds = 90) {
+function Wait-ForServer($base, $seconds = 300) {
     $deadline = (Get-Date).AddSeconds($seconds)
     while ((Get-Date) -lt $deadline) {
         try {
-            $response = Invoke-WebRequest -Uri "$base/login" -UseBasicParsing -TimeoutSec 5
+            # ─────────────────────────────────────────────────────────────────
+            # POR QUÉ 30 SEGUNDOS Y NO 5, Y POR QUÉ 5 MINUTOS DE VENTANA
+            # ─────────────────────────────────────────────────────────────────
+            # El PRIMER request a una instancia recién arrancada es lentísimo
+            # en esta máquina: medido, 23,1 segundos (la app acaba de compilar
+            # y el disco está paginando). Con un timeout de 5 segundos el gate
+            # se rendía siempre: el servidor ya estaba listening ("Ready in
+            # 27.0s") y el gate igual decía "La instancia de pruebas no
+            # respondió en 90 s", sin una sola línea de error en el log.
+            #
+            # Y la VENTANA también: con la RAM justa (0,3-0,5 GB libres) el
+            # servidor tarda hasta 61 segundos en levantar ("Ready in 61s") y
+            # el primer request, otros 23. Con 90 segundos de ventana no
+            # alcanzaba ni a empezar.
+            #
+            # El dato está en el mismo manual de las trampas: la primera
+            # navegación tarda entre 90 y 400 segundos con la RAM justa. Un
+            # timeout de 5 segundos no mide eso: mide el arranque.
+            # ─────────────────────────────────────────────────────────────────
+            $response = Invoke-WebRequest -Uri "$base/login" -UseBasicParsing -TimeoutSec 30
             if ($response.StatusCode -eq 200) { return $true }
         } catch {
             # Todavía no está: se sigue esperando.
