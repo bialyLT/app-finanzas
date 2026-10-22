@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import LogoutButton from "./LogoutButton";
+import { RefreshCw, CreditCard, Handshake, ChartColumn, Menu, X, type LucideIcon } from "lucide-react";
 
 /**
  * Destinos de la navegación.
@@ -38,21 +39,21 @@ import LogoutButton from "./LogoutButton";
 type NavDestination = {
   href: string;
   label: string;
-  icon: string;
+  icon: LucideIcon | null;
   id?: string;
   /** El destino "de entrada" va destacado (pastilla oscura). */
   highlighted?: boolean;
 };
 
 const LINKS: NavDestination[] = [
-  { href: "/", label: "Inicio", icon: "", id: undefined },
-  { href: "/recurrencia", label: "Recurrencia", icon: "🔁", id: "nav-recurrence" },
-  { href: "/tarjetas", label: "Tarjetas", icon: "💳", id: "nav-cards" },
-  { href: "/prestamos", label: "Préstamos", icon: "🤝", id: "nav-loans" },
+  { href: "/", label: "Inicio", icon: null, id: undefined },
+  { href: "/recurrencia", label: "Recurrencia", icon: RefreshCw, id: "nav-recurrence" },
+  { href: "/tarjetas", label: "Tarjetas", icon: CreditCard, id: "nav-cards" },
+  { href: "/prestamos", label: "Préstamos", icon: Handshake, id: "nav-loans" },
   {
     href: "/analisis",
     label: "Análisis",
-    icon: "📊",
+    icon: ChartColumn,
     id: undefined,
     highlighted: true,
   },
@@ -76,9 +77,19 @@ export default function Nav() {
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-controls="nav-destinos"
-        className="md:hidden inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        className="md:hidden inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line-strong px-4 py-2 text-sm font-medium hover:bg-surface-3 "
       >
-        {open ? "✕ Cerrar" : "☰ Menú"}
+        {open ? (
+          <>
+            <X className="size-4" aria-hidden />
+            Cerrar
+          </>
+        ) : (
+          <>
+            <Menu className="size-4" aria-hidden />
+            Menú
+          </>
+        )}
       </button>
 
       {/* Los destinos. En pantalla ancha: una fila a la derecha de la marca
@@ -100,11 +111,18 @@ export default function Nav() {
             href={link.href}
             className={
               link.highlighted
-                ? "inline-flex items-center justify-center touch:min-h-11 px-4 py-2 rounded-full text-sm font-medium bg-zinc-900 text-white dark:bg-white dark:text-black hover:opacity-90"
-                : "inline-flex items-center justify-center touch:min-h-11 px-4 py-2 rounded-full text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                ? "inline-flex items-center justify-center gap-2 touch:min-h-11 px-4 py-2 rounded-full text-sm font-medium bg-primary text-primary-fg hover:opacity-90"
+                : "inline-flex items-center justify-center gap-2 touch:min-h-11 px-4 py-2 rounded-full text-sm font-medium hover:bg-surface-3 "
             }
           >
-            {link.icon ? `${link.icon} ${link.label}` : link.label}
+            {link.icon ? (
+              <>
+                <link.icon className="size-4" aria-hidden />
+                <span>{link.label}</span>
+              </>
+            ) : (
+              link.label
+            )}
           </Link>
         ))}
         <LogoutButton />

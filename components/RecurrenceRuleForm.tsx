@@ -22,6 +22,7 @@ import {
   type RecurrenceRuleDTO,
 } from "@/lib/finance";
 import { formatAmountInput, formatLiability, formatMoney } from "@/lib/format";
+import { RefreshCw } from "lucide-react";
 
 interface Props {
   /** La regla a editar, o `null` para crear una nueva. */
@@ -45,9 +46,9 @@ const MODES: PostingModeDTO[] = ["AUTO", "NOTIFY"];
 
 /** Cómo se ve cada tipo seleccionado, igual que en TransactionForm. */
 const KIND_STYLE: Record<MovementKindDTO, { accent: string; selected: string }> = {
-  INCOME: { accent: "text-emerald-600", selected: "bg-emerald-600 text-white" },
-  EXPENSE: { accent: "text-rose-600", selected: "bg-rose-600 text-white" },
-  TRANSFER: { accent: "text-sky-600", selected: "bg-sky-600 text-white" },
+  INCOME: { accent: "text-success", selected: "bg-success text-primary-fg" },
+  EXPENSE: { accent: "text-danger", selected: "bg-danger text-primary-fg" },
+  TRANSFER: { accent: "text-transfer", selected: "bg-transfer text-primary-fg" },
 };
 
 /**
@@ -349,17 +350,17 @@ export default function RecurrenceRuleForm({
     return (
       <section
         id="rec-form"
-        className="mx-auto w-full max-w-xl bg-white dark:bg-zinc-900 rounded-2xl p-6 shadow-sm"
+        className="mx-auto w-full max-w-xl bg-surface-2 rounded-md p-6 shadow-sm"
       >
         <h2 className="text-xl font-bold mb-3">Primero creá una cuenta</h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+        <p className="text-sm text-fg-muted mb-4">
           Toda regla postea (o propone) movimientos sobre una cuenta. Sin al
           menos una cuenta creada no hay dónde registrar la plata.
         </p>
         <button
           id="rec-form-close"
           onClick={onClose}
-          className="w-full rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black py-3 font-bold"
+          className="w-full rounded-md bg-primary text-primary-fg py-3 font-bold"
         >
           Entendido
         </button>
@@ -391,17 +392,17 @@ export default function RecurrenceRuleForm({
   return (
     <section
       id="rec-form"
-      className="mx-auto w-full max-w-xl bg-white dark:bg-zinc-900 rounded-2xl shadow-sm"
+      className="mx-auto w-full max-w-xl bg-surface-2 rounded-md shadow-sm"
     >
       <div className="p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className={`text-xl font-bold ${style.accent}`}>
-            🔁 {editing ? "Editar regla" : "Nueva regla"}
+            <RefreshCw className="size-4" aria-hidden /> {editing ? "Editar regla" : "Nueva regla"}
           </h2>
           <button
             id="rec-form-close"
             onClick={onClose}
-            className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×
@@ -422,7 +423,7 @@ export default function RecurrenceRuleForm({
               maxLength={200}
               autoComplete="off"
               autoFocus
-              className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400"
+              className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
             />
           </div>
 
@@ -438,10 +439,10 @@ export default function RecurrenceRuleForm({
                   id={`rec-kind-${option}`}
                   type="button"
                   onClick={() => setKind(option)}
-                  className={`rounded-xl py-2.5 text-sm font-medium border ${
+                  className={`rounded-md py-2.5 text-sm font-medium border ${
                     kind === option
                       ? `border-transparent ${KIND_STYLE[option].selected}`
-                      : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      : "border-line-strong hover:bg-surface-3 "
                   }`}
                 >
                   {KINDS_LABEL[option]}
@@ -463,15 +464,15 @@ export default function RecurrenceRuleForm({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0,00"
-              className="mt-1 w-full text-2xl font-bold rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400"
+              className="mt-1 w-full text-2xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
             />
-            <p className="mt-1 text-xs text-zinc-500 h-4">
+            <p className="mt-1 text-xs text-fg-muted h-4">
               {amountPreview ? (
                 <>
                   Se guarda como <b>{amountPreview}</b>
                 </>
               ) : amount.trim() ? (
-                <span className="text-amber-600">
+                <span className="text-warning">
                   No se entiende el monto. Probá con 1500 o 1.500,50
                 </span>
               ) : (
@@ -490,10 +491,10 @@ export default function RecurrenceRuleForm({
                   id={`rec-freq-${option}`}
                   type="button"
                   onClick={() => setFreq(option)}
-                  className={`rounded-xl py-2.5 text-sm font-medium border ${
+                  className={`rounded-md py-2.5 text-sm font-medium border ${
                     freq === option
-                      ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                      : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      ? "border-transparent bg-primary text-primary-fg "
+                      : "border-line-strong hover:bg-surface-3 "
                   }`}
                 >
                   {RECUR_FREQ_LABEL[option]}
@@ -501,7 +502,7 @@ export default function RecurrenceRuleForm({
               ))}
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <label htmlFor="rec-interval" className="text-sm text-zinc-500">
+              <label htmlFor="rec-interval" className="text-sm text-fg-muted">
                 Cada
               </label>
               <input
@@ -511,9 +512,9 @@ export default function RecurrenceRuleForm({
                 max={365}
                 value={interval}
                 onChange={(e) => setInterval(e.target.value)}
-                className="w-20 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-400"
+                className="w-20 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
               />
-              <span className="text-sm text-zinc-500">
+              <span className="text-sm text-fg-muted">
                 {freq === "DAILY"
                   ? "día(s)"
                   : freq === "WEEKLY"
@@ -530,7 +531,7 @@ export default function RecurrenceRuleForm({
             <div>
               <label htmlFor="rec-day-of-month" className="text-sm font-medium">
                 Día del mes{" "}
-                <span className="font-normal text-zinc-500">(opcional)</span>
+                <span className="font-normal text-fg-muted">(opcional)</span>
               </label>
               <input
                 id="rec-day-of-month"
@@ -540,9 +541,9 @@ export default function RecurrenceRuleForm({
                 value={dayOfMonth}
                 onChange={(e) => setDayOfMonth(e.target.value)}
                 placeholder={anchorHint ? `Vacío = día ${anchorHint}` : "Vacío = día de inicio"}
-                className="mt-1 w-28 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-400"
+                className="mt-1 w-28 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
               />
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-xs text-fg-muted">
                 Si el mes no tiene ese día, usa el último (31 → 30 de abril).
               </p>
             </div>
@@ -558,7 +559,7 @@ export default function RecurrenceRuleForm({
                   : "De qué cuenta sale *"}
             </label>
             {sourceOptions.length === 0 ? (
-              <p className="mt-1 text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2">
+              <p className="mt-1 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
                 Un ingreso necesita una cuenta de dinero (efectivo o banco): las
                 tarjetas y los préstamos no reciben ingresos.
               </p>
@@ -567,7 +568,7 @@ export default function RecurrenceRuleForm({
                 id="rec-account"
                 value={effectiveAccountId}
                 onChange={(e) => setAccountId(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-3 outline-none focus:ring-2 focus:ring-zinc-400"
+                className="mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-3 outline-none focus:ring-2 focus:ring-focus"
               >
                 {sourceOptions.map((account) => (
                   <option key={account.id} value={account.id}>
@@ -585,7 +586,7 @@ export default function RecurrenceRuleForm({
                 A qué cuenta va *
               </label>
               {destinationOptions.length === 0 ? (
-                <p className="mt-1 text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2">
+                <p className="mt-1 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
                   Necesitás al menos dos cuentas para transferir entre ellas.
                 </p>
               ) : (
@@ -593,7 +594,7 @@ export default function RecurrenceRuleForm({
                   id="rec-to-account"
                   value={effectiveToAccountId}
                   onChange={(e) => setToAccountId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-3 outline-none focus:ring-2 focus:ring-zinc-400"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-3 outline-none focus:ring-2 focus:ring-focus"
                 >
                   {destinationOptions.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -602,7 +603,7 @@ export default function RecurrenceRuleForm({
                   ))}
                 </select>
               )}
-              <p className="mt-1.5 text-xs text-zinc-500">
+              <p className="mt-1.5 text-xs text-fg-muted">
                 Mover plata entre tus propias cuentas no es un gasto ni un
                 ingreso: tu patrimonio no cambia.
               </p>
@@ -624,7 +625,7 @@ export default function RecurrenceRuleForm({
                 }
                 list="rec-categories"
                 autoComplete="off"
-                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-zinc-400"
+                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
               />
               <datalist id="rec-categories">
                 {/* Sólo las categorías del tipo activo: ofrecer una combinación
@@ -637,7 +638,7 @@ export default function RecurrenceRuleForm({
               </datalist>
 
               {categoryName.trim() !== "" && !categoryConflict && (
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-1 text-xs text-fg-muted">
                   {categoryExists ? (
                     <>
                       ✓ Se usa la categoría existente{" "}
@@ -661,7 +662,7 @@ export default function RecurrenceRuleForm({
                 <div
                   id="rec-category-conflict"
                   role="alert"
-                  className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2 text-xs"
+                  className="mt-2 rounded-lg bg-warning/10 text-warning px-3 py-2 text-xs"
                 >
                   <p>
                     <b>“{categoryConflict.name}”</b> es una categoría de{" "}
@@ -677,7 +678,7 @@ export default function RecurrenceRuleForm({
                         categoryConflict.kind === "INCOME" ? "INCOME" : "EXPENSE",
                       )
                     }
-                    className="mt-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 text-xs font-bold"
+                    className="mt-2 rounded-lg bg-warning hover:bg-warning/90 text-primary-fg px-3 py-1.5 text-xs font-bold"
                   >
                     Usarla como {CATEGORY_KIND_LABEL[categoryConflict.kind].toLowerCase()}
                   </button>
@@ -691,7 +692,7 @@ export default function RecurrenceRuleForm({
                       type="button"
                       key={suggestion.id}
                       onClick={() => setCategoryName(suggestion.name)}
-                      className="text-xs px-3 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                      className="text-xs px-3 py-1.5 rounded-full bg-surface-3 hover:bg-surface-3 "
                     >
                       {suggestion.name}
                     </button>
@@ -715,12 +716,12 @@ export default function RecurrenceRuleForm({
                   setStartDate(e.target.value);
                   clearDateInputIfEmptied(e.target);
                 }}
-                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-zinc-400"
+                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
               />
             </div>
             <div>
               <label htmlFor="rec-end-date" className="text-sm font-medium">
-                Hasta <span className="font-normal text-zinc-500">(opcional)</span>
+                Hasta <span className="font-normal text-fg-muted">(opcional)</span>
               </label>
               <input
                 id="rec-end-date"
@@ -730,7 +731,7 @@ export default function RecurrenceRuleForm({
                   setEndDate(e.target.value);
                   clearDateInputIfEmptied(e.target);
                 }}
-                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-zinc-400"
+                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
               />
             </div>
           </div>
@@ -738,7 +739,7 @@ export default function RecurrenceRuleForm({
           <div>
             <label htmlFor="rec-count" className="text-sm font-medium">
               Cantidad de veces{" "}
-              <span className="font-normal text-zinc-500">(opcional)</span>
+              <span className="font-normal text-fg-muted">(opcional)</span>
             </label>
             <input
               id="rec-count"
@@ -748,9 +749,9 @@ export default function RecurrenceRuleForm({
               value={count}
               onChange={(e) => setCount(e.target.value)}
               placeholder="Vacío = para siempre"
-              className="mt-1 w-40 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-zinc-400"
+              className="mt-1 w-40 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
             />
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-fg-muted">
               Hasta la fecha de fin o la cantidad: lo que corte primero.
             </p>
           </div>
@@ -765,17 +766,17 @@ export default function RecurrenceRuleForm({
                   id={`rec-mode-${option}`}
                   type="button"
                   onClick={() => setPostingMode(option)}
-                  className={`rounded-xl py-2.5 px-2 text-sm font-medium border ${
+                  className={`rounded-md py-2.5 px-2 text-sm font-medium border ${
                     postingMode === option
-                      ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                      : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      ? "border-transparent bg-primary text-primary-fg "
+                      : "border-line-strong hover:bg-surface-3 "
                   }`}
                 >
                   {POSTING_MODE_LABEL[option]}
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-xs text-zinc-500">
+            <p className="mt-1.5 text-xs text-fg-muted">
               {postingMode === "AUTO"
                 ? "El movimiento se carga solo: elegilo cuando la plata ya se movió (sueldo, débito automático)."
                 : "Queda esperando en la bandeja para que lo aceptes o lo saltees."}
@@ -783,12 +784,12 @@ export default function RecurrenceRuleForm({
           </div>
 
           {/* ── Pie fijo (mismo motivo que en TransactionForm) ─────────────── */}
-          <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 mt-4 px-4 pb-4 pt-4 sm:px-6 sm:pb-6 space-y-3 bg-white dark:bg-zinc-900">
+          <div className="sticky bottom-0 -mx-4 -mb-4 sm:-mx-6 sm:-mb-6 mt-4 px-4 pb-4 pt-4 sm:px-6 sm:pb-6 space-y-3 bg-surface-2 ">
             {error && (
               <p
                 id="rec-form-error"
                 role="alert"
-                className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}
               </p>
@@ -802,7 +803,7 @@ export default function RecurrenceRuleForm({
               <div
                 id="rec-discard-warning"
                 role="alert"
-                className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
               >
                 <p>Si cerrás ahora se pierde lo que cargaste.</p>
                 <div className="mt-2 flex gap-2">
@@ -810,7 +811,7 @@ export default function RecurrenceRuleForm({
                     id="rec-discard-cancel"
                     type="button"
                     onClick={() => setDiscardWarning(false)}
-                    className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                    className="rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium"
                   >
                     Seguir editando
                   </button>
@@ -818,7 +819,7 @@ export default function RecurrenceRuleForm({
                     id="rec-discard-confirm"
                     type="button"
                     onClick={onClose}
-                    className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 text-xs font-bold"
+                    className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1 text-xs font-bold"
                   >
                     Descartar
                   </button>
@@ -831,7 +832,7 @@ export default function RecurrenceRuleForm({
                 id="rec-form-cancel"
                 type="button"
                 onClick={() => (dirty ? setDiscardWarning(true) : onClose())}
-                className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
               >
                 Cancelar
               </button>
@@ -839,12 +840,12 @@ export default function RecurrenceRuleForm({
                 id="rec-form-submit"
                 type="submit"
                 disabled={saving}
-                className={`flex-1 rounded-xl py-3 font-bold text-white disabled:opacity-50 ${
+                className={`flex-1 rounded-md py-3 font-bold text-primary-fg disabled:opacity-50 ${
                   isTransfer
-                    ? "bg-sky-600 hover:bg-sky-700"
+                    ? "bg-transfer hover:bg-transfer/90"
                     : isIncome
-                      ? "bg-emerald-600 hover:bg-emerald-700"
-                      : "bg-rose-600 hover:bg-rose-700"
+                      ? "bg-success hover:bg-success/90"
+                      : "bg-danger hover:bg-danger/90"
                 }`}
               >
                 {saving ? "Guardando…" : editing ? "Guardar cambios" : "Crear regla"}

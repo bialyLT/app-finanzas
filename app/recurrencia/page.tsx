@@ -19,18 +19,19 @@ import {
   type RecurrenceRunDTO,
 } from "@/lib/finance";
 import { formatMoney } from "@/lib/format";
+import { Banknote, Receipt, ArrowLeftRight, RefreshCw, TriangleAlert, type LucideIcon } from "lucide-react";
 
 /** Cómo se ve cada tipo en la bandeja y en la lista de reglas. */
-const KIND_STYLE: Record<MovementKindDTO, { icon: string; text: string }> = {
-  INCOME: { icon: "💵", text: "text-emerald-600" },
-  EXPENSE: { icon: "🧾", text: "text-rose-600" },
-  TRANSFER: { icon: "⇄", text: "text-sky-600" },
+const KIND_STYLE: Record<MovementKindDTO, { icon: LucideIcon; text: string }> = {
+  INCOME: { icon: Banknote, text: "text-success" },
+  EXPENSE: { icon: Receipt, text: "text-danger" },
+  TRANSFER: { icon: ArrowLeftRight, text: "text-transfer" },
 };
 
 const STATUS_STYLE: Record<RecurrenceRuleStatusDTO, string> = {
-  ACTIVE: "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300",
-  PAUSED: "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300",
-  ARCHIVED: "bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400",
+  ACTIVE: "bg-success/10 text-success ",
+  PAUSED: "bg-warning/10 text-warning ",
+  ARCHIVED: "bg-surface-3 text-fg-muted ",
 };
 
 /** Un tramo del resumen de una regla: "Todos los meses (cada 2) · día 15". */
@@ -323,8 +324,8 @@ export default function RecurrencePage() {
       {/* ── Título y alta ────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-extrabold">🔁 Recurrencia</h1>
-          <p className="text-sm text-zinc-500">
+          <h1 className="text-2xl font-extrabold flex items-center gap-2"><RefreshCw className="size-6" aria-hidden />Recurrencia</h1>
+          <p className="text-sm text-fg-muted">
             Lo que pasa cada tanto: alquiler, sueldo, servicios. Vos decís qué
             hacer cuando vence.
           </p>
@@ -332,7 +333,7 @@ export default function RecurrencePage() {
         <button
           id="rec-add-rule"
           onClick={() => openForm(null)}
-          className="rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black px-4 py-2.5 font-bold"
+          className="rounded-lg bg-primary text-primary-fg px-4 py-2.5 font-bold"
         >
           ＋ Nueva regla
         </button>
@@ -343,10 +344,10 @@ export default function RecurrencePage() {
         <p
           id="rec-flash"
           role="status"
-          className={`rounded-xl px-3 py-2 text-sm ${
+          className={`rounded-md px-3 py-2 text-sm ${
             flashError
-              ? "bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300"
-              : "bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200"
+              ? "bg-danger/10 text-danger "
+              : "bg-success/10 text-success "
           }`}
         >
           {flash}
@@ -379,10 +380,10 @@ export default function RecurrencePage() {
       {/* ── Generador ────────────────────────────────────────────────────── */}
       {/* La app no tiene cron: el disparador es abrir la pantalla (o el panel)
           y este botón. La tarjeta cuenta qué hizo la última corrida. */}
-      <section className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-4 shadow-sm">
+      <section className="bg-surface-2 rounded-md px-4 py-4 shadow-sm">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <p className="text-xs uppercase text-zinc-500 tracking-wide">
+            <p className="text-xs uppercase text-fg-muted tracking-wide">
               Generador de vencimientos
             </p>
             <p id="rec-run-summary" className="text-sm mt-1">
@@ -393,7 +394,7 @@ export default function RecurrencePage() {
             id="rec-run-again"
             onClick={() => load({ run: true, archived: includeArchived })}
             disabled={loading}
-            className="shrink-0 rounded-xl border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+            className="shrink-0 rounded-md border border-line-strong px-4 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
           >
             Generar de nuevo
           </button>
@@ -403,7 +404,7 @@ export default function RecurrencePage() {
           <p
             id="rec-run-error"
             role="alert"
-            className="mt-3 text-sm rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-3 py-2"
+            className="mt-3 text-sm rounded-lg bg-danger/10 text-danger px-3 py-2"
           >
             No se pudo correr el generador: {runError} La vista de abajo no está
             afectada —podés revisar reglas y pendientes, y volver a generar.
@@ -414,7 +415,7 @@ export default function RecurrencePage() {
           <p
             id="rec-run-capped"
             role="alert"
-            className="mt-3 text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+            className="mt-3 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
           >
             Había más fechas vencidas de las que una corrida materializa: quedó
             trabajo pendiente. Tocá <b>Generar de nuevo</b> para seguir.
@@ -424,11 +425,11 @@ export default function RecurrencePage() {
         {run && run.blocked.length > 0 && (
           <ul
             id="rec-run-blocked"
-            className="mt-3 text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2 space-y-1"
+            className="mt-3 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2 space-y-1"
           >
             {run.blocked.map((blocked) => (
               <li key={blocked.ruleId}>
-                ⚠ “{blocked.title}” no se pudo postear sola: {blocked.reason} Sus
+                <TriangleAlert className="size-4 inline-block align-[-2px]" aria-hidden /> “{blocked.title}” no se pudo postear sola: {blocked.reason} Sus
                 fechas quedaron en la bandeja.
               </li>
             ))}
@@ -439,14 +440,14 @@ export default function RecurrencePage() {
       {loadError && (
         <p
           role="alert"
-          className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-8 text-center text-rose-600 dark:text-rose-400 shadow-sm"
+          className="bg-surface-2 rounded-md px-4 py-8 text-center text-danger shadow-sm"
         >
           {loadError}
         </p>
       )}
 
       {!loadError && loading && (
-        <p className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-10 text-center text-zinc-500 shadow-sm">
+        <p className="bg-surface-2 rounded-md px-4 py-10 text-center text-fg-muted shadow-sm">
           Cargando…
         </p>
       )}
@@ -454,19 +455,19 @@ export default function RecurrencePage() {
       {!loadError && !loading && (
         <>
           {/* ── Bandeja de pendientes ────────────────────────────────────── */}
-          <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm">
+          <section className="bg-surface-2 rounded-md shadow-sm">
             <div className="px-4 pt-4">
               <h2 className="text-lg font-bold">
                 Pendientes{" "}
                 {pending.length > 0 && (
                   <span
-                    className="ml-1 align-middle text-xs font-bold bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 rounded-full px-2 py-0.5"
+                    className="ml-1 align-middle text-xs font-bold bg-warning/10 text-warning rounded-full px-2 py-0.5"
                   >
                     {pending.length}
                   </span>
                 )}
               </h2>
-              <p className="text-xs text-zinc-500 mt-1">
+              <p className="text-xs text-fg-muted mt-1">
                 Plata que <b>todavía no se movió</b>. Aceptar un pendiente recién
                 ahí lo convierte en movimiento: mientras tanto no suma a ningún
                 total ni a tu patrimonio.
@@ -477,7 +478,7 @@ export default function RecurrencePage() {
               <p
                 id="rec-pending-truncated"
                 role="alert"
-                className="mx-4 mt-3 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                className="mx-4 mt-3 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
               >
                 Hay más pendientes de los que se muestran, así que la lista está
                 cortada. Resolvé los de arriba y recargá para ver el resto.
@@ -486,7 +487,7 @@ export default function RecurrencePage() {
 
             <div className="p-4 flex flex-col gap-2">
               {pending.length === 0 && (
-                <p id="rec-pending-empty" className="text-center text-zinc-500 py-6">
+                <p id="rec-pending-empty" className="text-center text-fg-muted py-6">
                   No hay nada pendiente. La bandeja está al día.
                 </p>
               )}
@@ -498,20 +499,20 @@ export default function RecurrencePage() {
                   <div
                     key={occurrence.id}
                     id={`rec-pending-${occurrence.id}`}
-                    className="border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-3"
+                    className="border border-line rounded-md px-3 py-3"
                   >
                     <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg bg-zinc-100 dark:bg-zinc-800">
-                        {style.icon}
+                      <div className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg bg-surface-3 ">
+                        <style.icon className="size-4" aria-hidden />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold truncate">
                           {occurrence.title}{" "}
-                          <span className="text-xs font-normal text-zinc-500">
+                          <span className="text-xs font-normal text-fg-muted">
                             · {MOVEMENT_KIND_LABEL[occurrence.kind]}
                           </span>
                         </p>
-                        <p className="text-xs text-zinc-500 mt-0.5">
+                        <p className="text-xs text-fg-muted mt-0.5">
                           Venció el {formatCalendar(occurrence.dueDate)} ·{" "}
                           {ruleFlow(occurrence)}
                         </p>
@@ -528,7 +529,7 @@ export default function RecurrencePage() {
                         id={`rec-accept-${occurrence.id}`}
                         onClick={() => decide(occurrence, "accept")}
                         disabled={busyId !== null}
-                        className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 text-sm font-bold disabled:opacity-50"
+                        className="flex-1 rounded-md bg-success hover:bg-success/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
                       >
                         {busy ? "Aceptando…" : "✓ Aceptar"}
                       </button>
@@ -536,7 +537,7 @@ export default function RecurrencePage() {
                         id={`rec-skip-${occurrence.id}`}
                         onClick={() => decide(occurrence, "skip")}
                         disabled={busyId !== null}
-                        className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                        className="flex-1 rounded-md border border-line-strong py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                       >
                         Saltar
                       </button>
@@ -548,11 +549,11 @@ export default function RecurrencePage() {
           </section>
 
           {/* ── Reglas ───────────────────────────────────────────────────── */}
-          <section className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm">
+          <section className="bg-surface-2 rounded-md shadow-sm">
             <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="text-lg font-bold">Reglas</h2>
-                <p className="text-xs text-zinc-500 mt-1">
+                <p className="text-xs text-fg-muted mt-1">
                   El calendario de cada regla. Las fechas de “lo que viene” son
                   una proyección: no son movimientos ni suman a ningún total.
                 </p>
@@ -561,10 +562,10 @@ export default function RecurrencePage() {
                 id="rec-toggle-archived"
                 onClick={toggleArchived}
                 aria-pressed={includeArchived}
-                className={`shrink-0 rounded-xl border px-3 py-2 text-sm font-medium ${
+                className={`shrink-0 rounded-md border px-3 py-2 text-sm font-medium ${
                   includeArchived
-                    ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                    : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    ? "border-transparent bg-primary text-primary-fg "
+                    : "border-line-strong hover:bg-surface-3 "
                 }`}
               >
                 {includeArchived ? "Ocultar archivadas" : "Ver archivadas"}
@@ -573,8 +574,8 @@ export default function RecurrencePage() {
 
             <div className="p-4 flex flex-col gap-3">
               {rules.length === 0 && (
-                <div id="rec-rules-empty" className="text-center text-zinc-500 py-6">
-                  <p className="text-3xl mb-1">🔁</p>
+                <div id="rec-rules-empty" className="text-center text-fg-muted py-6">
+                  <p className="mb-1"><RefreshCw className="size-8 inline-block" aria-hidden /></p>
                   <p className="font-medium">No hay reglas todavía</p>
                   <p className="text-sm mt-1">
                     Tocá <b>＋ Nueva regla</b> para crear la primera.
@@ -591,11 +592,11 @@ export default function RecurrencePage() {
                   <div
                     key={rule.id}
                     id={`rec-rule-${rule.id}`}
-                    className="border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-3"
+                    className="border border-line rounded-md px-3 py-3"
                   >
                     <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg bg-zinc-100 dark:bg-zinc-800">
-                        {style.icon}
+                      <div className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg bg-surface-3 ">
+                        <style.icon className="size-5" aria-hidden />
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold truncate">
@@ -612,29 +613,29 @@ export default function RecurrencePage() {
                           </span>{" "}
                           · {formatMoney(rule.amount)} · {ruleSchedule(rule)}
                         </p>
-                        <p className="text-xs text-zinc-500 mt-0.5">{ruleFlow(rule)}</p>
-                        <p className="text-xs text-zinc-500 mt-0.5">
+                        <p className="text-xs text-fg-muted mt-0.5">{ruleFlow(rule)}</p>
+                        <p className="text-xs text-fg-muted mt-0.5">
                           {ruleLimits(rule)} · {POSTING_MODE_LABEL[rule.postingMode]}
                         </p>
 
                         {/* Proyección: fechas del calendario, jamás plata. */}
                         <p id={`rec-upcoming-${rule.id}`} className="text-xs mt-1.5">
-                          <span className="text-zinc-500">Próximas (proyección): </span>
+                          <span className="text-fg-muted">Próximas (proyección): </span>
                           {rule.upcoming.length === 0 ? (
-                            <span className="text-zinc-500">
+                            <span className="text-fg-muted">
                               sin fechas próximas
                             </span>
                           ) : (
                             rule.upcoming.map((date) => (
                               <span
                                 key={date}
-                                className="inline-block mr-1.5 mb-1 rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5"
+                                className="inline-block mr-1.5 mb-1 rounded-full bg-surface-3 px-2 py-0.5"
                               >
                                 {formatCalendar(date)}
                               </span>
                             ))
                           )}
-                          <span className="text-zinc-500">
+                          <span className="text-fg-muted">
                             {" "}
                             — no son movimientos ni suman a ningún total.
                           </span>
@@ -646,7 +647,7 @@ export default function RecurrencePage() {
                       <p
                         id={`rec-delete-notice-${rule.id}`}
                         role="alert"
-                        className="mt-2 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                        className="mt-2 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
                       >
                         {notice.message}
                       </p>
@@ -658,7 +659,7 @@ export default function RecurrencePage() {
                           id={`rec-edit-${rule.id}`}
                           onClick={() => openForm(rule)}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                         >
                           Editar
                         </button>
@@ -669,7 +670,7 @@ export default function RecurrencePage() {
                           id={`rec-pause-${rule.id}`}
                           onClick={() => patchStatus(rule, "PAUSED")}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                         >
                           {busy ? "Pausando…" : "Pausar"}
                         </button>
@@ -680,7 +681,7 @@ export default function RecurrencePage() {
                           id={`rec-resume-${rule.id}`}
                           onClick={() => patchStatus(rule, "ACTIVE")}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                         >
                           Reactivar
                         </button>
@@ -691,7 +692,7 @@ export default function RecurrencePage() {
                           id={`rec-archive-${rule.id}`}
                           onClick={() => patchStatus(rule, "ARCHIVED")}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                         >
                           Archivar
                         </button>
@@ -699,21 +700,21 @@ export default function RecurrencePage() {
 
                       {confirmDeleteId === rule.id ? (
                         <>
-                          <span className="text-sm text-zinc-500 py-1.5">
+                          <span className="text-sm text-fg-muted py-1.5">
                             ¿Borrar la regla?
                           </span>
                           <button
                             id={`rec-delete-confirm-${rule.id}`}
                             onClick={() => removeRule(rule)}
                             disabled={busyId !== null}
-                            className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-sm font-bold disabled:opacity-50"
+                            className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1.5 text-sm font-bold disabled:opacity-50"
                           >
                             Sí, borrar
                           </button>
                           <button
                             id={`rec-delete-cancel-${rule.id}`}
                             onClick={() => setConfirmDeleteId(null)}
-                            className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 "
                           >
                             Mejor no
                           </button>
@@ -726,7 +727,7 @@ export default function RecurrencePage() {
                             setDeleteNotice(null);
                           }}
                           disabled={busyId !== null}
-                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-rose-600 disabled:opacity-50"
+                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-fg-muted hover:bg-surface-3 hover:text-danger disabled:opacity-50"
                         >
                           Borrar
                         </button>
@@ -740,7 +741,7 @@ export default function RecurrencePage() {
         </>
       )}
 
-      <p className="text-center text-xs text-zinc-400 pb-2">
+      <p className="text-center text-xs text-fg-subtle pb-2">
         <Link href="/" className="underline inline-flex items-center touch:min-h-11">
           ← Volver al panel
         </Link>

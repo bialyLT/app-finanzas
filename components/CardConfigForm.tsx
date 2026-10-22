@@ -4,6 +4,7 @@ import { useState } from "react";
 import { cardDaysError } from "@/lib/card-form";
 import type { CardViewDTO } from "@/lib/finance";
 import { formatAmountInput, formatMoney } from "@/lib/format";
+import { Settings } from "lucide-react";
 
 interface Props {
   card: CardViewDTO;
@@ -118,7 +119,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label={`Configurar ${card.name}`}
-        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-surface-2 rounded-t-md sm:rounded-md shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Columna flex: el encabezado y el pie son `flex-none` y el área
@@ -126,11 +127,11 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
             `sticky` dentro del área y tapaba los campos: trampa 15). */}
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold">⚙️ {card.name}</h2>
+          <h2 className="text-xl font-bold flex items-center gap-2"><Settings className="size-5" aria-hidden />{card.name}</h2>
           <button
             id="cardconf-close"
             onClick={onClose}
-            className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×
@@ -140,7 +141,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
 
         <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
         <form id="cardconf-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-fg-muted">
             El <b>cierre</b> decide en qué resumen cae cada compra; el{" "}
             <b>vencimiento</b>, cuándo vence. El límite es opcional.
           </p>
@@ -159,7 +160,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 value={closingDay}
                 onChange={(e) => setClosingDay(e.target.value)}
                 placeholder="15"
-                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
               />
             </div>
             <div>
@@ -174,7 +175,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 value={dueDay}
                 onChange={(e) => setDueDay(e.target.value)}
                 placeholder="5"
-                className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
               />
             </div>
           </div>
@@ -182,7 +183,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
           <div>
             <label htmlFor="cardconf-limit" className="text-sm font-medium">
               Límite de la tarjeta{" "}
-              <span className="font-normal text-zinc-500">(opcional)</span>
+              <span className="font-normal text-fg-muted">(opcional)</span>
             </label>
             <input
               id="cardconf-limit"
@@ -192,9 +193,9 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
               value={creditLimit}
               onChange={(e) => setCreditLimit(e.target.value)}
               placeholder="500.000"
-              className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+              className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
             />
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-fg-muted">
               {limitPreview ? (
                 <>
                   Utilización = deuda ÷ <b>{limitPreview}</b>.
@@ -205,7 +206,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
             </p>
           </div>
 
-          <p className="text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-zinc-600 dark:text-zinc-400">
+          <p className="text-xs rounded-lg bg-surface-3 px-3 py-2 text-fg-muted ">
             Si dejás cierre y vencimiento vacíos y guardás, la tarjeta queda sin
             períodos: no se pueden correr resúmenes hasta que vuelvas a
             cargarlos. Y si ya hay un resumen pagado, cambiar el cierre está
@@ -215,12 +216,12 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
           {/* Pie: hermano del área que scrollea (`flex-none`, no `sticky`). */}
         </form>
         </div>
-        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-surface-2 ">
             {error && (
               <p
                 id="cardconf-error"
                 role="alert"
-                className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}
               </p>
@@ -231,7 +232,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 id="cardconf-cancel"
                 type="button"
                 onClick={onClose}
-                className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
               >
                 Cancelar
               </button>
@@ -240,7 +241,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 type="submit"
                 form="cardconf-form"
                 disabled={saving}
-                className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
+                className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
               >
                 {saving ? "Guardando…" : "Guardar"}
               </button>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth/dal";
 import Nav from "./Nav";
+import { Wallet } from "lucide-react";
 
 /**
  * Barra de navegación del layout raíz.
@@ -22,13 +23,16 @@ export default async function Header() {
   const session = await getSession();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-black/90 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-line bg-surface/90 backdrop-blur">
       <nav className="mx-auto max-w-5xl flex flex-wrap items-center justify-between gap-2 px-4 py-2 sm:flex-nowrap sm:py-3">
         <Link
           href="/"
-          className="shrink-0 inline-flex items-center touch:min-h-11 font-extrabold text-lg tracking-tight"
+          className="shrink-0 inline-flex items-center gap-1.5 touch:min-h-11 font-extrabold text-lg tracking-tight"
         >
-          💰 <span className="text-emerald-600">Mis</span>Finanzas
+          <Wallet className="size-5 inline-block align-[-2px]" aria-hidden />
+          <span>
+            <span className="text-success">Mis</span>Finanzas
+          </span>
         </Link>
 
         {session && <Nav />}

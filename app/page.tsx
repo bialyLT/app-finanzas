@@ -44,6 +44,7 @@ import {
 } from "@/lib/format";
 import { shortcutMovementKind } from "@/lib/quick-entry";
 import { isPaletteShortcut } from "@/lib/command-palette";
+import { Banknote, Receipt, ArrowLeftRight, RefreshCw, Import, Coins, Search, StickyNote, Trash, Check, X, type LucideIcon } from "lucide-react";
 
 /** Lo que se abre en el modal. */
 type Modal = MovementKindDTO | "ACCOUNT" | null;
@@ -75,22 +76,22 @@ const EMPTY_TOTALS: PeriodTotalsDTO = {
  */
 const KIND_ROW_STYLE: Record<
   MovementKindDTO,
-  { icon: string; bubble: string; amount: string }
+  { icon: LucideIcon; bubble: string; amount: string }
 > = {
   INCOME: {
-    icon: "💵",
-    bubble: "bg-emerald-100 dark:bg-emerald-950",
-    amount: "text-emerald-600",
+    icon: Banknote,
+    bubble: "bg-success/10 ",
+    amount: "text-success",
   },
   EXPENSE: {
-    icon: "🧾",
-    bubble: "bg-rose-100 dark:bg-rose-950",
-    amount: "text-rose-600",
+    icon: Receipt,
+    bubble: "bg-danger/10 ",
+    amount: "text-danger",
   },
   TRANSFER: {
-    icon: "⇄",
-    bubble: "bg-sky-100 dark:bg-sky-950",
-    amount: "text-sky-600",
+    icon: ArrowLeftRight,
+    bubble: "bg-transfer/10 ",
+    amount: "text-transfer",
   },
 };
 
@@ -728,11 +729,11 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
       {/* ── Selector de mes ───────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between bg-white dark:bg-zinc-900 rounded-2xl px-4 py-3 shadow-sm">
+      <div className="flex items-center justify-between bg-surface-2 rounded-md px-4 py-3 shadow-sm">
         <button
           id="btn-prev-month"
           onClick={() => shiftMonth(-1)}
-          className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg"
+          className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
           aria-label="Mes anterior"
         >
           ←
@@ -748,7 +749,7 @@ export default function Home() {
             la pantalla principal.
           */}
           <p className="font-bold first-letter:uppercase">{monthLabel}</p>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-fg-muted">
             {/* Sólo la cantidad total de movimientos. El detalle de
                 transferencias vive ahora en la tarjeta de "Flujo de caja":
                 repetirlo en los dos lugares sería el mismo número dos veces. */}
@@ -759,7 +760,7 @@ export default function Home() {
         <button
           id="btn-next-month"
           onClick={() => shiftMonth(1)}
-          className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg"
+          className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
           aria-label="Mes siguiente"
         >
           →
@@ -771,7 +772,7 @@ export default function Home() {
         <p
           id="rec-panel-run-error"
           role="alert"
-          className="text-xs rounded-2xl bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-4 py-3"
+          className="text-xs rounded-md bg-danger/10 text-danger px-4 py-3"
         >
           No se pudo correr el generador de recurrencia: {recurrenceRunError} Los
           números de abajo pueden no incluir vencimientos de hoy.
@@ -786,10 +787,10 @@ export default function Home() {
         <Link
           id="rec-pending-banner"
           href="/recurrencia"
-          className="flex items-center justify-between gap-3 bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 rounded-2xl px-4 py-3 text-sm shadow-sm hover:bg-amber-100 dark:hover:bg-amber-900"
+          className="flex items-center justify-between gap-3 bg-warning/10 text-warning rounded-md px-4 py-3 text-sm shadow-sm hover:bg-warning/15 "
         >
           <span>
-            🔁 {pendingCount}{" "}
+            <RefreshCw className="size-4" aria-hidden /> {pendingCount}{" "}
             {pendingCount === 1
               ? "ocurrencia de tus reglas espera confirmación"
               : "ocurrencias de tus reglas esperan confirmación"}
@@ -815,10 +816,10 @@ export default function Home() {
           A 384 px entran dos columnas (la tarjeta mide 138 px y el monto
           entra justo); por debajo, una sola columna. */}
       <div className="grid grid-cols-1 min-[384px]:grid-cols-2 min-[940px]:grid-cols-4">
-        <div className="@container min-w-0 bg-emerald-600 text-white rounded-2xl p-4 shadow">
-          <p className="text-xs uppercase opacity-80">Ingresos</p>
+        <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+          <p className="text-xs uppercase text-fg-muted">Ingresos</p>
           <p
-            className="monto-tarjeta font-extrabold"
+            className="monto-tarjeta font-extrabold text-success"
             style={{ "--k": factorMonto(formatMoney(totals.income)) } as CSSProperties}
           >
             {formatMoney(totals.income)}
@@ -835,10 +836,10 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="@container min-w-0 bg-rose-600 text-white rounded-2xl p-4 shadow">
-          <p className="text-xs uppercase opacity-80">Gastos</p>
+        <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+          <p className="text-xs uppercase text-fg-muted">Gastos</p>
           <p
-            className="monto-tarjeta font-extrabold"
+            className="monto-tarjeta font-extrabold text-danger"
             style={{ "--k": factorMonto(formatMoney(totals.expenses)) } as CSSProperties}
           >
             {formatMoney(totals.expenses)}
@@ -850,15 +851,11 @@ export default function Home() {
         </div>
 
         <div
-          className={`@container min-w-0 rounded-2xl p-4 shadow ${
-            totals.positive
-              ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
-              : "bg-amber-500 text-black"
-          }`}
+          className="@container min-w-0 bg-surface-2 rounded-md p-4"
         >
-          <p className="text-xs uppercase opacity-80">Te quedó</p>
+          <p className="text-xs uppercase text-fg-muted">Te quedó</p>
           <p
-            className="monto-tarjeta font-extrabold"
+            className={`monto-tarjeta font-extrabold ${totals.positive ? "text-success" : "text-danger"}`}
             style={
               { "--k": factorMonto(formatMoney(totals.result, { withSign: true })) } as CSSProperties
             }
@@ -918,10 +915,10 @@ export default function Home() {
           explica por qué este número se separa de "Te quedó" (pagar la
           tarjeta, cobrar un préstamo, mover plata entre bolsillos).
         */}
-        <div className="@container min-w-0 bg-sky-600 text-white rounded-2xl p-4 shadow">
-          <p className="text-xs uppercase opacity-80">Flujo de caja</p>
+        <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+          <p className="text-xs uppercase text-fg-muted">Flujo de caja</p>
           <p
-            className="monto-tarjeta font-extrabold"
+            className="monto-tarjeta font-extrabold text-transfer"
             style={
               { "--k": factorMonto(formatMoney(totals.cashFlow, { withSign: true })) } as CSSProperties
             }
@@ -967,26 +964,26 @@ export default function Home() {
 
       {/* ── Patrimonio neto ──────────────────────────────────────────────── */}
       {netWorth && (
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-4 shadow-sm">
+        <div className="bg-surface-2 rounded-md px-4 py-4 shadow-sm">
           <div className="flex items-baseline justify-between flex-wrap gap-2">
             <div>
-              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+              <p className="text-xs uppercase text-fg-muted tracking-wide">
                 Patrimonio neto
               </p>
               <p
                 className={`text-2xl font-extrabold ${
-                  Number(netWorth.net) < 0 ? "text-amber-600" : ""
+                  Number(netWorth.net) < 0 ? "text-warning" : ""
                 }`}
               >
                 {formatMoney(netWorth.net)}
               </p>
             </div>
             <div className="text-right text-sm">
-              <p className="text-zinc-500">
-                Tenés <b className="text-emerald-600">{formatMoney(netWorth.assets)}</b>
+              <p className="text-fg-muted">
+                Tenés <b className="text-success">{formatMoney(netWorth.assets)}</b>
               </p>
-              <p className="text-zinc-500">
-                Debés <b className="text-rose-600">{formatMoney(netWorth.liabilities)}</b>
+              <p className="text-fg-muted">
+                Debés <b className="text-danger">{formatMoney(netWorth.liabilities)}</b>
               </p>
             </div>
           </div>
@@ -1006,7 +1003,7 @@ export default function Home() {
           {accounts.length > 0 && (
             <div
               id="account-cards"
-              className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 grid grid-cols-1 min-[420px]:grid-cols-2 gap-2"
+              className="mt-3 pt-3 border-t border-line grid grid-cols-1 min-[420px]:grid-cols-2 gap-2"
             >
               {accounts.map((account) => {
                 const declarada = account.openingIncomeMonth !== null;
@@ -1017,14 +1014,14 @@ export default function Home() {
                 return (
                   <div
                     key={account.id}
-                    className="@container min-w-0 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-3 py-2 flex flex-col gap-1"
+                    className="@container min-w-0 rounded-md bg-surface bg-surface-3/60 px-3 py-2 flex flex-col gap-1"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-[11px] text-zinc-500 truncate">
+                        <p className="text-[11px] text-fg-muted truncate">
                           {account.name}
                           {declarada && (
-                            <span className="text-sky-600 dark:text-sky-300">
+                            <span className="text-transfer ">
                               {" "}
                               · ingreso de{" "}
                               {formatCalendar(
@@ -1037,7 +1034,7 @@ export default function Home() {
                         </p>
                         <p
                           className={`monto-ficha font-bold ${
-                            account.isLiability ? "text-rose-600" : ""
+                            account.isLiability ? "text-danger" : ""
                           }${claseMontoLargo(
                             formatMoney(
                               account.isLiability
@@ -1070,13 +1067,13 @@ export default function Home() {
                           }
                           onClick={() => toggleDeclaredIncome(account)}
                           disabled={incomeToggleBusyId !== null}
-                          className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg border-2 text-base font-bold transition-colors ${
+                          className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg border-2 transition-colors ${
                             declarada
-                              ? "border-sky-600 bg-sky-600 text-white"
-                              : "border-zinc-300 dark:border-zinc-600 text-transparent"
+                              ? "border-transfer bg-transfer text-primary-fg"
+                              : "border-line-strong text-fg-subtle"
                           } disabled:opacity-50`}
                         >
-                          <span aria-hidden="true">✓</span>
+                          <Check className="size-5" aria-hidden />
                         </button>
                       )}
                     </div>
@@ -1084,7 +1081,7 @@ export default function Home() {
                     {incomeToggleNotice?.id === account.id && (
                       <p
                         role="alert"
-                        className="text-[11px] text-rose-700 dark:text-rose-300"
+                        className="text-[11px] text-danger "
                       >
                         {incomeToggleNotice.message}
                       </p>
@@ -1115,8 +1112,8 @@ export default function Home() {
             enteros, como todo lo que se resta en el cliente).
           */}
           {netWorthSeries.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+            <div className="mt-3 pt-3 border-t border-line ">
+              <p className="text-xs uppercase text-fg-muted tracking-wide">
                 Evolución · últimos {netWorthSeries.length} meses
               </p>
 
@@ -1134,15 +1131,15 @@ export default function Home() {
                     <div
                       key={point.month}
                       id={`networth-month-${point.month}`}
-                      className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5"
+                      className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5"
                     >
-                      <p className="text-[11px] text-zinc-500">
+                      <p className="text-[11px] text-fg-muted">
                         {formatCalendar(`${point.month}-01`, LOCALE, {
                           month: "short",
                           year: "numeric",
                         })}
                         {point.partial && (
-                          <span className="text-zinc-400"> · en curso</span>
+                          <span className="text-fg-subtle"> · en curso</span>
                         )}
                       </p>
                       {/*
@@ -1157,7 +1154,7 @@ export default function Home() {
                       */}
                       <p
                         className={`monto-ficha font-bold ${
-                          toCents(point.net) < 0 ? "text-amber-600" : ""
+                          toCents(point.net) < 0 ? "text-warning" : ""
                         }${claseMontoLargo(formatMoney(point.net))}`}
                         style={
                           {
@@ -1171,10 +1168,10 @@ export default function Home() {
                         <p
                           className={`monto-ficha--chico ${
                             deltaCents > 0
-                              ? "text-emerald-600"
+                              ? "text-success"
                               : deltaCents < 0
-                                ? "text-rose-600"
-                                : "text-zinc-400"
+                                ? "text-danger"
+                                : "text-fg-subtle"
                           }`}
                           style={
                             {
@@ -1194,7 +1191,7 @@ export default function Home() {
                 })}
               </div>
 
-              <p className="mt-2 text-[11px] text-zinc-400">
+              <p className="mt-2 text-[11px] text-fg-subtle">
                 Fotos al cierre de cada mes; el mes en curso, a hoy. La
                 variación es contra el mes anterior.
               </p>
@@ -1221,26 +1218,26 @@ export default function Home() {
           {reconciliation && (
             <div
               id="reconciliation"
-              className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800"
+              className="mt-3 pt-3 border-t border-line "
             >
-              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+              <p className="text-xs uppercase text-fg-muted tracking-wide">
                 Reconciliación ·{" "}
                 {formatCalendar(`${reconciliation.month}-01`, LOCALE, {
                   month: "long",
                   year: "numeric",
                 })}
                 {reconciliation.partial && (
-                  <span className="text-zinc-400"> · en curso</span>
+                  <span className="text-fg-subtle"> · en curso</span>
                 )}
               </p>
 
               <div className="mt-2 grid grid-cols-3 gap-2">
-                <div className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
-                  <p className="text-[11px] text-zinc-500">Δ Patrimonio</p>
+                <div className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5">
+                  <p className="text-[11px] text-fg-muted">Δ Patrimonio</p>
                   <p
                     id="reconciliation-delta"
                     className={`monto-ficha font-bold ${
-                      toCents(reconciliation.netDelta) < 0 ? "text-amber-600" : ""
+                      toCents(reconciliation.netDelta) < 0 ? "text-warning" : ""
                     }${claseMontoLargo(formatMoney(reconciliation.netDelta, { withSign: true }))}`}
                     style={
                       {
@@ -1253,7 +1250,7 @@ export default function Home() {
                     {formatMoney(reconciliation.netDelta, { withSign: true })}
                   </p>
                   <p
-                    className={`text-[11px] text-zinc-400${claseMontoLargo(
+                    className={`text-[11px] text-fg-subtle${claseMontoLargo(
                       `${formatMoney(reconciliation.netStart)}${formatMoney(reconciliation.netEnd)}`,
                     )}`}
                   >
@@ -1262,12 +1259,12 @@ export default function Home() {
                   </p>
                 </div>
 
-                <div className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
-                  <p className="text-[11px] text-zinc-500">Ahorro del mes</p>
+                <div className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5">
+                  <p className="text-[11px] text-fg-muted">Ahorro del mes</p>
                   <p
                     id="reconciliation-saving"
                     className={`monto-ficha font-bold ${
-                      toCents(reconciliation.saving) < 0 ? "text-amber-600" : ""
+                      toCents(reconciliation.saving) < 0 ? "text-warning" : ""
                     }${claseMontoLargo(formatMoney(reconciliation.saving, { withSign: true }))}`}
                     style={
                       {
@@ -1279,19 +1276,19 @@ export default function Home() {
                   >
                     {formatMoney(reconciliation.saving, { withSign: true })}
                   </p>
-                  <p className="text-[11px] text-zinc-400">
+                  <p className="text-[11px] text-fg-subtle">
                     {reconciliation.declaredIncome !== "0.00"
                       ? "ingresos del mes − gastos del mes"
                       : "ingresos ganados − gastos consumidos"}
                   </p>
                 </div>
 
-                <div className="@container rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-2 py-1.5">
-                  <p className="text-[11px] text-zinc-500">Diferencia</p>
+                <div className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5">
+                  <p className="text-[11px] text-fg-muted">Diferencia</p>
                   <p
                     id="reconciliation-difference"
                     className={`monto-ficha font-bold ${
-                      reconciliation.balanced ? "text-emerald-600" : "text-rose-600"
+                      reconciliation.balanced ? "text-success" : "text-danger"
                     }`}
                     style={
                       {
@@ -1312,7 +1309,7 @@ export default function Home() {
                   </p>
                   <p
                     className={`text-[11px] ${
-                      reconciliation.balanced ? "text-emerald-600" : "text-rose-600"
+                      reconciliation.balanced ? "text-success" : "text-danger"
                     }`}
                   >
                     {reconciliation.balanced
@@ -1336,7 +1333,7 @@ export default function Home() {
               {reconciliation.declaredIncome !== "0.00" && (
                 <p
                   id="reconciliation-declared"
-                  className="mt-2 text-xs rounded-lg bg-sky-50 dark:bg-sky-950 text-sky-800 dark:text-sky-200 px-3 py-2"
+                  className="mt-2 text-xs rounded-lg bg-transfer/10 text-transfer px-3 py-2"
                 >
                   Declaraste <b>{formatMoney(reconciliation.declaredIncome)}</b>{" "}
                   que ya tenías: esa plata entra como ingreso de este mes, pero
@@ -1349,7 +1346,7 @@ export default function Home() {
               {!reconciliation.balanced && (
                 <p
                   role="alert"
-                  className="mt-2 text-xs rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-800 dark:text-rose-200 px-3 py-2"
+                  className="mt-2 text-xs rounded-lg bg-danger/10 text-danger px-3 py-2"
                 >
                   <b>No cuadra</b>: los dos caminos difieren en{" "}
                   {formatMoney(reconciliation.difference, { withSign: true })}. Algo
@@ -1359,7 +1356,7 @@ export default function Home() {
                 </p>
               )}
 
-              <p className="mt-2 text-[11px] text-zinc-400">
+              <p className="mt-2 text-[11px] text-fg-subtle">
                 Dos caminos independientes al mismo número: los saldos y los
                 movimientos.
                 {reconciliation.partial
@@ -1374,7 +1371,7 @@ export default function Home() {
           <button
             id="btn-add-account"
             onClick={() => setModal("ACCOUNT")}
-            className="mt-3 text-xs underline text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+            className="mt-3 text-xs underline text-fg-muted hover:text-fg hover:text-fg-muted"
           >
             + Agregar cuenta
           </button>
@@ -1394,24 +1391,24 @@ export default function Home() {
             no un 0% que afirmaría algo falso.
       */}
       {debtReport && debtReport.rows.length > 0 && (
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-4 shadow-sm">
+        <div className="bg-surface-2 rounded-md px-4 py-4 shadow-sm">
           <div className="flex items-baseline justify-between flex-wrap gap-2">
             <div>
-              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+              <p className="text-xs uppercase text-fg-muted tracking-wide">
                 Deudas ·{" "}
                 {formatCalendar(`${debtReport.month}-01`, LOCALE, {
                   month: "long",
                   year: "numeric",
                 })}
                 {debtReport.partial && (
-                  <span className="text-zinc-400"> · en curso</span>
+                  <span className="text-fg-subtle"> · en curso</span>
                 )}
               </p>
-              <p className="text-2xl font-extrabold text-rose-600">
+              <p className="text-2xl font-extrabold text-danger">
                 {formatMoney(debtReport.totalDebt)}
               </p>
             </div>
-            <p className="text-[11px] text-zinc-400 text-right">
+            <p className="text-[11px] text-fg-subtle text-right">
               deuda viva al {formatCalendar(debtReport.cutAt)}
               {debtReport.partial ? " · el mes sigue" : ""}
             </p>
@@ -1419,7 +1416,7 @@ export default function Home() {
 
           <div
             id="debt-report"
-            className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 divide-y divide-zinc-100 dark:divide-zinc-800"
+            className="mt-3 pt-3 border-t border-line divide-y divide-line "
           >
             {debtReport.rows.map((row) => (
               <div
@@ -1431,7 +1428,7 @@ export default function Home() {
                   <p className="text-sm">
                     {row.name}
                     {row.archived && (
-                      <span className="text-[11px] text-zinc-400">
+                      <span className="text-[11px] text-fg-subtle">
                         {" "}
                         · archivada
                       </span>
@@ -1441,34 +1438,34 @@ export default function Home() {
                       $ 50.000,00" o "a favor $ 50.000,00" — nunca un monto con
                       signo que se lea como un error. Sin `withSign`: un "+$" en
                       esta tarjeta es ruido. */}
-                  <p className="text-sm font-bold text-rose-600">
+                  <p className="text-sm font-bold text-danger">
                     {formatLiability(row.debt)}
                   </p>
                 </div>
 
                 {row.plan ? (
                   <div className="mt-1.5">
-                    <div className="h-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                    <div className="h-1.5 rounded-full bg-surface-3 overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-rose-500"
+                        className="h-full rounded-full bg-danger"
                         style={{ width: `${row.progressPercent}%` }}
                       />
                     </div>
-                    <p className="mt-1 text-[11px] text-zinc-500">
+                    <p className="mt-1 text-[11px] text-fg-muted">
                       cuota {formatMoney(row.plan.payment)} · {row.plan.paidCount}{" "}
                       de {row.plan.installmentCount} cubiertas ·{" "}
                       {row.plan.remainingCount === 0
                         ? "sin cuotas pendientes"
                         : `faltan ${row.plan.remainingCount}`}
                     </p>
-                    <p className="text-[11px] text-zinc-400">
+                    <p className="text-[11px] text-fg-subtle">
                       capital devuelto {formatMoney(row.capitalPaid ?? "0.00")} (
                       {row.progressPercent}%) · interés pagado{" "}
                       {formatMoney(row.interestPaid ?? "0.00")}
                     </p>
                   </div>
                 ) : (
-                  <p className="mt-1 text-[11px] text-zinc-400">
+                  <p className="mt-1 text-[11px] text-fg-subtle">
                     sin plan de cuotas: la tarjeta no pacta una cuota fija
                   </p>
                 )}
@@ -1484,28 +1481,28 @@ export default function Home() {
           */}
           <div
             id="debt-dti"
-            className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800"
+            className="mt-3 pt-3 border-t border-line "
           >
             <div className="flex items-baseline justify-between flex-wrap gap-1">
-              <p className="text-xs uppercase text-zinc-500 tracking-wide">
+              <p className="text-xs uppercase text-fg-muted tracking-wide">
                 DTI · ingresos comprometidos
               </p>
               <p className="text-sm font-bold">
                 {debtReport.dti.percent === null ? (
-                  <span className="text-zinc-400">no se puede calcular</span>
+                  <span className="text-fg-subtle">no se puede calcular</span>
                 ) : (
-                  <span className="text-rose-600">
+                  <span className="text-danger">
                     {formatPercent(debtReport.dti.percent)}
                   </span>
                 )}
               </p>
             </div>
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-[11px] text-fg-muted">
               {debtReport.dti.percent === null
                 ? "No hubo ingresos este mes: sin ingreso, el DTI no se puede calcular."
                 : `Cuotas por ${formatMoney(debtReport.dti.monthlyCommitment)} sobre ${formatMoney(debtReport.dti.income)} de ingresos.`}
             </p>
-            <p className="text-[11px] text-zinc-400">
+            <p className="text-[11px] text-fg-subtle">
               {debtReport.dti.planCount === 0
                 ? "Ningún plan con cuotas pendientes."
                 : `${debtReport.dti.planCount} ${
@@ -1528,7 +1525,7 @@ export default function Home() {
         <button
           id="btn-income"
           onClick={() => openMovement("INCOME")}
-          className="rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-5 shadow-lg active:scale-[0.98] transition"
+          className="rounded-md bg-success hover:bg-success/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ＋ Ingreso
           <span className="block text-[11px] font-normal opacity-80 mt-1">
@@ -1538,7 +1535,7 @@ export default function Home() {
         <button
           id="btn-expense"
           onClick={() => openMovement("EXPENSE")}
-          className="rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold py-5 shadow-lg active:scale-[0.98] transition"
+          className="rounded-md bg-danger hover:bg-danger/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           － Gasto
           <span className="block text-[11px] font-normal opacity-80 mt-1">
@@ -1548,7 +1545,7 @@ export default function Home() {
         <button
           id="btn-transfer"
           onClick={() => openMovement("TRANSFER")}
-          className="rounded-2xl bg-sky-600 hover:bg-sky-700 text-white font-bold py-5 shadow-lg active:scale-[0.98] transition"
+          className="rounded-md bg-transfer hover:bg-transfer/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ⇄ Transferir
           <span className="block text-[11px] font-normal opacity-80 mt-1">
@@ -1563,12 +1560,12 @@ export default function Home() {
           manual; mezclarlos haría más lento el camino típico. */}
       <div
         id="quick-extras"
-        className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-4 shadow-sm"
+        className="bg-surface-2 rounded-md px-4 py-4 shadow-sm"
       >
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
             <h2 className="font-bold">Plantillas</h2>
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-[11px] text-fg-muted">
               {orderedFavorites.length} de {favoritesMax} · un toque para
               precargar el formulario
             </p>
@@ -1578,15 +1575,15 @@ export default function Home() {
               id="btn-import-csv"
               type="button"
               onClick={() => setCsvOpen(true)}
-              className="rounded-xl border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              className="rounded-md border border-line-strong px-3 py-1.5 text-xs font-medium hover:bg-surface-3 "
             >
-              📥 Importar CSV
+              <Import className="size-4" aria-hidden /> Importar CSV
             </button>
             <button
               id="btn-palette"
               type="button"
               onClick={() => setPaletteOpen(true)}
-              className="rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black px-3 py-1.5 text-xs font-bold"
+              className="rounded-lg bg-primary text-primary-fg px-3 py-1.5 text-xs font-bold"
             >
               ⌘ Buscar
             </button>
@@ -1597,15 +1594,15 @@ export default function Home() {
           <p
             id="favorite-delete-notice"
             role="alert"
-            className="mt-2 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+            className="mt-2 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
           >
             {favoriteDeleteNotice}
           </p>
         )}
 
         {orderedFavorites.length === 0 ? (
-          <p id="favorites-empty" className="mt-3 text-xs text-zinc-500">
-            Todavía no hay plantillas. Abrí un movimiento y usá “☆ Guardar como
+          <p id="favorites-empty" className="mt-3 text-xs text-fg-muted">
+            Todavía no hay plantillas. Abrí un movimiento y usá “Guardar como
             plantilla” para guardar el formulario completo.
           </p>
         ) : (
@@ -1621,7 +1618,7 @@ export default function Home() {
                   <div
                     key={favorite.id}
                     id={`favorite-delete-panel-${favorite.id}`}
-                    className="flex items-center gap-2 rounded-full bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-1.5 text-xs"
+                    className="flex items-center gap-2 rounded-full bg-warning/10 text-warning px-3 py-1.5 text-xs"
                   >
                     <span>¿Borrar “{favorite.name}”?</span>
                     <button
@@ -1629,7 +1626,7 @@ export default function Home() {
                       type="button"
                       onClick={() => void deleteFavorite(favorite.id)}
                       disabled={favoriteDeleteBusyId !== null}
-                      className="rounded-full bg-rose-600 hover:bg-rose-700 text-white px-2 py-0.5 font-bold disabled:opacity-50"
+                      className="rounded-full bg-danger hover:bg-danger/90 text-primary-fg px-2 py-0.5 font-bold disabled:opacity-50"
                     >
                       {favoriteDeleteBusyId === favorite.id ? "…" : "Sí"}
                     </button>
@@ -1638,7 +1635,7 @@ export default function Home() {
                       type="button"
                       onClick={() => setConfirmFavoriteDeleteId(null)}
                       disabled={favoriteDeleteBusyId !== null}
-                      className="rounded-full border border-amber-300 dark:border-amber-800 px-2 py-0.5 font-medium disabled:opacity-50"
+                      className="rounded-full border border-warning/40 px-2 py-0.5 font-medium disabled:opacity-50"
                     >
                       No
                     </button>
@@ -1649,7 +1646,7 @@ export default function Home() {
               return (
                 <div
                   key={favorite.id}
-                  className={`flex items-stretch rounded-full border border-zinc-200 dark:border-zinc-700 overflow-hidden ${
+                  className={`flex items-stretch rounded-full border border-line border-line-strong overflow-hidden ${
                     blocked ? "opacity-50" : ""
                   }`}
                 >
@@ -1663,12 +1660,12 @@ export default function Home() {
                         ? "La cuenta de esta plantilla está archivada"
                         : `Usar plantilla ${favorite.name}`
                     }
-                    className="px-3 py-1.5 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:cursor-not-allowed"
+                    className="px-3 py-1.5 text-left hover:bg-surface-3 disabled:cursor-not-allowed"
                   >
                     <span className="block text-xs font-semibold">
                       {favorite.name}
                     </span>
-                    <span className="block text-[10px] text-zinc-500">
+                    <span className="block text-[10px] text-fg-muted">
                       {MOVEMENT_KIND_LABEL[favorite.kind]}
                       {favorite.amount ? ` · ${formatMoney(favorite.amount)}` : ""}
                       {blocked ? " · cuenta archivada" : ""}
@@ -1682,7 +1679,7 @@ export default function Home() {
                       setFavoriteDeleteNotice("");
                     }}
                     aria-label={`Borrar plantilla ${favorite.name}`}
-                    className="px-2 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
+                    className="px-2 text-fg-subtle hover:text-danger hover:bg-danger/10 "
                   >
                     ×
                   </button>
@@ -1696,28 +1693,28 @@ export default function Home() {
       {/* Los atajos se anuncian acá para que existan para quien no los conoce;
           las guardas (no disparar escribiendo, ni con un modal abierto) viven
           en lib/quick-entry.ts, testeadas. */}
-      <p className="-mt-3 text-center text-[11px] text-zinc-400">
+      <p className="-mt-3 text-center text-[11px] text-fg-subtle">
         Atajos:{" "}
-        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+        <kbd className="rounded-md border border-line-strong px-1">
           T
         </kbd>{" "}
         gasto ·{" "}
-        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+        <kbd className="rounded-md border border-line-strong px-1">
           I
         </kbd>{" "}
         ingreso ·{" "}
-        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+        <kbd className="rounded-md border border-line-strong px-1">
           Ctrl
         </kbd>{" "}
         +{" "}
-        <kbd className="rounded border border-zinc-300 dark:border-zinc-700 px-1">
+        <kbd className="rounded-md border border-line-strong px-1">
           K
         </kbd>{" "}
         buscar
       </p>
 
       {/* ── Lista de movimientos ─────────────────────────────────────────── */}
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm overflow-hidden">
+      <div className="bg-surface-2 rounded-md shadow-sm overflow-hidden">
         <div className="flex items-center justify-between px-4 pt-4 flex-wrap gap-2">
           <h2 className="font-bold">Movimientos del mes</h2>
           {/* Los filtros envuelven: en 320 px los cuatro botones miden 315 px
@@ -1734,8 +1731,8 @@ export default function Home() {
                 }}
                 className={`px-3 py-1.5 rounded-full ${
                   filter === option
-                    ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
-                    : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    ? "bg-primary text-primary-fg "
+                    : "hover:bg-surface-3 "
                 }`}
               >
                 {option === "ALL" ? "Todos" : MOVEMENT_KIND_LABEL[option]}
@@ -1749,7 +1746,7 @@ export default function Home() {
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
             aria-label="Filtrar por categoría"
-            className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm outline-none [&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
+            className="flex-1 rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
           >
             <option value="">Todas las categorías</option>
             {visibleCategories.map((name) => (
@@ -1764,7 +1761,7 @@ export default function Home() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar en notas, categorías o cuentas…"
-            className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+            className="flex-1 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
           />
 
           {hasFilters && (
@@ -1773,9 +1770,10 @@ export default function Home() {
                 setCategoryFilter("");
                 setSearch("");
               }}
-              className="text-sm px-3 py-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
+              className="text-sm px-3 py-2 rounded-md hover:bg-surface-3 text-fg-muted"
             >
-              Limpiar ✕
+              Limpiar
+              <X className="size-4 inline-block align-[-2px] ml-1" aria-hidden />
             </button>
           )}
         </div>
@@ -1783,7 +1781,7 @@ export default function Home() {
         {truncated && (
           <p
             role="alert"
-            className="mx-4 mt-3 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+            className="mx-4 mt-3 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
           >
             Este mes tiene más de {MOVEMENTS_MAX_ROWS} movimientos, así que la
             lista muestra sólo los primeros {MOVEMENTS_MAX_ROWS}. Los totales de
@@ -1794,33 +1792,33 @@ export default function Home() {
 
         <div className="p-4 flex flex-col gap-2">
           {loading && (
-            <p className="text-center text-zinc-500 py-8">Cargando…</p>
+            <p className="text-center text-fg-muted py-8">Cargando…</p>
           )}
 
           {!loading && loadError && (
             <p
               role="alert"
-              className="text-center text-rose-600 dark:text-rose-400 py-8 px-4"
+              className="text-center text-danger py-8 px-4"
             >
               {loadError}
             </p>
           )}
 
           {!loading && !loadError && visible.length === 0 && movements.length === 0 && (
-            <div className="text-center py-10 text-zinc-500">
-              <p className="text-4xl mb-2">🪙</p>
+            <div className="text-center py-10 text-fg-muted">
+              <p className="mb-2"><Coins className="size-10 inline-block" aria-hidden /></p>
               <p className="font-medium">Sin movimientos este mes</p>
               <p className="text-sm mt-1">
                 {accounts.length === 0 ? (
                   <>
                     Empezá creando una cuenta con{" "}
-                    <b className="text-sky-600">+ Agregar cuenta</b>.
+                    <b className="text-transfer">+ Agregar cuenta</b>.
                   </>
                 ) : (
                   <>
-                    Tocá <b className="text-emerald-600">＋ Ingreso</b>,{" "}
-                    <b className="text-rose-600">－ Gasto</b> o{" "}
-                    <b className="text-sky-600">⇄ Transferir</b>.
+                    Tocá <b className="text-success">＋ Ingreso</b>,{" "}
+                    <b className="text-danger">－ Gasto</b> o{" "}
+                    <b className="text-transfer">⇄ Transferir</b>.
                   </>
                 )}
               </p>
@@ -1828,8 +1826,8 @@ export default function Home() {
           )}
 
           {!loading && visible.length === 0 && movements.length > 0 && (
-            <div className="text-center py-10 text-zinc-500">
-              <p className="text-4xl mb-2">🔍</p>
+            <div className="text-center py-10 text-fg-muted">
+              <p className="mb-2"><Search className="size-10 inline-block" aria-hidden /></p>
               <p className="font-medium">Sin movimientos con esos filtros</p>
               <button
                 onClick={() => {
@@ -1837,7 +1835,7 @@ export default function Home() {
                   setCategoryFilter("");
                   setSearch("");
                 }}
-                className="text-sm mt-2 underline text-emerald-600"
+                className="text-sm mt-2 underline text-success"
               >
                 Limpiar filtros
               </button>
@@ -1852,7 +1850,7 @@ export default function Home() {
             return (
               <div
                 key={movement.id}
-                className="@container border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
+                className="@container border border-line rounded-md px-3 py-2.5"
               >
                 {/* La fila se parte cuando la TARJETA es angosta: la variante
                     `angosta:` es una container query (el corte es por el ancho
@@ -1882,7 +1880,7 @@ export default function Home() {
                   <div
                     className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-lg ${style.bubble}`}
                   >
-                    {style.icon}
+                    <style.icon className="size-4" aria-hidden />
                   </div>
 
                   <div className="mov-texto flex-1 min-w-0 angosta:min-w-32">
@@ -1890,7 +1888,7 @@ export default function Home() {
                       {isTransfer ? (
                         <>
                           {movement.account.name}
-                          <span className="mx-1.5 text-sky-500">→</span>
+                          <span className="mx-1.5 text-transfer">→</span>
                           {movement.toAccount?.name ?? "?"}
                         </>
                       ) : (
@@ -1901,13 +1899,13 @@ export default function Home() {
                           equivalencia que documenta el esquema). Es identidad,
                           no plata: no cambia ningún número. */}
                       {movement.recurrenceRuleId && (
-                        <span className="ml-2 align-middle text-[10px] uppercase font-bold rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-1.5 py-0.5">
-                          🔁 regla
+                        <span className="ml-2 align-middle text-[10px] uppercase font-bold rounded-full bg-warning/10 text-warning px-1.5 py-0.5">
+                          <RefreshCw className="size-4" aria-hidden /> regla
                         </span>
                       )}
                     </p>
 
-                    <p className="text-xs text-zinc-500 break-words">
+                    <p className="text-xs text-fg-muted break-words">
                       {/* `formatDayLabel` parsea el string de calendario con
                           componentes locales. Usar `new Date(...)` sobre el string
                           mostraría el día anterior. */}
@@ -1916,8 +1914,8 @@ export default function Home() {
                     </p>
 
                     {movement.description && (
-                      <p className="mt-1 text-sm leading-snug whitespace-pre-wrap break-words bg-zinc-50 dark:bg-zinc-800/60 rounded-lg px-2.5 py-1.5">
-                        📝 {movement.description}
+                      <p className="mt-1 text-sm leading-snug whitespace-pre-wrap break-words bg-surface bg-surface-3/60 rounded-lg px-2.5 py-1.5">
+                        <StickyNote className="size-4" aria-hidden /> {movement.description}
                       </p>
                     )}
                   </div>
@@ -1951,7 +1949,7 @@ export default function Home() {
 
                   {confirmDeleteId === movement.id ? (
                     <div className="flex flex-col items-end gap-1 pt-1">
-                      <span className="text-xs text-zinc-500 whitespace-nowrap">
+                      <span className="text-xs text-fg-muted whitespace-nowrap">
                         ¿Eliminar?
                       </span>
                       <div className="flex gap-1">
@@ -1959,7 +1957,7 @@ export default function Home() {
                           id={`mov-delete-confirm-${movement.id}`}
                           onClick={() => remove(movement.id)}
                           disabled={deleteBusyId !== null}
-                          className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 text-xs font-bold disabled:opacity-50"
+                          className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-2.5 py-1 text-xs font-bold disabled:opacity-50"
                         >
                           {deleteBusyId === movement.id ? "Eliminando…" : "Sí, borrar"}
                         </button>
@@ -1967,7 +1965,7 @@ export default function Home() {
                           id={`mov-delete-cancel-${movement.id}`}
                           onClick={() => setConfirmDeleteId(null)}
                           disabled={deleteBusyId !== null}
-                          className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-2.5 py-1 text-xs font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                          className="rounded-lg border border-line-strong px-2.5 py-1 text-xs font-medium hover:bg-surface-3 disabled:opacity-50"
                         >
                           Mejor no
                         </button>
@@ -1982,9 +1980,9 @@ export default function Home() {
                       }}
                       title="Eliminar"
                       aria-label="Eliminar movimiento"
-                      className="mov-borrar text-zinc-400 hover:text-rose-600 px-1 pt-1"
+                      className="mov-borrar text-fg-subtle hover:text-danger px-1 pt-1"
                     >
-                      🗑
+                      <Trash className="size-4" aria-hidden />
                     </button>
                   )}
                   </div>
@@ -1994,7 +1992,7 @@ export default function Home() {
                   <p
                     id={`mov-delete-notice-${movement.id}`}
                     role="alert"
-                    className="mt-2 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                    className="mt-2 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
                   >
                     {notice.message}
                   </p>
@@ -2005,7 +2003,7 @@ export default function Home() {
         </div>
       </div>
 
-      <p className="text-center text-xs text-zinc-400 pb-2">
+      <p className="text-center text-xs text-fg-subtle pb-2">
         <Link href="/analisis" className="underline inline-flex items-center touch:min-h-11">
           Ver análisis del mes →
         </Link>
@@ -2019,7 +2017,7 @@ export default function Home() {
         <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4 pointer-events-none">
           <div
             id="undo-toast"
-            className="pointer-events-auto rounded-2xl bg-zinc-900 text-white dark:bg-white dark:text-black px-4 py-3 shadow-2xl text-sm"
+            className="pointer-events-auto rounded-md bg-primary text-primary-fg px-4 py-3 shadow-2xl text-sm"
           >
             <div className="flex items-center gap-3">
               <span>Movimiento guardado.</span>
@@ -2035,7 +2033,7 @@ export default function Home() {
                 id="undo-dismiss"
                 onClick={() => setUndoToast(null)}
                 aria-label="Cerrar aviso"
-                className="text-lg leading-none px-1 text-zinc-400 hover:text-zinc-200 dark:text-zinc-500 dark:hover:text-zinc-700"
+                className="text-lg leading-none px-1 text-fg-subtle hover:text-fg-muted "
               >
                 ×
               </button>
@@ -2044,7 +2042,7 @@ export default function Home() {
               <p
                 id="undo-error"
                 role="alert"
-                className="mt-2 text-xs rounded-lg bg-rose-500 text-white px-2 py-1"
+                className="mt-2 text-xs rounded-lg bg-danger text-primary-fg px-2 py-1"
               >
                 {undoToast.error}
               </p>

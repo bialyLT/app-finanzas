@@ -20,10 +20,10 @@ const STATUS_STYLE: Record<
   CsvRowPreviewDTO["status"],
   { label: string; className: string }
 > = {
-  VALID: { label: "Válida", className: "bg-emerald-100 text-emerald-800" },
-  INVALID: { label: "Inválida", className: "bg-rose-100 text-rose-800" },
-  DUPLICATE: { label: "Duplicada", className: "bg-amber-100 text-amber-800" },
-  EMPTY: { label: "Vacía", className: "bg-zinc-100 text-zinc-600" },
+  VALID: { label: "Válida", className: "bg-success/10 text-success" },
+  INVALID: { label: "Inválida", className: "bg-danger/10 text-danger" },
+  DUPLICATE: { label: "Duplicada", className: "bg-warning/10 text-warning" },
+  EMPTY: { label: "Vacía", className: "bg-surface-3 text-fg-muted" },
 };
 
 function byteLength(value: string): number {
@@ -173,7 +173,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Importar movimientos desde CSV"
-        className="w-full sm:max-w-3xl max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+        className="w-full sm:max-w-3xl max-h-[92vh] flex flex-col overflow-hidden bg-surface-2 rounded-t-md sm:rounded-md shadow-2xl"
       >
         {/* Columna flex: el encabezado y el pie son `flex-none` y el área
             que scrollea termina donde empieza el pie (antes el pie era
@@ -182,7 +182,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
             <h2 className="text-xl font-bold">Importar CSV</h2>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-fg-muted">
               Pegá el texto o elegí un archivo. Primero se previsualiza; nada
               se guarda hasta confirmar.
             </p>
@@ -192,7 +192,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
             type="button"
             onClick={onClose}
             aria-label="Cerrar importación"
-            className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
           >
             ×
           </button>
@@ -205,7 +205,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
           <div
             id="csv-result"
             role="status"
-            className="rounded-xl bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 px-4 py-3 text-sm"
+            className="rounded-md bg-success/10 text-success px-4 py-3 text-sm"
           >
             <p className="font-bold">
               Importación completa: {result.imported}{" "}
@@ -234,7 +234,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                 id="csv-result-close"
                 type="button"
                 onClick={onClose}
-                className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 text-xs font-bold"
+                className="rounded-lg bg-success hover:bg-success/90 text-primary-fg px-3 py-1.5 text-xs font-bold"
               >
                 Listo
               </button>
@@ -254,7 +254,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
               }
               rows={5}
               spellCheck={false}
-              className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-emerald-500"
+              className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-focus"
             />
 
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
@@ -272,18 +272,18 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                 }}
                 className="text-xs"
               />
-              <span className="text-zinc-400">
+              <span className="text-fg-subtle">
                 máx. {Math.floor(CSV_MAX_BYTES / 1024)} KB ·{" "}
                 {CSV_MAX_ROWS} filas · UTF-8
               </span>
             </div>
             {fileName && (
-              <p className="mt-1 text-[11px] text-zinc-500">
+              <p className="mt-1 text-[11px] text-fg-muted">
                 Archivo: {fileName}
               </p>
             )}
 
-            <details className="mt-2 text-xs text-zinc-500">
+            <details className="mt-2 text-xs text-fg-muted">
               <summary className="cursor-pointer">
                 Formato aceptado (headers y alias)
               </summary>
@@ -304,7 +304,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
               <p
                 id="csv-error"
                 role="alert"
-                className="mt-3 text-sm rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-3 py-2"
+                className="mt-3 text-sm rounded-lg bg-danger/10 text-danger px-3 py-2"
               >
                 {error}
               </p>
@@ -316,41 +316,41 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                   id="csv-summary"
                   className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center"
                 >
-                  <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-2 py-2">
-                    <p className="text-[11px] text-zinc-500">Filas</p>
+                  <div className="rounded-lg bg-surface bg-surface-3/60 px-2 py-2">
+                    <p className="text-[11px] text-fg-muted">Filas</p>
                     <p className="font-bold">{preview.totalRows}</p>
                   </div>
-                  <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950 px-2 py-2">
-                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                  <div className="rounded-lg bg-success/10 px-2 py-2">
+                    <p className="text-[11px] text-success ">
                       Importables
                     </p>
-                    <p className="font-bold text-emerald-700 dark:text-emerald-300">
+                    <p className="font-bold text-success ">
                       {preview.importableRows}
                     </p>
                   </div>
-                  <div className="rounded-lg bg-rose-50 dark:bg-rose-950 px-2 py-2">
-                    <p className="text-[11px] text-rose-700 dark:text-rose-300">
+                  <div className="rounded-lg bg-danger/10 px-2 py-2">
+                    <p className="text-[11px] text-danger ">
                       Inválidas
                     </p>
-                    <p className="font-bold text-rose-700 dark:text-rose-300">
+                    <p className="font-bold text-danger ">
                       {preview.invalidRows}
                     </p>
                   </div>
-                  <div className="rounded-lg bg-amber-50 dark:bg-amber-950 px-2 py-2">
-                    <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                  <div className="rounded-lg bg-warning/10 px-2 py-2">
+                    <p className="text-[11px] text-warning ">
                       Duplicadas
                     </p>
-                    <p className="font-bold text-amber-700 dark:text-amber-300">
+                    <p className="font-bold text-warning ">
                       {preview.duplicateRows}
                     </p>
                   </div>
-                  <div className="rounded-lg bg-zinc-50 dark:bg-zinc-800/60 px-2 py-2">
-                    <p className="text-[11px] text-zinc-500">Vacías</p>
+                  <div className="rounded-lg bg-surface bg-surface-3/60 px-2 py-2">
+                    <p className="text-[11px] text-fg-muted">Vacías</p>
                     <p className="font-bold">{preview.emptyRows}</p>
                   </div>
                 </div>
 
-                <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
+                <p className="mt-2 text-xs text-fg-muted ">
                   Se importarían {preview.totals.count}{" "}
                   {preview.totals.count === 1 ? "movimiento" : "movimientos"}:{" "}
                   ingresos {formatMoney(preview.totals.income)} · gastos{" "}
@@ -359,7 +359,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                 </p>
 
                 {preview.duplicateRows > 0 && (
-                  <p className="mt-1 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-2 py-1.5">
+                  <p className="mt-1 text-xs rounded-lg bg-warning/10 text-warning px-2 py-1.5">
                     {preview.duplicateRows}{" "}
                     {preview.duplicateRows === 1
                       ? "fila ya existe y se omite"
@@ -369,14 +369,14 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                 )}
 
                 {preview.invalidRows > 0 && (
-                  <p className="mt-1 text-xs rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-800 dark:text-rose-200 px-2 py-1.5">
+                  <p className="mt-1 text-xs rounded-lg bg-danger/10 text-danger px-2 py-1.5">
                     Hay filas inválidas. La importación es todo o nada: corregí
                     el archivo o quitá esas filas antes de confirmar.
                   </p>
                 )}
 
                 {preview.categoriesToCreate.length > 0 && (
-                  <p className="mt-1 text-xs text-zinc-500">
+                  <p className="mt-1 text-xs text-fg-muted">
                     Categorías nuevas:{" "}
                     {preview.categoriesToCreate
                       .map((category) => category.name)
@@ -400,7 +400,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                 */}
                 <div
                   id="csv-rows-movil"
-                  className="sm:hidden mt-2 max-h-64 overflow-y-auto space-y-2 rounded-xl border border-zinc-200 dark:border-zinc-800 p-2"
+                  className="sm:hidden mt-2 max-h-64 overflow-y-auto space-y-2 rounded-md border border-line p-2"
                 >
                   {preview.rows.map((row) => {
                     const status = STATUS_STYLE[row.status];
@@ -408,10 +408,10 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                       <div
                         key={`movil-${row.line}-${row.status}`}
                         id={`csv-fila-${row.line}`}
-                        className="rounded-lg border border-zinc-100 dark:border-zinc-800 p-2 text-[11px]"
+                        className="rounded-lg border border-line p-2 text-[11px]"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-zinc-500">Línea {row.line}</span>
+                          <span className="text-fg-muted">Línea {row.line}</span>
                           <span
                             className={`rounded-full px-1.5 py-0.5 font-bold ${status.className}`}
                           >
@@ -420,24 +420,24 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                         </div>
                         <p className="mt-1 font-semibold">
                           {row.amount ? formatMoney(row.amount) : "—"}
-                          <span className="font-normal text-zinc-500">
+                          <span className="font-normal text-fg-muted">
                             {" · "}
                             {row.date ?? "—"} ·{" "}
                             {row.kind ? MOVEMENT_KIND_LABEL[row.kind] : "—"}
                           </span>
                         </p>
-                        <p className="text-zinc-600 dark:text-zinc-300">
+                        <p className="text-fg-muted ">
                           {row.account}
                           {row.toAccount ? ` → ${row.toAccount}` : ""}
                         </p>
                         {(row.category || row.description) && (
-                          <p className="text-zinc-500">
+                          <p className="text-fg-muted">
                             {row.category || "—"}
                             {row.description ? ` · ${row.description}` : ""}
                           </p>
                         )}
                         {row.errors.length > 0 && (
-                          <p className="mt-0.5 text-rose-600 dark:text-rose-400">
+                          <p className="mt-0.5 text-danger ">
                             {row.errors.join(" · ")}
                           </p>
                         )}
@@ -448,10 +448,10 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
 
                 <div
                   id="csv-rows"
-                  className="hidden sm:block mt-2 max-h-64 overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800"
+                  className="hidden sm:block mt-2 max-h-64 overflow-auto rounded-md border border-line "
                 >
                   <table className="w-full text-left text-[11px]">
-                    <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800">
+                    <thead className="sticky top-0 bg-surface-3 ">
                       <tr>
                         <th className="px-2 py-1.5">Línea</th>
                         <th className="px-2 py-1.5">Estado</th>
@@ -469,9 +469,9 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                           <tr
                             key={`${row.line}-${row.status}`}
                             id={`csv-row-${row.line}`}
-                            className="border-t border-zinc-100 dark:border-zinc-800 align-top"
+                            className="border-t border-line align-top"
                           >
-                            <td className="px-2 py-1.5 text-zinc-500">
+                            <td className="px-2 py-1.5 text-fg-muted">
                               {row.line}
                             </td>
                             <td className="px-2 py-1.5">
@@ -481,7 +481,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                                 {status.label}
                               </span>
                               {row.errors.length > 0 && (
-                                <span className="block mt-0.5 text-rose-600 dark:text-rose-400">
+                                <span className="block mt-0.5 text-danger ">
                                   {row.errors.join(" · ")}
                                 </span>
                               )}
@@ -519,12 +519,12 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
         </div>
 
         {!result && (
-          <div className="flex-none px-5 py-3 bg-white dark:bg-zinc-900 border-t border-zinc-100 dark:border-zinc-800 flex flex-wrap justify-end gap-2">
+          <div className="flex-none px-5 py-3 bg-surface-2 border-t border-line flex flex-wrap justify-end gap-2">
             <button
               id="csv-cancel"
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium"
+              className="rounded-md border border-line-strong px-4 py-2 text-sm font-medium"
             >
               Cancelar
             </button>
@@ -533,7 +533,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
               type="button"
               onClick={() => void runPreview()}
               disabled={busy}
-              className="rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black px-4 py-2 text-sm font-bold disabled:opacity-50"
+              className="rounded-lg bg-primary text-primary-fg px-4 py-2 text-sm font-bold disabled:opacity-50"
             >
               {busy && !preview ? "Leyendo…" : "Previsualizar"}
             </button>
@@ -542,7 +542,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
               type="button"
               onClick={() => void confirmImport()}
               disabled={!canConfirm}
-              className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-sm font-bold disabled:opacity-50"
+              className="rounded-lg bg-success hover:bg-success/90 text-primary-fg px-4 py-2 text-sm font-bold disabled:opacity-50"
             >
               {busy && preview ? "Importando…" : "Confirmar importación"}
             </button>

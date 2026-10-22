@@ -6,6 +6,7 @@ import { addMonths, todayCalendar } from "@/lib/dates";
 import type { AccountBalanceDTO, LoanPreviewDTO } from "@/lib/finance";
 import { AMORTIZATION_SYSTEM_LABEL } from "@/lib/finance";
 import { formatAmountInput, formatMoney, formatPercent } from "@/lib/format";
+import { Handshake, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 
 interface Props {
   /** Cuentas de dinero (no archivadas, CASH o BANK) para el desembolso. */
@@ -460,7 +461,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Nuevo préstamo"
-        className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+        className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-surface-2 rounded-t-md sm:rounded-md shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* El panel es una columna: el encabezado y el pie son `flex-none` y
@@ -471,11 +472,11 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
             cargado se perdía — el BUG-3 de la ronda). */}
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold">🤝 Nuevo préstamo</h2>
+          <h2 className="text-xl font-bold flex items-center gap-2"><Handshake className="size-5" aria-hidden />Nuevo préstamo</h2>
           <button
             id="loanalta-close"
             onClick={closeOrSkip}
-            className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×
@@ -502,7 +503,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Ej: Préstamo del banco"
                     maxLength={100}
-                    className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
                   />
                 </div>
 
@@ -520,17 +521,17 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                         type="button"
                         aria-pressed={mode === option.value}
                         onClick={() => cambiarModo(option.value)}
-                        className={`min-h-11 rounded-xl px-1 py-2 text-xs font-medium border ${
+                        className={`min-h-11 rounded-md px-1 py-2 text-xs font-medium border ${
                           mode === option.value
-                            ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                            : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            ? "border-transparent bg-primary text-primary-fg "
+                            : "border-line-strong hover:bg-surface-3 "
                         }`}
                       >
                         {option.label}
                       </button>
                     ))}
                   </div>
-                  <p className="mt-1 text-xs text-zinc-500">
+                  <p className="mt-1 text-xs text-fg-muted">
                     {mode === "PAYMENT" &&
                       "Cargá la cuota que vas a pagar por mes: la app calcula la tasa."}
                     {mode === "TOTAL" &&
@@ -556,10 +557,10 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       value={principal}
                       onChange={(e) => setPrincipal(e.target.value)}
                       placeholder="500.000"
-                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                     />
                     {principalPreview && (
-                      <p className="mt-1 text-xs text-zinc-500">
+                      <p className="mt-1 text-xs text-fg-muted">
                         {principalPreview}
                       </p>
                     )}
@@ -585,14 +586,14 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                           ? "Tasa anual (TNA) en porcentaje"
                           : "Tasa anual (TNA) en porcentaje: la calculó la app, tocá para cargarla a mano"
                       }
-                      className={`mt-1 w-full rounded-xl border px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500 ${
+                      className={`mt-1 w-full rounded-md border px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus ${
                         mode === "RATE"
-                          ? "border-zinc-300 dark:border-zinc-700 bg-transparent"
-                          : "border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-800/60 text-zinc-600 dark:text-zinc-300"
+                          ? "border-line-strong bg-transparent"
+                          : "border-line bg-surface-3 bg-surface-3/60 text-fg-muted "
                       }`}
                     />
                     {mode !== "RATE" && (
-                      <p id="loanalta-tna-derived" className="mt-1 text-xs text-zinc-500">
+                      <p id="loanalta-tna-derived" className="mt-1 text-xs text-fg-muted">
                         {tnaDerivada === null
                           ? "La tasa sale de lo que vas a pagar."
                           : `Te sale al ${formatPercent(tnaDerivada)} anual`}
@@ -639,13 +640,13 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                         // contradicción.
                         mode === "PAYMENT" ? "56.412,71" : "676.952,44"
                       }
-                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                     />
                     {mode === "PAYMENT" && paymentPreview && (
-                      <p className="mt-1 text-xs text-zinc-500">{paymentPreview}</p>
+                      <p className="mt-1 text-xs text-fg-muted">{paymentPreview}</p>
                     )}
                     {mode === "TOTAL" && totalPreview && (
-                      <p className="mt-1 text-xs text-zinc-500">{totalPreview}</p>
+                      <p className="mt-1 text-xs text-fg-muted">{totalPreview}</p>
                     )}
                   </div>
                 )}
@@ -663,7 +664,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       value={count}
                       onChange={(e) => setCount(e.target.value)}
                       placeholder="12"
-                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                     />
                   </div>
                   <div>
@@ -678,7 +679,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                         setFirstDate(e.target.value);
                         clearDateInputIfEmptied(e.target);
                       }}
-                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                     />
                   </div>
                 </div>
@@ -694,26 +695,26 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       type="button"
                       aria-pressed={direction === "I_OWE"}
                       onClick={() => setDirection("I_OWE")}
-                      className={`rounded-xl py-2.5 px-2 text-xs font-medium border ${
+                      className={`rounded-md py-2.5 px-2 text-xs font-medium border ${
                         direction === "I_OWE"
-                          ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                          : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                          ? "border-transparent bg-primary text-primary-fg "
+                          : "border-line-strong hover:bg-surface-3 "
                       }`}
                     >
-                      💸 Recibí un préstamo
+                      <ArrowDownLeft className="size-4 inline-block align-[-2px]" aria-hidden /> Recibí un préstamo
                     </button>
                     <button
                       id="loan-dir-OWED_TO_ME"
                       type="button"
                       aria-pressed={direction === "OWED_TO_ME"}
                       onClick={() => setDirection("OWED_TO_ME")}
-                      className={`rounded-xl py-2.5 px-2 text-xs font-medium border ${
+                      className={`rounded-md py-2.5 px-2 text-xs font-medium border ${
                         direction === "OWED_TO_ME"
-                          ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                          : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                          ? "border-transparent bg-primary text-primary-fg "
+                          : "border-line-strong hover:bg-surface-3 "
                       }`}
                     >
-                      🤲 Presté plata
+                      <ArrowUpRight className="size-4 inline-block align-[-2px]" aria-hidden /> Presté plata
                     </button>
                   </div>
                 </div>
@@ -725,7 +726,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       : "¿De qué cuenta salió? *"}
                   </label>
                   {cashAccounts.length === 0 ? (
-                    <p className="mt-1 text-xs rounded-xl bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2">
+                    <p className="mt-1 text-xs rounded-md bg-warning/10 text-warning px-3 py-2">
                       No hay cuentas de banco o efectivo: creá una primero para
                       poder registrar el desembolso.
                     </p>
@@ -734,7 +735,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       id="loanalta-cash"
                       value={cashId}
                       onChange={(e) => setCashId(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                      className="mt-1 w-full rounded-md border border-line-strong bg-surface-2 px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                     >
                       {cashAccounts.map((account) => (
                         <option key={account.id} value={account.id}>
@@ -755,17 +756,17 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                         type="button"
                         aria-pressed={system === option.value}
                         onClick={() => setSystem(option.value)}
-                        className={`rounded-xl py-2 text-xs font-medium border ${
+                        className={`rounded-md py-2 text-xs font-medium border ${
                           system === option.value
-                            ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                            : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                            ? "border-transparent bg-primary text-primary-fg "
+                            : "border-line-strong hover:bg-surface-3 "
                         }`}
                       >
                         {option.label}
                       </button>
                     ))}
                   </div>
-                  <p className="mt-1 text-xs text-zinc-500">
+                  <p className="mt-1 text-xs text-fg-muted">
                     {AMORTIZATION_SYSTEM_LABEL[system]}
                     {system === "INTEREST_ONLY" &&
                       ": el interés va mes a mes; el capital se cancela aparte."}
@@ -775,17 +776,17 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 {preview ? (
                   <div
                     id="loanalta-preview"
-                    className="rounded-xl bg-sky-50 dark:bg-sky-950 px-4 py-3 text-sm"
+                    className="rounded-md bg-transfer/10 px-4 py-3 text-sm"
                   >
-                    <p className="font-bold text-sky-900 dark:text-sky-100">
+                    <p className="font-bold text-transfer ">
                       {count.trim()}{" "}
                       {Number(count.trim()) === 1 ? "cuota" : "cuotas"} de{" "}
                       {formatMoney(preview.payment)}
                     </p>
-                    <p className="mt-1 text-sky-800 dark:text-sky-200">
+                    <p className="mt-1 text-transfer ">
                       Total a {verb}: <b>{formatMoney(preview.totalPaid)}</b>
                     </p>
-                    <p className="mt-1 text-sky-800 dark:text-sky-200">
+                    <p className="mt-1 text-transfer ">
                       Interés: {formatMoney(preview.totalInterest)} (
                       {formatPercent(preview.interestSharePercent)} del total)
                     </p>
@@ -793,20 +794,20 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                         (o sea, lo que la persona NO tuvo que calcular). */}
                     <p
                       id="loanalta-preview-rate"
-                      className="mt-1 text-sky-800 dark:text-sky-200"
+                      className="mt-1 text-transfer "
                     >
                       {mode === "RATE" ? "Tasa" : "Te sale al"}{" "}
                       <b>{formatPercent(preview.tnaPercent)}</b> anual
                     </p>
                     {preview.exact === false && (
-                      <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
+                      <p className="mt-1 text-xs text-transfer ">
                         Con esa tasa la cuota queda en{" "}
                         {formatMoney(preview.payment)}: es el valor más cercano
                         que la tasa guardada permite.
                       </p>
                     )}
                     {system === "AMERICAN" && (
-                      <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
+                      <p className="mt-1 text-xs text-transfer ">
                         La primera cuota es sólo interés: el capital se paga en
                         el cierre.
                       </p>
@@ -814,7 +815,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   </div>
                 ) : (
                   !previewError && (
-                    <p className="text-xs text-zinc-500 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-3 py-3">
+                    <p className="text-xs text-fg-muted rounded-md border border-dashed border-line-strong px-3 py-3">
                       {mode === "RATE"
                         ? "La vista previa aparece cuando cargues el monto, la tasa y la cantidad de cuotas."
                         : "La vista previa aparece cuando cargues el monto, la cantidad de cuotas y lo que vas a pagar."}
@@ -829,7 +830,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
         {/* Pie: hermano del área que scrollea (`flex-none`, no `sticky`).
             El botón de guardar referencia al formulario (`#loan-form`) con
             `form=`, así el pie puede vivir fuera del `<form>`. */}
-        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-surface-2 ">
               {/* El error de la VISTA PREVIA va en el PIE, no en la columna de
                   la derecha: el pie está SIEMPRE a la vista (aunque el
                   formulario scrollee) y el error de la cuota insuficiente es
@@ -839,7 +840,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 <p
                   id="loanalta-preview-error"
                   role="alert"
-                  className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                  className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
                 >
                   {previewError}
                 </p>
@@ -849,7 +850,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 <p
                   id="loanalta-error"
                   role="alert"
-                  className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                  className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
                 >
                   {error}
                 </p>
@@ -863,7 +864,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 <div
                   id="loanalta-discard-warning"
                   role="alert"
-                  className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                  className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
                 >
                   <p>Si cerrás ahora se pierde lo que cargaste.</p>
                   <div className="mt-2 flex gap-2">
@@ -871,7 +872,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       id="loanalta-discard-cancel"
                       type="button"
                       onClick={() => setDiscardWarning(false)}
-                      className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                      className="rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium"
                     >
                       Seguir editando
                     </button>
@@ -879,7 +880,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       id="loanalta-discard-confirm"
                       type="button"
                       onClick={onClose}
-                      className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 text-xs font-bold"
+                      className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1 text-xs font-bold"
                     >
                       Descartar
                     </button>
@@ -892,7 +893,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   id="loanalta-cancel"
                   type="button"
                   onClick={() => setDiscardWarning(true)}
-                  className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+                  className="flex-1 rounded-md border border-line-strong py-3 font-medium"
                 >
                   Cancelar
                 </button>
@@ -918,7 +919,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   // dinero no se crea el préstamo.
                   // ─────────────────────────────────────────────────────────────
                   disabled={saving}
-                  className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
+                  className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
                 >
                   {saving ? "Creando…" : "Crear préstamo"}
                 </button>
@@ -930,7 +931,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
           {/* ── Paso 2: el desembolso, explícito ─────────────────────────── */}
           <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
           <div className="flex flex-col gap-4">
-            <div className="rounded-xl bg-sky-50 dark:bg-sky-950 px-4 py-3 text-sm text-sky-900 dark:text-sky-100">
+            <div className="rounded-md bg-transfer/10 px-4 py-3 text-sm text-transfer ">
               <p className="font-bold">
                 Un último paso: registrar el desembolso de{" "}
                 {created
@@ -967,7 +968,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                     setDisburseDate(e.target.value);
                     clearDateInputIfEmptied(e.target);
                   }}
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                 />
               </div>
               <div>
@@ -978,7 +979,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   id="loanalta-cash"
                   value={cashId}
                   onChange={(e) => setCashId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-surface-2 px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                 >
                   {cashAccounts.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -989,12 +990,12 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
               </div>
             </div>
 
-            <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+            <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-surface-2 ">
               {error && (
                 <p
                   id="loanalta-error"
                   role="alert"
-                  className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                  className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
                 >
                   {error}
                 </p>
@@ -1006,7 +1007,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   type="button"
                   onClick={skipDisburse}
                   disabled={saving}
-                  className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium disabled:opacity-50"
+                  className="flex-1 rounded-md border border-line-strong py-3 font-medium disabled:opacity-50"
                 >
                   Ahora no
                 </button>
@@ -1015,7 +1016,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                   type="button"
                   onClick={handleDisburse}
                   disabled={saving}
-                  className="flex-1 rounded-xl py-3 font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50"
+                  className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-success hover:bg-success/90 disabled:opacity-50"
                 >
                   {saving ? "Registrando…" : "Registrar el desembolso"}
                 </button>

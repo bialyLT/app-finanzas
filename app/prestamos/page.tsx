@@ -27,6 +27,7 @@ import {
   loanStatus,
 } from "@/lib/loan-ui";
 import type { InstallmentState, LoanStatus } from "@/lib/loan-ui";
+import { Handshake, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 
 /**
  * Pantalla de préstamos (Fase 4, ronda 2): lo que debés y lo que te deben.
@@ -78,22 +79,22 @@ function monthKey(year: number, month: number): string {
 /** El chip de estado de la tarjeta, con sus colores. */
 const STATUS_CLASS: Record<LoanStatus, string> = {
   Cubierto:
-    "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300",
-  "Al día": "bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300",
-  Vencida: "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300",
+    "bg-success/10 text-success ",
+  "Al día": "bg-transfer/10 text-transfer ",
+  Vencida: "bg-danger/10 text-danger ",
   "Sin cronograma":
-    "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300",
+    "bg-surface-3 text-fg-muted ",
 };
 
 /** La píldora de cada cuota del cronograma. */
 const INSTALLMENT_STATE_CLASS: Record<InstallmentState, string> = {
   Pagada:
-    "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300",
-  Cubierta: "bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300",
-  Vencida: "bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300",
-  Pendiente: "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300",
+    "bg-success/10 text-success ",
+  Cubierta: "bg-transfer/10 text-transfer ",
+  Vencida: "bg-danger/10 text-danger ",
+  Pendiente: "bg-surface-3 text-fg-muted ",
   "Solo interés":
-    "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200",
+    "bg-warning/10 text-warning ",
 };
 
 /** El bloque abierto de la pantalla: uno solo a la vez, como en `/tarjetas`. */
@@ -457,8 +458,8 @@ export default function LoansPage() {
       {/* ── Título, alta y archivadas ────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-extrabold">🤝 Préstamos</h1>
-          <p className="text-sm text-zinc-500">
+          <h1 className="text-2xl font-extrabold flex items-center gap-2"><Handshake className="size-6" aria-hidden />Préstamos</h1>
+          <p className="text-sm text-fg-muted">
             Lo que debés y lo que te deben, con su cronograma y su progreso.
             Cada pago mueve plata de verdad: una transferencia por el capital y
             un gasto (o ingreso) por el interés.
@@ -472,7 +473,7 @@ export default function LoansPage() {
               setFormOpen(true);
             }}
             disabled={busyId !== null}
-            className="rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black px-3 py-2 text-sm font-bold disabled:opacity-50"
+            className="rounded-lg bg-primary text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
           >
             ＋ Nuevo préstamo
           </button>
@@ -480,10 +481,10 @@ export default function LoansPage() {
             id="loans-toggle-archived"
             onClick={toggleArchived}
             aria-pressed={includeArchived}
-            className={`rounded-xl border px-3 py-2 text-sm font-medium ${
+            className={`rounded-md border px-3 py-2 text-sm font-medium ${
               includeArchived
-                ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-                : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                ? "border-transparent bg-primary text-primary-fg "
+                : "border-line-strong hover:bg-surface-3 "
             }`}
           >
             {includeArchived ? "Ocultar archivados" : "Ver archivados"}
@@ -496,10 +497,10 @@ export default function LoansPage() {
         <p
           id="loans-flash"
           role="status"
-          className={`rounded-xl px-3 py-2 text-sm ${
+          className={`rounded-md px-3 py-2 text-sm ${
             flashError
-              ? "bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300"
-              : "bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200"
+              ? "bg-danger/10 text-danger "
+              : "bg-success/10 text-success "
           }`}
         >
           {flash}
@@ -507,7 +508,7 @@ export default function LoansPage() {
       )}
 
       {loading && (
-        <p className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-10 text-center text-zinc-500 shadow-sm">
+        <p className="bg-surface-2 rounded-md px-4 py-10 text-center text-fg-muted shadow-sm">
           Cargando…
         </p>
       )}
@@ -515,7 +516,7 @@ export default function LoansPage() {
       {!loading && loadError && (
         <p
           role="alert"
-          className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-8 text-center text-rose-600 dark:text-rose-400 shadow-sm"
+          className="bg-surface-2 rounded-md px-4 py-8 text-center text-danger shadow-sm"
         >
           {loadError}
         </p>
@@ -527,17 +528,17 @@ export default function LoansPage() {
           {loanDebts.length > 0 && (
             <section
               id="loans-commitments"
-              className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm px-4 py-4"
+              className="bg-surface-2 rounded-md shadow-sm px-4 py-4"
             >
-              <h2 className="text-sm font-bold uppercase tracking-wide text-zinc-500">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-fg-muted">
                 Compromisos próximos
               </h2>
               <p
                 id="loans-commit-overdue"
                 className={`mt-2 text-sm ${
                   commitOverdueCount > 0
-                    ? "text-rose-700 dark:text-rose-300 font-medium"
-                    : "text-zinc-500"
+                    ? "text-danger font-medium"
+                    : "text-fg-muted"
                 }`}
               >
                 {commitOverdueCount > 0
@@ -560,14 +561,14 @@ export default function LoansPage() {
                     <li
                       key={key}
                       id={`loans-commit-month-${key}`}
-                      className="text-xs rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-zinc-600 dark:text-zinc-300"
+                      className="text-xs rounded-full bg-surface-3 px-2 py-0.5 text-fg-muted "
                     >
                       {entry.label} {formatMoney(sumAmounts(entry.amounts))}
                     </li>
                   ))}
                 </ul>
               )}
-              <p className="text-xs text-zinc-500 mt-2">
+              <p className="text-xs text-fg-muted mt-2">
                 Sólo cuenta los préstamos que tenés que pagar: la plata que te
                 deben no es un compromiso tuyo. Lo vencido va aparte y no se
                 suma a los próximos 12 meses.
@@ -578,17 +579,17 @@ export default function LoansPage() {
           {/* ── Debo ─────────────────────────────────────────────────────── */}
           <section className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-2 flex-wrap">
-              <h2 className="text-lg font-bold">💸 Debo</h2>
+              <h2 className="text-lg font-bold flex items-center gap-2"><ArrowUpRight className="size-5" aria-hidden />Debo</h2>
               <p
                 id="loans-total-debt"
-                className="text-sm text-zinc-600 dark:text-zinc-400"
+                className="text-sm text-fg-muted "
               >
                 Total: <b>{formatMoney(totalDebt)}</b>
               </p>
             </div>
 
             {loanDebts.length === 0 && (
-              <p className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-6 text-center text-zinc-500 shadow-sm text-sm">
+              <p className="bg-surface-2 rounded-md px-4 py-6 text-center text-fg-muted shadow-sm text-sm">
                 No hay préstamos que debas cargados.
               </p>
             )}
@@ -599,17 +600,17 @@ export default function LoansPage() {
           {/* ── Me deben ─────────────────────────────────────────────────── */}
           <section className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-2 flex-wrap">
-              <h2 className="text-lg font-bold">🤲 Me deben</h2>
+              <h2 className="text-lg font-bold flex items-center gap-2"><ArrowDownLeft className="size-5" aria-hidden />Me deben</h2>
               <p
                 id="loans-total-receivable"
-                className="text-sm text-zinc-600 dark:text-zinc-400"
+                className="text-sm text-fg-muted "
               >
                 Total: <b>{formatMoney(totalReceivable)}</b>
               </p>
             </div>
 
             {receivables.length === 0 && (
-              <p className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-6 text-center text-zinc-500 shadow-sm text-sm">
+              <p className="bg-surface-2 rounded-md px-4 py-6 text-center text-fg-muted shadow-sm text-sm">
                 No hay plata que te deban cargada.
               </p>
             )}
@@ -619,7 +620,7 @@ export default function LoansPage() {
         </>
       )}
 
-      <p className="text-center text-xs text-zinc-400 pb-2">
+      <p className="text-center text-xs text-fg-subtle pb-2">
         <Link href="/" className="underline inline-flex items-center touch:min-h-11">
           ← Volver al panel
         </Link>
@@ -691,7 +692,7 @@ export default function LoansPage() {
       <section
         key={loan.id}
         id={`loan-${loan.id}`}
-        className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm"
+        className="bg-surface-2 rounded-md shadow-sm"
       >
         {/* ── Encabezado de la tarjeta ───────────────────────────────────── */}
         <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
@@ -718,9 +719,9 @@ export default function LoansPage() {
               </p>
             )}
             {plan !== null && loan.progressPercent !== null && (
-              <div className="mt-1 h-1.5 w-full max-w-xs rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+              <div className="mt-1 h-1.5 w-full max-w-xs rounded-full bg-surface-3 overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-sky-500"
+                  className="h-full rounded-full bg-transfer"
                   style={{ width: `${progressWidth}%` }}
                 />
               </div>
@@ -728,13 +729,13 @@ export default function LoansPage() {
             {plan !== null &&
               loan.interestPaid !== null &&
               toCents(loan.interestPaid) > 0 && (
-                <p className="text-xs text-zinc-500 mt-0.5">
+                <p className="text-xs text-fg-muted mt-0.5">
                   Interés ya pagado: {formatMoney(loan.interestPaid)}.
                 </p>
               )}
             <p
               id={`loan-next-${loan.id}`}
-              className="text-sm text-zinc-600 dark:text-zinc-400 mt-0.5"
+              className="text-sm text-fg-muted mt-0.5"
             >
               {nextText}
             </p>
@@ -751,7 +752,7 @@ export default function LoansPage() {
         {!loan.disbursed && (
           <div
             id={`loan-warning-${loan.id}`}
-            className="mx-4 mt-3 rounded-xl bg-amber-50 dark:bg-amber-950 px-3 py-2.5 text-sm text-amber-800 dark:text-amber-200"
+            className="mx-4 mt-3 rounded-md bg-warning/10 px-3 py-2.5 text-sm text-warning "
           >
             <p>
               {loan.kind === "LOAN"
@@ -764,7 +765,7 @@ export default function LoansPage() {
                 id={`loan-disburse-open-${loan.id}`}
                 onClick={() => openBlock(loan.id, "disburse")}
                 disabled={busyId !== null}
-                className="mt-2 rounded-xl border border-amber-300 dark:border-amber-800 px-3 py-1.5 text-sm font-medium hover:bg-amber-100 dark:hover:bg-amber-900 disabled:opacity-50"
+                className="mt-2 rounded-md border border-warning/40 px-3 py-1.5 text-sm font-medium hover:bg-warning/15 disabled:opacity-50"
               >
                 Registrar el desembolso
               </button>
@@ -791,7 +792,7 @@ export default function LoansPage() {
                         setBlockDate(e.target.value);
                         clearDateInputIfEmptied(e.target);
                       }}
-                      className="mt-1 w-full rounded-xl border border-amber-300 dark:border-amber-800 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500"
+                      className="mt-1 w-full rounded-md border border-warning/40 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
                     />
                   </div>
                   <div>
@@ -807,7 +808,7 @@ export default function LoansPage() {
                       id={`loan-disburse-cash-${loan.id}`}
                       value={cashId ?? ""}
                       onChange={(e) => setCashId(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-500"
+                      className="mt-1 w-full rounded-md border border-warning/40 bg-surface-2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
                     >
                       {payOrigins.map((account) => (
                         <option key={account.id} value={account.id}>
@@ -829,7 +830,7 @@ export default function LoansPage() {
                   <p
                     id={`loan-disburse-error-${loan.id}`}
                     role="alert"
-                    className="rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-3 py-2"
+                    className="rounded-lg bg-danger/10 text-danger px-3 py-2"
                   >
                     {blockError}
                   </p>
@@ -840,7 +841,7 @@ export default function LoansPage() {
                     id={`loan-disburse-go-${loan.id}`}
                     onClick={() => disburse(loan)}
                     disabled={busyId !== null || !cashId}
-                    className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 text-sm font-bold disabled:opacity-50"
+                    className="flex-1 rounded-md bg-success hover:bg-success/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
                   >
                     {busyId === `disburse-${loan.id}`
                       ? "Registrando…"
@@ -852,7 +853,7 @@ export default function LoansPage() {
                     id={`loan-disburse-back-${loan.id}`}
                     onClick={closeBlock}
                     disabled={busyId !== null}
-                    className="flex-1 rounded-xl border border-amber-300 dark:border-amber-800 py-2 text-sm font-medium hover:bg-amber-100 dark:hover:bg-amber-900 disabled:opacity-50"
+                    className="flex-1 rounded-md border border-warning/40 py-2 text-sm font-medium hover:bg-warning/15 disabled:opacity-50"
                   >
                     Mejor no
                   </button>
@@ -870,7 +871,7 @@ export default function LoansPage() {
                 id={`loan-pay-open-${loan.id}`}
                 onClick={() => openBlock(loan.id, "pay")}
                 disabled={busyId !== null}
-                className="rounded-xl bg-sky-600 hover:bg-sky-700 text-white px-3 py-2 text-sm font-bold disabled:opacity-50"
+                className="rounded-lg bg-transfer hover:bg-transfer/90 text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
               >
                 {verb} cuota {next.number} · {formatMoney(next.payment)}
               </button>
@@ -880,7 +881,7 @@ export default function LoansPage() {
                 id={`loan-cancel-open-${loan.id}`}
                 onClick={() => openBlock(loan.id, "cancel")}
                 disabled={busyId !== null}
-                className="rounded-xl border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                className="rounded-md border border-line-strong px-3 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
               >
                 {loan.kind === "LOAN" ? "Cancelar el préstamo" : "Cobrar todo"}
               </button>
@@ -892,16 +893,16 @@ export default function LoansPage() {
         {openPay && next !== null && plan !== null && (
           <div
             id={`loan-pay-confirm-${loan.id}`}
-            className="mx-4 mt-3 rounded-xl bg-sky-50 dark:bg-sky-950 px-3 py-3"
+            className="mx-4 mt-3 rounded-md bg-transfer/10 px-3 py-3"
           >
-            <p className="text-sm text-sky-900 dark:text-sky-100">
+            <p className="text-sm text-transfer ">
               Cuota {next.number} de {plan.installmentCount}: interés{" "}
               {formatMoney(next.interest)} + capital{" "}
               {formatMoney(next.principal)} ={" "}
               <b>{formatMoney(next.payment)}</b> · vence el{" "}
               {formatCalendar(next.dueDate)}.
             </p>
-            <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
+            <p className="mt-1 text-xs text-transfer ">
               {loan.kind === "LOAN"
                 ? "Se transfiere el capital (baja la deuda) y se registra el interés como gasto."
                 : "Se transfiere el capital (baja lo que te deben) y el interés entra como ingreso."}
@@ -911,7 +912,7 @@ export default function LoansPage() {
               <div>
                 <label
                   htmlFor={`loan-pay-extra-${loan.id}`}
-                  className="block text-xs font-medium text-sky-900 dark:text-sky-100"
+                  className="block text-xs font-medium text-transfer "
                 >
                   Capital extra (opcional)
                 </label>
@@ -923,11 +924,11 @@ export default function LoansPage() {
                   value={blockExtra}
                   onChange={(e) => setBlockExtra(e.target.value)}
                   placeholder="0"
-                  className="mt-1 w-full rounded-xl border border-sky-300 dark:border-sky-800 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-transfer/40 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
                 />
                 {blockExtra.trim() !== "" &&
                   formatAmountInput(blockExtra) !== null && (
-                    <p className="mt-1 text-xs text-sky-800 dark:text-sky-200">
+                    <p className="mt-1 text-xs text-transfer ">
                       {formatAmountInput(blockExtra)}
                     </p>
                   )}
@@ -935,7 +936,7 @@ export default function LoansPage() {
               <div>
                 <label
                   htmlFor={`loan-pay-date-${loan.id}`}
-                  className="block text-xs font-medium text-sky-900 dark:text-sky-100"
+                  className="block text-xs font-medium text-transfer "
                 >
                   Fecha
                 </label>
@@ -947,7 +948,7 @@ export default function LoansPage() {
                     setBlockDate(e.target.value);
                     clearDateInputIfEmptied(e.target);
                   }}
-                  className="mt-1 w-full rounded-xl border border-sky-300 dark:border-sky-800 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-transfer/40 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
                 />
               </div>
             </div>
@@ -955,7 +956,7 @@ export default function LoansPage() {
             <div className="mt-2">
               <label
                 htmlFor={`loan-pay-account-${loan.id}`}
-                className="block text-xs font-medium text-sky-900 dark:text-sky-100"
+                className="block text-xs font-medium text-transfer "
               >
                 {loan.kind === "LOAN"
                   ? "¿De qué cuenta sale el pago?"
@@ -965,7 +966,7 @@ export default function LoansPage() {
                 id={`loan-pay-account-${loan.id}`}
                 value={cashId ?? ""}
                 onChange={(e) => setCashId(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-sky-300 dark:border-sky-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-500"
+                className="mt-1 w-full rounded-md border border-transfer/40 bg-surface-2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
               >
                 {payOrigins.map((account) => (
                   <option key={account.id} value={account.id}>
@@ -974,7 +975,7 @@ export default function LoansPage() {
                 ))}
               </select>
               {payOrigins.length === 0 && (
-                <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
+                <p className="mt-1 text-sm text-warning ">
                   Necesitás una cuenta de banco o efectivo (no archivada) para
                   registrar el pago.
                 </p>
@@ -982,7 +983,7 @@ export default function LoansPage() {
             </div>
 
             {loan.system === "AMERICAN" && (
-              <p className="mt-2 text-xs text-sky-800 dark:text-sky-200">
+              <p className="mt-2 text-xs text-transfer ">
                 En el americano las cuotas mensuales son sólo interés (van como
                 gasto): esta cuota es el cierre con el capital.
               </p>
@@ -992,7 +993,7 @@ export default function LoansPage() {
               <p
                 id={`loan-pay-error-${loan.id}`}
                 role="alert"
-                className="mt-2 rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-3 py-2 text-sm"
+                className="mt-2 rounded-lg bg-danger/10 text-danger px-3 py-2 text-sm"
               >
                 {blockError}
               </p>
@@ -1004,7 +1005,7 @@ export default function LoansPage() {
                   id={`loan-pay-go-${loan.id}`}
                   onClick={() => pay(loan)}
                   disabled={busyId !== null || !cashId}
-                  className="flex-1 rounded-xl bg-sky-600 hover:bg-sky-700 text-white py-2 text-sm font-bold disabled:opacity-50"
+                  className="flex-1 rounded-md bg-transfer hover:bg-transfer/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
                 >
                   {busyId === `pay-${loan.id}`
                     ? "Registrando…"
@@ -1017,7 +1018,7 @@ export default function LoansPage() {
                 id={`loan-pay-cancel-${loan.id}`}
                 onClick={closeBlock}
                 disabled={busyId !== null}
-                className="flex-1 rounded-xl border border-sky-300 dark:border-sky-800 py-2 text-sm font-medium hover:bg-sky-100 dark:hover:bg-sky-900 disabled:opacity-50"
+                className="flex-1 rounded-md border border-transfer/40 py-2 text-sm font-medium hover:bg-transfer/10 disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -1029,14 +1030,14 @@ export default function LoansPage() {
         {openCancel && plan !== null && canCancel && (
           <div
             id={`loan-cancel-confirm-${loan.id}`}
-            className="mx-4 mt-3 rounded-xl bg-rose-50 dark:bg-rose-950 px-3 py-3"
+            className="mx-4 mt-3 rounded-md bg-danger/10 px-3 py-3"
           >
-            <p className="text-sm text-rose-900 dark:text-rose-100">
+            <p className="text-sm text-danger ">
               {loan.kind === "LOAN"
                 ? `Vas a cancelar todo el capital pendiente: ${formatMoney(centsToString(remainingCents))}.`
                 : `Vas a cobrar todo el capital pendiente: ${formatMoney(centsToString(remainingCents))}.`}
             </p>
-            <p className="mt-1 text-xs text-rose-800 dark:text-rose-200">
+            <p className="mt-1 text-xs text-danger ">
               Sólo se mueve el capital: sin interés de las cuotas que faltan.
             </p>
 
@@ -1044,7 +1045,7 @@ export default function LoansPage() {
               <div>
                 <label
                   htmlFor={`loan-cancel-date-${loan.id}`}
-                  className="block text-xs font-medium text-rose-900 dark:text-rose-100"
+                  className="block text-xs font-medium text-danger "
                 >
                   Fecha
                 </label>
@@ -1056,13 +1057,13 @@ export default function LoansPage() {
                     setBlockDate(e.target.value);
                     clearDateInputIfEmptied(e.target);
                   }}
-                  className="mt-1 w-full rounded-xl border border-rose-300 dark:border-rose-800 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-500"
+                  className="mt-1 w-full rounded-md border border-danger/40 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
                 />
               </div>
               <div>
                 <label
                   htmlFor={`loan-cancel-account-${loan.id}`}
-                  className="block text-xs font-medium text-rose-900 dark:text-rose-100"
+                  className="block text-xs font-medium text-danger "
                 >
                   {loan.kind === "LOAN" ? "¿De qué cuenta sale?" : "¿A qué cuenta entra?"}
                 </label>
@@ -1070,7 +1071,7 @@ export default function LoansPage() {
                   id={`loan-cancel-account-${loan.id}`}
                   value={cashId ?? ""}
                   onChange={(e) => setCashId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-rose-300 dark:border-rose-800 bg-white dark:bg-zinc-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-rose-500"
+                  className="mt-1 w-full rounded-md border border-danger/40 bg-surface-2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
                 >
                   {payOrigins.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -1082,7 +1083,7 @@ export default function LoansPage() {
             </div>
 
             {payOrigins.length === 0 && (
-              <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
+              <p className="mt-1 text-sm text-warning ">
                 Necesitás una cuenta de banco o efectivo (no archivada).
               </p>
             )}
@@ -1091,7 +1092,7 @@ export default function LoansPage() {
               <p
                 id={`loan-cancel-error-${loan.id}`}
                 role="alert"
-                className="mt-2 rounded-lg bg-white dark:bg-zinc-900 text-rose-700 dark:text-rose-300 px-3 py-2 text-sm"
+                className="mt-2 rounded-lg bg-surface-2 text-danger px-3 py-2 text-sm"
               >
                 {blockError}
               </p>
@@ -1102,7 +1103,7 @@ export default function LoansPage() {
                 id={`loan-cancel-go-${loan.id}`}
                 onClick={() => cancelLoan(loan)}
                 disabled={busyId !== null || !cashId}
-                className="flex-1 rounded-xl bg-rose-600 hover:bg-rose-700 text-white py-2 text-sm font-bold disabled:opacity-50"
+                className="flex-1 rounded-md bg-danger hover:bg-danger/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
               >
                 {busyId === `cancel-${loan.id}`
                   ? "Cancelando…"
@@ -1114,7 +1115,7 @@ export default function LoansPage() {
                 id={`loan-cancel-close-${loan.id}`}
                 onClick={closeBlock}
                 disabled={busyId !== null}
-                className="flex-1 rounded-xl border border-rose-300 dark:border-rose-800 py-2 text-sm font-medium hover:bg-rose-100 dark:hover:bg-rose-900 disabled:opacity-50"
+                className="flex-1 rounded-md border border-danger/40 py-2 text-sm font-medium hover:bg-danger/10 disabled:opacity-50"
               >
                 Mejor no
               </button>
@@ -1126,11 +1127,11 @@ export default function LoansPage() {
         {plan !== null && (
           <details
             id={`loan-schedule-${loan.id}`}
-            className="mt-4 border-t border-zinc-100 dark:border-zinc-800"
+            className="mt-4 border-t border-line "
           >
             <summary
               id={`loan-schedule-summary-${loan.id}`}
-              className="cursor-pointer select-none px-4 py-3 text-sm font-bold uppercase tracking-wide text-zinc-500"
+              className="cursor-pointer select-none px-4 py-3 text-sm font-bold uppercase tracking-wide text-fg-muted"
             >
               Cronograma ({loan.installments.length} cuotas)
             </summary>
@@ -1141,12 +1142,12 @@ export default function LoansPage() {
                   <li
                     key={row.number}
                     id={`loan-inst-${loan.id}-${row.number}`}
-                    className="flex items-center justify-between gap-2 text-sm border-b border-zinc-100 dark:border-zinc-800 last:border-0 pb-1.5"
+                    className="flex items-center justify-between gap-2 text-sm border-b border-line last:border-0 pb-1.5"
                   >
                     <span className="min-w-0">
                       <b>Cuota {row.number}</b> · {formatMoney(row.payment)} ·
                       vence el {formatCalendar(row.dueDate)}
-                      <span className="text-xs text-zinc-500">
+                      <span className="text-xs text-fg-muted">
                         {" "}
                         · interés {formatMoney(row.interest)} + capital{" "}
                         {formatMoney(row.principal)}
@@ -1161,7 +1162,7 @@ export default function LoansPage() {
                 );
               })}
             </ul>
-            <p className="px-4 pb-4 text-xs text-zinc-500">
+            <p className="px-4 pb-4 text-xs text-fg-muted">
               {INSTALLMENT_STATE_LEGEND}
             </p>
           </details>

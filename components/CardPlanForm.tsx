@@ -5,6 +5,7 @@ import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { todayCalendar } from "@/lib/dates";
 import type { CardPlanPreviewDTO, CardViewDTO, CategoryDTO } from "@/lib/finance";
 import { formatAmountInput, formatMoney, formatPercent } from "@/lib/format";
+import { Receipt } from "lucide-react";
 
 interface Props {
   card: CardViewDTO;
@@ -177,7 +178,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
         role="dialog"
         aria-modal="true"
         aria-label={`Compra en cuotas · ${card.name}`}
-        className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+        className="w-full sm:max-w-2xl max-h-[92vh] flex flex-col overflow-hidden bg-surface-2 rounded-t-md sm:rounded-md shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Columna flex: el encabezado y el pie son `flex-none` y el área
@@ -186,11 +187,11 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
             trampa 15 — un tap en un campo tapado caía en el pie). */}
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold">🧾 Compra en cuotas · {card.name}</h2>
+          <h2 className="text-xl font-bold flex items-center gap-2"><Receipt className="size-5" aria-hidden />Compra en cuotas · {card.name}</h2>
           <button
             id="plan-close"
             onClick={onClose}
-            className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×
@@ -230,7 +231,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                   onChange={(e) => setLabel(e.target.value)}
                   placeholder="Ej: Heladera"
                   maxLength={200}
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
                 />
               </div>
 
@@ -247,10 +248,10 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     value={totalAmount}
                     onChange={(e) => setTotalAmount(e.target.value)}
                     placeholder="120.000"
-                    className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                   />
                   {totalPreview && (
-                    <p className="mt-1 text-xs text-zinc-500">{totalPreview}</p>
+                    <p className="mt-1 text-xs text-fg-muted">{totalPreview}</p>
                   )}
                 </div>
                 <div>
@@ -265,7 +266,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     value={installments}
                     onChange={(e) => setInstallments(e.target.value)}
                     placeholder="12"
-                    className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                   />
                 </div>
               </div>
@@ -283,7 +284,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     value={cashPrice}
                     onChange={(e) => setCashPrice(e.target.value)}
                     placeholder="108.000"
-                    className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                   />
                 </div>
                 <div>
@@ -298,7 +299,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                       setPurchaseDate(e.target.value);
                       clearDateInputIfEmptied(e.target);
                     }}
-                    className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                   />
                 </div>
               </div>
@@ -323,21 +324,21 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                   placeholder="Ej: Tecnología"
                   maxLength={60}
                   list="plan-categories"
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
                 />
                 <datalist id="plan-categories">
                   {expenseCategories.map((category) => (
                     <option key={category.id} value={category.name} />
                   ))}
                 </datalist>
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-1 text-xs text-fg-muted">
                   Si no existe, se crea.
                 </p>
               </div>
               {previewError && (
                 <p
                   id="plan-preview-error"
-                  className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                  className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
                 >
                   {previewError}
                 </p>
@@ -346,24 +347,24 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
               {preview ? (
                 <div
                   id="plan-preview"
-                  className="rounded-xl bg-sky-50 dark:bg-sky-950 px-4 py-3 text-sm"
+                  className="rounded-md bg-transfer/10 px-4 py-3 text-sm"
                 >
-                  <p className="font-bold text-sky-900 dark:text-sky-100">
+                  <p className="font-bold text-transfer ">
                     {preview.installments}{" "}
                     {preview.installments === 1 ? "cuota" : "cuotas"} de{" "}
                     {formatMoney(preview.installmentAmount)}
                   </p>
                   {preview.lastInstallmentAmount !== preview.installmentAmount && (
-                    <p className="mt-1 text-sky-800 dark:text-sky-200">
+                    <p className="mt-1 text-transfer ">
                       La última es de {formatMoney(preview.lastInstallmentAmount)}.
                     </p>
                   )}
-                  <p className="mt-1 text-sky-800 dark:text-sky-200">
+                  <p className="mt-1 text-transfer ">
                     En total vas a pagar <b>{formatMoney(preview.totalPaid)}</b>.
                   </p>
 
                   {preview.cashPrice !== null && preview.implicitRate !== null && (
-                    <div className="mt-2 border-t border-sky-200 dark:border-sky-900 pt-2 text-sky-800 dark:text-sky-200">
+                    <div className="mt-2 border-t border-transfer/40 pt-2 text-transfer ">
                       <p>
                         Al contado: <b>{formatMoney(preview.cashPrice)}</b>.
                       </p>
@@ -380,7 +381,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                   )}
 
                   {preview.cashPrice !== null && preview.implicitRate === null && (
-                    <p className="mt-2 text-sky-800 dark:text-sky-200">
+                    <p className="mt-2 text-transfer ">
                       Pagando al contado no hay sobreprecio: financiar no tiene
                       costo extra.
                     </p>
@@ -388,7 +389,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                 </div>
               ) : (
                 !previewError && (
-                  <p className="text-xs text-zinc-500 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 px-3 py-3">
+                  <p className="text-xs text-fg-muted rounded-md border border-dashed border-line-strong px-3 py-3">
                     La vista previa aparece cuando cargues el total y la cantidad
                     de cuotas. Se registra <b>un gasto por el total</b>; las
                     cuotas se reparten entre los resúmenes.
@@ -401,12 +402,12 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
           {/* Pie: hermano del área que scrollea (`flex-none`, no `sticky`). */}
         </form>
         </div>
-        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-surface-2 ">
             {error && (
               <p
                 id="plan-error"
                 role="alert"
-                className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}
               </p>
@@ -417,7 +418,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                 id="plan-cancel"
                 type="button"
                 onClick={onClose}
-                className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
               >
                 Cancelar
               </button>
@@ -426,7 +427,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                 type="submit"
                 form="plan-form"
                 disabled={saving}
-                className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
+                className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
               >
                 {saving ? "Registrando…" : "Registrar compra"}
               </button>

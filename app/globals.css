@@ -107,27 +107,134 @@
   }
 }
 
-/* ── El theme: la fuente de la app ───────────────────────────────────────────
-   Lo ÚNICO que queda del theme son las fuentes: el layout carga Geist (dos
-   archivos woff2) y las expone como `--font-geist-sans` / `--font-geist-mono`
-   en el `<html>`.
+/* ── El theme: la fuente y los TOKENS SEMÁNTICOS ────────────────────────────
+   Lo único que el `@theme` declara son las PALETAS que el markup usa:
+   nombres SEMÁNTICOS (`surface`, `fg-muted`, `line-strong`…), no colores
+   (`zinc-500`, `emerald-600`…). Un color en el markup es un token sin
+   nombre: nadie puede saber si `#3E6485` es un borde o un texto.
 
    `inline` hace que el valor se INLINE en las utilidades en vez de dejar
-   una variable: `font-sans` compila a `font-family: var(--font-geist-sans)`.
+   una variable: `font-sans` compila a `font-family: var(--font-geist-sans)`
+   y `bg-surface` a `background-color: var(--surface)`.
 
-   Lo que se BORRÓ de acá (y por qué no vuelve):
-     · `--background` / `--foreground` y su `@media (prefers-color-scheme:
-       dark)`: no los usaba NINGUNA clase (`bg-background`, `text-foreground`,
-       `border-background` no existen en el markup). El body se pinta con
-       `bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100` y el
-       `dark:` de Tailwind v4 ya responde a `prefers-color-scheme`.
-     · la regla `body { font-family: Arial }`: pisaba la fuente de Geist (el
-       `<body>` no llevaba `font-sans`, así que la app se veía en ARIAL y
-       descargaba dos archivos de fuente al pedo). Ahora la fuente es la
-       utilidad `font-sans` del `<body>`, y sale de acá. */
+   ─────────────────────────────────────────────────────────────────────────────
+   LOS TOKENS Y SUS VALORES (los dos esquemas)
+   ─────────────────────────────────────────────────────────────────────────────
+   Los valores viven en `:root` (claro) y se pisan con
+   `prefers-color-scheme: dark` (oscuro, el «Noche» que eligió la persona).
+   Los MISMOS nombres semánticos sirven para los dos: el markup no lleva
+   `dark:` en ningún color, porque el token YA es el del esquema que está
+   en pantalla.
+
+   ─────────────────────────────────────────────────────────────────────────────
+   POR QUÉ EL TEMA NO ES EL DE TAILWIND
+   ─────────────────────────────────────────────────────────────────────────────
+   Antes el markup usaba la paleta gris de fábrica (`zinc-*`) y los colores
+   de estado (`emerald-*`, `rose-*`, `sky-*`, `amber-*`): 762 clases de la
+   paleta por defecto y cero decisiones. Eso es el «aspecto de fábrica»:
+   una app donde nadie eligió nada.
+
+   Ahora cada color es un token con un nombre que dice su PAPEL. La
+   consecuencia práctica: cambiar la paleta entera es editar quince
+   valores de acá, no 1378 clases de los archivos. */
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Superficies (de fondo a elevada) */
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+
+  /* Bordes */
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  /* Texto (de principal a terciario) */
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+
+  /* Acción principal */
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+
+  /* Los cuatro estados con nombre del dominio */
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-transfer: var(--transfer);
+
+  /* El anillo de foco */
+  --color-focus: var(--focus);
+}
+
+/* ── Los valores de los tokens ───────────────────────────────────────────────
+   Los ratios de contraste están CALCULADOS (no opinados): texto ≥ 4,5:1 y
+   control ≥ 3:1 contra las superficies donde se usan. Los valores que se
+   movieron respecto del brief están anotados con su ratio nuevo:
+
+     · `--fg-subtle` noche: #6B8299 → #7A8FA3. Con el valor del brief daba
+       4,37:1 sobre la tarjeta (debajo de 4,5:1). El nuevo da 4,52:1 sobre
+       la superficie elevada, 5,20:1 sobre la tarjeta y 5,67:1 sobre el fondo.
+     · `--fg-subtle` claro: #7A7880 → #6F6E75. Con el valor del brief daba
+       4,17:1 sobre el fondo. El nuevo da 4,51:1 sobre la superficie
+       elevada, 4,83:1 sobre el fondo y 5,04:1 sobre la tarjeta.
+     · `--line-strong` noche: #3E6485 → #477398. Con el valor del brief daba
+       2,78:1 sobre la tarjeta (el umbral de un borde de control es 3:1).
+       El nuevo da 3,00:1 sobre la superficie elevada, 3,45:1 sobre la
+       tarjeta y 3,76:1 sobre el fondo.
+     · `--line-strong` claro: #9A968C → #908C81. Con el valor del brief daba
+       2,83:1 sobre el fondo. El nuevo da 3,00:1 sobre la superficie
+       elevada, 3,22:1 sobre el fondo y 3,36:1 sobre la tarjeta.
+     · `--success` claro: #15803D → #137438 y `--warning` claro: #B45309 →
+       #A44C08 (los ajustó el tester de la ronda F10 · F0a). El texto del
+       estado sobre SU PROPIO tinte al 10 % —el patrón `bg-xxx/10` +
+       `text-xxx` que usa la app— daba 4,39:1 y 4,38:1: por debajo de
+       4,5:1. Los nuevos dan 4,57:1 y 4,52:1 (el peor par, sobre la
+       superficie elevada).
+
+   La tabla completa de ratios está en `docs/design-system.md`. */
+@layer base {
+  /* El esquema claro: el que se ve si el sistema no pide oscuro. */
+  :root {
+    --surface: #fbfaf7;
+    --surface-2: #ffffff;
+    --surface-3: #f4f2ed;
+    --line: #e4e1da;
+    --line-strong: #908c81;
+    --fg: #17161a;
+    --fg-muted: #57565f;
+    --fg-subtle: #6f6e75;
+    --primary: #c2410c;
+    --primary-fg: #ffffff;
+    --success: #137438;
+    --danger: #b91c1c;
+    --warning: #a44c08;
+    --transfer: #0369a1;
+    --focus: #c2410c;
+  }
+
+  /* El esquema «Noche»: el que eligió la persona (2026-10-21). */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #07111f;
+      --surface-2: #0c1b2c;
+      --surface-3: #112741;
+      --line: #17304a;
+      --line-strong: #477398;
+      --fg: #e6f0fa;
+      --fg-muted: #93a9bf;
+      --fg-subtle: #7a8fa3;
+      --primary: #22d3ee;
+      --primary-fg: #04202b;
+      --success: #34d399;
+      --danger: #fb7185;
+      --warning: #fbbf24;
+      --transfer: #38bdf8;
+      --focus: #22d3ee;
+    }
+  }
 }
 
 /* ── Objetivo táctil mínimo (44×44 px) ─────────────────────────────────────

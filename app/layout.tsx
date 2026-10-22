@@ -29,7 +29,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           esta fuente venía de una regla `body { font-family: Arial }` escrita a
           mano en el CSS global: la app se veía en ARIAL y descargaba dos
           archivos de fuente al pedo. */}
-      <body className="min-h-full flex flex-col font-sans bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100">
+      <body className="min-h-full flex flex-col font-sans bg-surface text-fg ">
         <Header />
         <div className="flex-1 w-full">{children}</div>
         {/* El footer es el único lugar de la app que le habla al usuario sobre
@@ -48,7 +48,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             lado del servidor, no en el navegador. Y esa distinción sí le importa
             a quien la lee, porque es la diferencia entre poder abrir la app
             desde otro dispositivo y no poder. */}
-        <footer className="text-center text-xs text-zinc-500 py-6">
+        <footer className="text-center text-xs text-fg-muted py-6">
           Los movimientos viven en tu base de datos, no en este navegador.
         </footer>
       </body>

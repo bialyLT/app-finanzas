@@ -19,7 +19,12 @@
  *     un movimiento.
  *
  * Método:
- *   · La preview se lee del DOM real (el `<b>` y el `<span class="text-amber-600">`).
+ *   · La preview se lee del DOM real (el `<b>` y el `<span class="text-warning">`).
+ *     OJO: el nombre de la clase lo cambió la ronda F0a (los tokens): el aviso
+ *     «No se entiende el monto» pasó de `text-amber-600` a `text-warning`, y
+ *     este selector tenía el nombre viejo (la batería quedó en rojo sin que
+ *     nadie lo dijera: el selector devolvía `null` y la aserción comparaba
+ *     `null` contra el texto del aviso).
  *   · Tipear es insertText con select-all previo (reemplaza, no apila).
  *   · Guardar usa el mismo camino que un usuario: clic real en `tx-submit`
  *     con reintento acotado (ventana sorda del CDP) y espera del desenlace
@@ -138,7 +143,7 @@ runScript({
         return {
           texto: p.textContent,
           negrita: p.querySelector("b")?.textContent ?? null,
-          ambar: p.querySelector(".text-amber-600")?.textContent ?? null,
+          ambar: p.querySelector(".text-warning")?.textContent ?? null,
         };
       })()`);
 

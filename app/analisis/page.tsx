@@ -31,6 +31,7 @@ import {
   formatPercent,
   toCents,
 } from "@/lib/format";
+import { TriangleAlert, Search, ChartColumn, X } from "lucide-react";
 
 /**
  * Análisis del período: tarjetas, torta por categoría y evolución por día.
@@ -64,10 +65,30 @@ import {
 
 type ViewMode = PeriodMode;
 
-const PIE_COLORS = [
-  "#10b981", "#f43f5e", "#6366f1", "#f59e0b", "#0ea5e9",
-  "#a855f7", "#84cc16", "#ef4444", "#14b8a6", "#eab308",
-];
+/**
+ * Los colores de la torta: LOS TOKENS del design system, no la paleta de
+ * fábrica.
+ *
+ * Antes eran diez hexes escritos a mano (la paleta 500 de Tailwind) y el
+ * `#ccc` de la grilla: en el esquema «Noche» mostraban una paleta DISTINTA
+ * de la del resto de la app, y un color sin nombre no se puede cambiar ni
+ * auditar (el gate de estilo los prohíbe).
+ *
+ * Con cinco tokens cromáticos hay cinco colores distintos; para las
+ * categorías que excedan los cinco, el mismo token con menos opacidad (sobre
+ * la tarjeta, menos opacidad = más apagado).
+ */
+const PIE_TOKENS = ["success", "danger", "transfer", "warning", "primary"] as const;
+
+/** El color (un token del design system) y la opacidad del sector `index`. */
+function pieSector(index: number): { fill: string; fillOpacity: number } {
+  const token = PIE_TOKENS[index % PIE_TOKENS.length];
+  const vuelta = Math.floor(index / PIE_TOKENS.length);
+  return {
+    fill: `var(--${token})`,
+    fillOpacity: Math.max(0.35, 1 - vuelta * 0.22),
+  };
+}
 
 const MODE_LABEL: Record<ViewMode, string> = {
   week: "Semana",
@@ -368,7 +389,7 @@ export default function AnalisisPage() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
       {/* ── Selector de período ──────────────────────────────────────────── */}
-      <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+      <div className="bg-surface-2 rounded-md p-4 shadow-sm flex flex-col gap-3">
         <div className="flex gap-1 text-sm">
           {(["week", "month", "year"] as const).map((option) => (
             <button
@@ -376,8 +397,8 @@ export default function AnalisisPage() {
               onClick={() => setMode(option)}
               className={`px-3 py-1.5 rounded-full ${
                 mode === option
-                  ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
-                  : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  ? "bg-primary text-primary-fg "
+                  : "hover:bg-surface-3 "
               }`}
             >
               {MODE_LABEL[option]}
@@ -388,7 +409,7 @@ export default function AnalisisPage() {
         <div className="flex items-center justify-between">
           <button
             onClick={() => shift(-1)}
-            className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg"
+            className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
             aria-label="Período anterior"
           >
             ←
@@ -397,13 +418,13 @@ export default function AnalisisPage() {
             {/* `first-letter:uppercase` y NO `capitalize`: `capitalize` pondría
                 "Octubre De 2026", que en español está mal escrito. */}
             <p className="font-bold first-letter:uppercase">{label}</p>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-fg-muted">
               {range.from} → {range.to}
             </p>
           </div>
           <button
             onClick={() => shift(1)}
-            className="px-3 py-1.5 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg"
+            className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
             aria-label="Período siguiente"
           >
             →
@@ -417,7 +438,7 @@ export default function AnalisisPage() {
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
           aria-label="Filtrar por categoría"
-          className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm outline-none [&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
+          className="flex-1 rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
         >
           <option value="">Todas las categorías</option>
           {categories.map((category) => (
@@ -440,7 +461,7 @@ export default function AnalisisPage() {
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Buscar…"
           aria-label="Buscar movimientos"
-          className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+          className="flex-1 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
         />
 
         {hasFilters && (
@@ -449,14 +470,15 @@ export default function AnalisisPage() {
               setCategoryId("");
               setSearch("");
             }}
-            className="text-sm px-3 py-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
+            className="text-sm px-3 py-2 rounded-md hover:bg-surface-3 text-fg-muted"
           >
-            Limpiar ✕
+            Limpiar
+            <X className="size-4 inline-block align-[-2px] ml-1" aria-hidden />
           </button>
         )}
       </div>
 
-      {loading && <p className="text-center text-zinc-500 py-8">Cargando…</p>}
+      {loading && <p className="text-center text-fg-muted py-8">Cargando…</p>}
 
       {/* ── Error de carga ───────────────────────────────────────────────── */}
       {/* Reemplaza tarjetas, torta y barras: mostrar los ceros de un fetch
@@ -464,8 +486,8 @@ export default function AnalisisPage() {
           la culpa al período. Un error de conexión tiene que parecer un error
           de conexión. */}
       {!loading && loadError && (
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-rose-600 dark:text-rose-400">
-          <p className="text-3xl mb-2">⚠️</p>
+        <div className="bg-surface-2 rounded-md p-8 shadow-sm text-center text-danger ">
+          <p className="mb-2"><TriangleAlert className="size-8 inline-block" aria-hidden /></p>
           <p role="alert">{loadError}</p>
         </div>
       )}
@@ -479,10 +501,10 @@ export default function AnalisisPage() {
               deja margen). Antes entraban en 640 px y el monto se salía de la
               tarjeta. A 384 px entran dos columnas; por debajo, una. */}
           <div className="grid grid-cols-1 min-[384px]:grid-cols-2 min-[940px]:grid-cols-4 gap-3">
-            <div className="@container min-w-0 bg-emerald-600 text-white rounded-2xl p-4">
-              <p className="text-xs uppercase opacity-80">Ingresos</p>
+            <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+              <p className="text-xs uppercase text-fg-muted">Ingresos</p>
               <p
-                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-success"
                 style={{ "--k": factorMonto(formatMoney(stats.incomeTotal)) } as CSSProperties}
               >
                 {formatMoney(stats.incomeTotal)}
@@ -503,10 +525,10 @@ export default function AnalisisPage() {
               )}
             </div>
 
-            <div className="@container min-w-0 bg-rose-600 text-white rounded-2xl p-4">
-              <p className="text-xs uppercase opacity-80">Gastos</p>
+            <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+              <p className="text-xs uppercase text-fg-muted">Gastos</p>
               <p
-                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-danger"
                 style={{ "--k": factorMonto(formatMoney(stats.expenseTotal)) } as CSSProperties}
               >
                 {formatMoney(stats.expenseTotal)}
@@ -518,15 +540,11 @@ export default function AnalisisPage() {
             </div>
 
             <div
-              className={`@container min-w-0 rounded-2xl p-4 ${
-                stats.positive
-                  ? "bg-zinc-900 text-white dark:bg-white dark:text-black"
-                  : "bg-amber-500 text-black"
-              }`}
+              className="@container min-w-0 bg-surface-2 rounded-md p-4"
             >
-              <p className="text-xs uppercase opacity-80">Te quedó</p>
+              <p className="text-xs uppercase text-fg-muted">Te quedó</p>
               <p
-                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                className={`monto-tarjeta monto-tarjeta--analisis font-extrabold ${stats.positive ? "text-success" : "text-danger"}`}
                 style={
                   { "--k": factorMonto(formatMoney(stats.result, { withSign: true })) } as CSSProperties
                 }
@@ -548,10 +566,10 @@ export default function AnalisisPage() {
 
             {/* Las transferencias se muestran aparte, y eso es informativo: deja
                 claro que ese dinero se movió sin ser ganancia ni pérdida. */}
-            <div className="@container min-w-0 bg-sky-600 text-white rounded-2xl p-4">
-              <p className="text-xs uppercase opacity-80">Transferencias</p>
+            <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+              <p className="text-xs uppercase text-fg-muted">Transferencias</p>
               <p
-                className="monto-tarjeta monto-tarjeta--analisis font-extrabold"
+                className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-transfer"
                 style={{ "--k": factorMonto(formatMoney(stats.transferTotal)) } as CSSProperties}
               >
                 {formatMoney(stats.transferTotal)}
@@ -565,20 +583,28 @@ export default function AnalisisPage() {
           </div>
 
           {/* ── Evolución ───────────────────────────────────────────────── */}
-          <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm">
+          <div className="bg-surface-2 rounded-md p-4 shadow-sm">
             <h2 className="font-bold mb-3">Evolución</h2>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={stats.bars}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                  <XAxis dataKey="label" fontSize={12} />
-                  <YAxis fontSize={12} width={70} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" opacity={0.6} />
+                  <XAxis dataKey="label" fontSize={12} tick={{ fill: "var(--fg-muted)" }} />
+                  <YAxis fontSize={12} width={70} tick={{ fill: "var(--fg-muted)" }} />
                   <Tooltip
                     formatter={(value) => formatMoney(String(value ?? 0))}
+                    contentStyle={{
+                      backgroundColor: "var(--surface-2)",
+                      border: "1px solid var(--line-strong)",
+                      borderRadius: 6,
+                      color: "var(--fg)",
+                    }}
+                    labelStyle={{ color: "var(--fg)" }}
+                    itemStyle={{ color: "var(--fg-muted)" }}
                   />
                   <Legend />
-                  <Bar dataKey="Ingresos" fill="#10b981" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="Gastos" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Ingresos" fill="var(--success)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="Gastos" fill="var(--danger)" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -586,7 +612,7 @@ export default function AnalisisPage() {
 
           {/* ── Gastos por categoría ─────────────────────────────────────── */}
           {stats.pie.length > 0 ? (
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm">
+            <div className="bg-surface-2 rounded-md p-4 shadow-sm">
               <h2 className="font-bold mb-3">En qué se fue</h2>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -601,12 +627,21 @@ export default function AnalisisPage() {
                       {stats.pie.map((entry, index) => (
                         <Cell
                           key={entry.name}
-                          fill={PIE_COLORS[index % PIE_COLORS.length]}
+                          fill={pieSector(index).fill}
+                          fillOpacity={pieSector(index).fillOpacity}
                         />
                       ))}
                     </Pie>
                     <Tooltip
                       formatter={(value) => formatMoney(String(value ?? 0))}
+                      contentStyle={{
+                        backgroundColor: "var(--surface-2)",
+                        border: "1px solid var(--line-strong)",
+                        borderRadius: 6,
+                        color: "var(--fg)",
+                      }}
+                      labelStyle={{ color: "var(--fg)" }}
+                      itemStyle={{ color: "var(--fg-muted)" }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
@@ -623,11 +658,12 @@ export default function AnalisisPage() {
                     <span
                       className="w-3 h-3 rounded-full shrink-0"
                       style={{
-                        backgroundColor: PIE_COLORS[index % PIE_COLORS.length],
+                        backgroundColor: pieSector(index).fill,
+                        opacity: pieSector(index).fillOpacity,
                       }}
                     />
                     <span className="flex-1 truncate">{entry.name}</span>
-                    <span className="text-zinc-500 text-xs">
+                    <span className="text-fg-muted text-xs">
                       {formatPercent(entry.sharePercent)}
                     </span>
                     <span className="font-semibold whitespace-nowrap">
@@ -642,22 +678,22 @@ export default function AnalisisPage() {
             // filtros. Decir "No hay gastos en este período" sería culpar al
             // período —y mandar a cargar un gasto que existe—. Un estado vacío
             // honesto habla de los filtros y ofrece la salida.
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-zinc-500">
-              <p className="text-3xl mb-2">🔍</p>
+            <div className="bg-surface-2 rounded-md p-8 shadow-sm text-center text-fg-muted">
+              <p className="mb-2"><Search className="size-8 inline-block" aria-hidden /></p>
               <p className="font-medium">No hay gastos con esos filtros</p>
               <button
                 onClick={() => {
                   setCategoryId("");
                   setSearch("");
                 }}
-                className="text-sm mt-2 underline text-emerald-600"
+                className="text-sm mt-2 underline text-success"
               >
                 Limpiar filtros
               </button>
             </div>
           ) : (
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-8 shadow-sm text-center text-zinc-500">
-              <p className="text-3xl mb-2">📊</p>
+            <div className="bg-surface-2 rounded-md p-8 shadow-sm text-center text-fg-muted">
+              <p className="mb-2"><ChartColumn className="size-8 inline-block" aria-hidden /></p>
               <p className="font-medium">No hay gastos en este período</p>
               <p className="text-sm mt-1">
                 Cargá un gasto para ver el desglose por categoría.
@@ -673,10 +709,10 @@ export default function AnalisisPage() {
             el selector de categorías): un selector no se filtra a sí mismo.
           */}
           {burnCandidates.length > 0 && (
-            <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+            <div className="bg-surface-2 rounded-md p-4 shadow-sm flex flex-col gap-3">
               <div>
                 <h2 className="font-bold">Burn mensualizado</h2>
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm text-fg-muted">
                   Un gasto anual, dividido por 12, para comparar meses entre
                   sí. Elegí un gasto del período para verlo entero al lado de
                   su versión repartida: las dos vistas del mismo número.
@@ -688,7 +724,7 @@ export default function AnalisisPage() {
                 value={burnSelected ? burnId : ""}
                 onChange={(event) => setBurnId(event.target.value)}
                 aria-label="Elegir un gasto para el burn mensualizado"
-                className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm outline-none [&>option]:bg-white [&>option]:text-zinc-900 dark:[&>option]:bg-zinc-800 dark:[&>option]:text-zinc-100"
+                className="rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
               >
                 <option value="">Elegí un gasto…</option>
                 {burnCandidates.map((candidate) => (
@@ -700,14 +736,14 @@ export default function AnalisisPage() {
               </select>
 
               {report?.burnCandidatesTruncated && (
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-fg-muted">
                   Hay más gastos en el período: la lista muestra los 500 más
                   grandes. El cálculo del burn no se recorta.
                 </p>
               )}
 
               {hasFilters && (
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-fg-muted">
                   La lista y el cálculo usan el período completo: los filtros
                   de arriba no los cambian.
                 </p>
@@ -716,7 +752,7 @@ export default function AnalisisPage() {
               {burn && selectedCandidate && (
                 <>
                   <p className="text-sm">
-                    <span className="text-zinc-500">Gasto elegido:</span>{" "}
+                    <span className="text-fg-muted">Gasto elegido:</span>{" "}
                     <strong>
                       {selectedCandidate.description ??
                         selectedCandidate.categoryName ??
@@ -730,8 +766,8 @@ export default function AnalisisPage() {
                       hecho (la plata salió de una vez) y la mensualizada es la
                       misma plata repartida para poder comparar meses. */}
                   <div className="grid sm:grid-cols-2 gap-3">
-                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
-                      <p className="text-xs uppercase text-zinc-500">
+                    <div className="rounded-md border border-line border-line-strong p-3">
+                      <p className="text-xs uppercase text-fg-muted">
                         Mes de caja
                       </p>
                       <p className="text-sm mt-1">
@@ -743,13 +779,13 @@ export default function AnalisisPage() {
                       <p className="text-lg font-extrabold mt-1">
                         {formatMoney(burn.cashResult, { withSign: true })}
                       </p>
-                      <p className="text-[11px] text-zinc-500">
+                      <p className="text-[11px] text-fg-muted">
                         Te quedó con el gasto entero en su mes
                       </p>
                     </div>
 
-                    <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
-                      <p className="text-xs uppercase text-zinc-500">
+                    <div className="rounded-md border border-line border-line-strong p-3">
+                      <p className="text-xs uppercase text-fg-muted">
                         Burn mensualizado
                       </p>
                       <p className="text-sm mt-1">
@@ -761,13 +797,13 @@ export default function AnalisisPage() {
                       <p
                         className={`text-lg font-extrabold mt-1 ${
                           toCents(burn.burnResult) >= 0
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-rose-600 dark:text-rose-400"
+                            ? "text-success "
+                            : "text-danger "
                         }`}
                       >
                         {formatMoney(burn.burnResult, { withSign: true })}
                       </p>
-                      <p className="text-[11px] text-zinc-500">
+                      <p className="text-[11px] text-fg-muted">
                         Te quedó repartiendo el gasto en 12
                       </p>
                     </div>

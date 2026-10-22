@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Star } from "lucide-react";
 import { findCategoryByName, searchCategories } from "@/lib/category-search";
 import { movePaletteIndex } from "@/lib/command-palette";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
@@ -57,24 +58,24 @@ const KIND_STYLE: Record<
 > = {
   INCOME: {
     title: "＋ Nuevo ingreso",
-    accent: "text-emerald-600",
-    focus: "focus:ring-emerald-500",
-    badge: "bg-emerald-600 hover:bg-emerald-700",
-    tab: "bg-emerald-600 text-white",
+    accent: "text-success",
+    focus: "focus:ring-focus",
+    badge: "bg-success hover:bg-success/90",
+    tab: "bg-success text-primary-fg",
   },
   EXPENSE: {
     title: "－ Nuevo gasto",
-    accent: "text-rose-600",
-    focus: "focus:ring-rose-500",
-    badge: "bg-rose-600 hover:bg-rose-700",
-    tab: "bg-rose-600 text-white",
+    accent: "text-danger",
+    focus: "focus:ring-focus",
+    badge: "bg-danger hover:bg-danger/90",
+    tab: "bg-danger text-primary-fg",
   },
   TRANSFER: {
     title: "⇄ Nueva transferencia",
-    accent: "text-sky-600",
-    focus: "focus:ring-sky-500",
-    badge: "bg-sky-600 hover:bg-sky-700",
-    tab: "bg-sky-600 text-white",
+    accent: "text-transfer",
+    focus: "focus:ring-focus",
+    badge: "bg-transfer hover:bg-transfer/90",
+    tab: "bg-transfer text-primary-fg",
   },
 };
 
@@ -692,15 +693,15 @@ export default function TransactionForm({
       // costado con el monto ya escrito no puede tirar el trabajo. Se cierra
       // con Escape o con el botón; ambos caminos son deliberados.
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
-        <div className="w-full sm:max-w-md bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl p-6 shadow-2xl">
+        <div className="w-full sm:max-w-md bg-surface-2 rounded-t-md sm:rounded-md p-6 shadow-2xl">
           <h2 className="text-xl font-bold mb-3">Primero creá una cuenta</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+          <p className="text-sm text-fg-muted mb-4">
             Todo movimiento sale de una cuenta o entra a una. Sin al menos una
             cuenta creada no hay dónde registrar la plata.
           </p>
           <button
             onClick={onClose}
-            className="w-full rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black py-3 font-bold"
+            className="w-full rounded-md bg-primary text-primary-fg py-3 font-bold"
           >
             Entendido
           </button>
@@ -725,7 +726,7 @@ export default function TransactionForm({
   const descriptionField = (
     <div>
       <label htmlFor="tx-description" className="text-sm font-medium">
-        Nota <span className="font-normal text-zinc-500">(opcional)</span>
+        Nota <span className="font-normal text-fg-muted">(opcional)</span>
       </label>
       <div className="relative">
         <input
@@ -790,7 +791,7 @@ export default function TransactionForm({
           placeholder="Detalle…"
           maxLength={200}
           autoComplete="off"
-          className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+          className={`mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
         />
 
         {/* Desplegable ABSOLUTO: no empuja fecha/cuentas hacia el pie fijo. En
@@ -801,7 +802,7 @@ export default function TransactionForm({
             id="tx-description-suggestions"
             role="listbox"
             aria-label="Descripciones usadas antes"
-            className={`absolute left-0 right-0 z-30 max-h-56 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl ${
+            className={`absolute left-0 right-0 z-30 max-h-56 overflow-y-auto rounded-md border border-line border-line-strong bg-surface-2 shadow-2xl ${
               isTransfer ? "top-full mt-1" : "bottom-full mb-1"
             }`}
           >
@@ -815,21 +816,21 @@ export default function TransactionForm({
                 onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActiveSuggestion(index)}
                 onClick={() => acceptDescriptionSuggestion(suggestion)}
-                className={`w-full text-left px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 last:border-b-0 ${
+                className={`w-full text-left px-3 py-2 border-b border-line last:border-b-0 ${
                   activeSuggestion === index
-                    ? "bg-zinc-100 dark:bg-zinc-800"
-                    : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                    ? "bg-surface-3 "
+                    : "hover:bg-surface-3 hover:bg-surface-3/60"
                 }`}
               >
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="font-medium truncate">
                     {suggestion.description}
                   </span>
-                  <span className="text-xs text-zinc-500 whitespace-nowrap">
+                  <span className="text-xs text-fg-muted whitespace-nowrap">
                     {formatMoney(suggestion.amount)}
                   </span>
                 </span>
-                <span className="block text-[11px] text-zinc-500 truncate">
+                <span className="block text-[11px] text-fg-muted truncate">
                   {suggestion.category?.name ?? "Sin categoría"} ·{" "}
                   {suggestion.account.name}
                   {suggestion.kind === "TRANSFER" && suggestion.toAccount
@@ -867,7 +868,7 @@ export default function TransactionForm({
         role="dialog"
         aria-modal="true"
         aria-label={style.title}
-        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-surface-2 rounded-t-md sm:rounded-md shadow-2xl"
       >
         <div className="flex-none px-6 pt-6">
           <div className="flex items-center justify-between mb-2 gap-2">
@@ -876,7 +877,7 @@ export default function TransactionForm({
             {favoriteSourceName && favoriteId && (
               <span
                 id="tx-favorite-banner"
-                className="ml-2 align-middle text-[10px] font-bold uppercase rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 px-1.5 py-0.5"
+                className="ml-2 align-middle text-[10px] font-bold uppercase rounded-full bg-transfer/10 text-transfer px-1.5 py-0.5"
               >
                 plantilla: {favoriteSourceName}
               </span>
@@ -896,14 +897,20 @@ export default function TransactionForm({
                 setFavoriteNotice("");
               }}
               aria-expanded={favoriteOpen}
-              className="text-xs underline text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 px-1"
+              className="text-xs underline text-fg-muted hover:text-fg hover:text-fg-muted px-1"
             >
-              {favoriteOpen ? "★ Plantilla" : "☆ Plantilla"}
+              <Star
+                className={`size-4 inline-block align-[-2px] mr-1 ${
+                  favoriteOpen ? "fill-current" : ""
+                }`}
+                aria-hidden
+              />
+              Plantilla
             </button>
             <button
               id="tx-close"
               onClick={onClose}
-              className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+              className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
               aria-label="Cerrar"
             >
               ×
@@ -921,7 +928,7 @@ export default function TransactionForm({
         <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-3">
 
         {favoriteNotice && (
-          <p id="tx-favorite-notice" className="text-xs text-emerald-600 mb-2">
+          <p id="tx-favorite-notice" className="text-xs text-success mb-2">
             {favoriteNotice}
           </p>
         )}
@@ -932,7 +939,7 @@ export default function TransactionForm({
         <div
           role="group"
           aria-label="Tipo de movimiento"
-          className="grid grid-cols-3 gap-1 rounded-xl bg-zinc-100 dark:bg-zinc-800 p-1 mb-3"
+          className="grid grid-cols-3 gap-1 rounded-md bg-surface-3 p-1 mb-3"
         >
           {KIND_TABS.map((tab) => (
             <button
@@ -944,7 +951,7 @@ export default function TransactionForm({
               className={`rounded-lg py-1.5 text-sm font-medium transition ${
                 kind === tab.kind
                   ? KIND_STYLE[tab.kind].tab
-                  : "text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200/70 dark:hover:bg-zinc-700"
+                  : "text-fg-muted hover:bg-surface-3/70 hover:bg-surface-3"
               }`}
             >
               {tab.label}
@@ -959,7 +966,7 @@ export default function TransactionForm({
         {favoriteOpen && (
           <div
             id="tx-favorite-panel"
-            className="rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 p-3 space-y-2 mb-3"
+            className="rounded-md border border-line border-line-strong bg-surface bg-surface-3/50 p-3 space-y-2 mb-3"
           >
             <label htmlFor="tx-favorite-name" className="text-xs font-medium block">
               Nombre de la plantilla *
@@ -970,9 +977,9 @@ export default function TransactionForm({
               onChange={(event) => setFavoriteName(event.target.value)}
               placeholder="Ej: Café de la mañana"
               maxLength={40}
-              className={`w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm outline-none focus:ring-2 ${style.focus}`}
+              className={`w-full rounded-lg border border-line-strong bg-surface-2 px-3 py-2 text-sm outline-none focus:ring-2 ${style.focus}`}
             />
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-[11px] text-fg-muted">
               Guarda tipo, monto, cuenta, categoría y nota. No crea un
               movimiento.
             </p>
@@ -980,7 +987,7 @@ export default function TransactionForm({
               <p
                 id="tx-favorite-error"
                 role="alert"
-                className="text-xs rounded-lg bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-2 py-1.5"
+                className="text-xs rounded-lg bg-danger/10 text-danger px-2 py-1.5"
               >
                 {favoriteError}
               </p>
@@ -991,7 +998,7 @@ export default function TransactionForm({
                 type="button"
                 onClick={() => void saveFavorite()}
                 disabled={favoriteSaving}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50 ${style.badge}`}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold text-primary-fg disabled:opacity-50 ${style.badge}`}
               >
                 {favoriteSaving ? "Guardando…" : "Guardar plantilla"}
               </button>
@@ -1000,7 +1007,7 @@ export default function TransactionForm({
                 type="button"
                 onClick={() => setFavoriteOpen(false)}
                 disabled={favoriteSaving}
-                className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                className="rounded-lg border border-line-strong px-3 py-1.5 text-xs font-medium disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -1026,15 +1033,15 @@ export default function TransactionForm({
                 clearDuplicateWarning();
               }}
               placeholder="0,00"
-              className={`mt-1 w-full text-2xl font-bold rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full text-2xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 ${style.focus}`}
             />
-            <p className="mt-1 text-xs text-zinc-500 h-4">
+            <p className="mt-1 text-xs text-fg-muted h-4">
               {amountPreview ? (
                 <>
                   Se guarda como <b>{amountPreview}</b>
                 </>
               ) : amount.trim() ? (
-                <span className="text-amber-600">
+                <span className="text-warning">
                   No se entiende el monto. Probá con 1500 o 1.500,50
                 </span>
               ) : (
@@ -1068,7 +1075,7 @@ export default function TransactionForm({
                 // formulario nunca queda en un estado inválido.
                 setToAccountId(pickDestinationAccount(accounts, nextSource));
               }}
-              className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
             >
               {accounts.map((account) => (
                 <option key={account.id} value={account.id}>
@@ -1080,7 +1087,7 @@ export default function TransactionForm({
             {/* El aviso que evita el malentendido más común: comprar con
                 tarjeta NO es "gastar la plata que tenés", es deberla. */}
             {!isTransfer && selectedAccount?.kind === "CREDIT_CARD" && (
-              <p className="mt-1.5 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2">
+              <p className="mt-1.5 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2">
                 Es una tarjeta: este gasto se suma a la deuda. No baja el saldo
                 de tu cuenta bancaria hasta que pagues el resumen, y ese pago va
                 a ser una <b>transferencia</b>, no otro gasto.
@@ -1095,7 +1102,7 @@ export default function TransactionForm({
                 A qué cuenta va *
               </label>
               {destinationOptions.length === 0 ? (
-                <p className="mt-1 text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2">
+                <p className="mt-1 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
                   Necesitás al menos dos cuentas para transferir entre ellas.
                 </p>
               ) : (
@@ -1103,7 +1110,7 @@ export default function TransactionForm({
                   id="tx-to-account"
                   value={toAccountId}
                   onChange={(e) => setToAccountId(e.target.value)}
-                  className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+                  className={`mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
                 >
                   {destinationOptions.map((account) => (
                     <option key={account.id} value={account.id}>
@@ -1112,7 +1119,7 @@ export default function TransactionForm({
                   ))}
                 </select>
               )}
-              <p className="mt-1.5 text-xs text-zinc-500">
+              <p className="mt-1.5 text-xs text-fg-muted">
                 Mover plata entre tus propias cuentas no es un gasto ni un
                 ingreso: tu patrimonio no cambia.
               </p>
@@ -1124,7 +1131,7 @@ export default function TransactionForm({
             <div>
               <label htmlFor="tx-category" className="text-sm font-medium">
                 {isIncome ? "De dónde viene" : "En qué se fue"}{" "}
-                <span className="font-normal text-zinc-500">(opcional)</span>
+                <span className="font-normal text-fg-muted">(opcional)</span>
               </label>
               <input
                 id="tx-category"
@@ -1141,7 +1148,7 @@ export default function TransactionForm({
                 }
                 list="tx-categories"
                 autoComplete="off"
-                className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+                className={`mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
               />
               <datalist id="tx-categories">
                 {kindCategories.map((category) => (
@@ -1150,7 +1157,7 @@ export default function TransactionForm({
               </datalist>
 
               {categoryName.trim() !== "" && !categoryDismissed && (
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-1 text-xs text-fg-muted">
                   {categoryExists ? (
                     <>
                       ✓ Se usa la categoría existente{" "}
@@ -1182,7 +1189,7 @@ export default function TransactionForm({
                           setCategoryName(suggestion.name);
                           setCategoryDismissed(true);
                         }}
-                        className="text-xs px-3 py-1.5 rounded-full bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                        className="text-xs px-3 py-1.5 rounded-full bg-surface-3 hover:bg-surface-3 "
                       >
                         {suggestion.name}
                       </button>
@@ -1211,8 +1218,8 @@ export default function TransactionForm({
                   aria-pressed={date === today}
                   className={`text-xs px-2.5 py-1 rounded-full border ${
                     date === today
-                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-black"
-                      : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      ? "border-primary bg-primary text-primary-fg "
+                      : "border-line-strong text-fg-muted hover:bg-surface-3 "
                   }`}
                 >
                   Hoy
@@ -1227,8 +1234,8 @@ export default function TransactionForm({
                   aria-pressed={date === yesterday}
                   className={`text-xs px-2.5 py-1 rounded-full border ${
                     date === yesterday
-                      ? "border-zinc-900 bg-zinc-900 text-white dark:border-white dark:bg-white dark:text-black"
-                      : "border-zinc-300 dark:border-zinc-700 text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      ? "border-primary bg-primary text-primary-fg "
+                      : "border-line-strong text-fg-muted hover:bg-surface-3 "
                   }`}
                 >
                   Ayer
@@ -1244,7 +1251,7 @@ export default function TransactionForm({
                 clearDuplicateWarning();
                 clearDateInputIfEmptied(e.target);
               }}
-              className={`mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2 outline-none focus:ring-2 ${style.focus}`}
             />
           </div>
 
@@ -1276,11 +1283,11 @@ export default function TransactionForm({
 
           El mensaje de error va acá adentro y no entre los campos: un error
           que aparece fuera de la vista es un error que no se leyó. */}
-        <div className="flex-none px-6 pb-3 pt-2 space-y-3 bg-white dark:bg-zinc-900">
+        <div className="flex-none px-6 pb-3 pt-2 space-y-3 bg-surface-2 ">
             {error && (
               <p
                 role="alert"
-                className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}
               </p>
@@ -1294,7 +1301,7 @@ export default function TransactionForm({
               <div
                 id="tx-discard-warning"
                 role="alert"
-                className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
               >
                 <p>Si cerrás ahora se pierde lo que cargaste.</p>
                 <div className="mt-2 flex gap-2">
@@ -1302,7 +1309,7 @@ export default function TransactionForm({
                     id="tx-discard-cancel"
                     type="button"
                     onClick={() => setDiscardWarning(false)}
-                    className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                    className="rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium"
                   >
                     Seguir editando
                   </button>
@@ -1310,7 +1317,7 @@ export default function TransactionForm({
                     id="tx-discard-confirm"
                     type="button"
                     onClick={onClose}
-                    className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1 text-xs font-bold"
+                    className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1 text-xs font-bold"
                   >
                     Descartar
                   </button>
@@ -1325,7 +1332,7 @@ export default function TransactionForm({
               <div
                 id="tx-duplicate-warning"
                 role="alert"
-                className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
               >
                 <p>
                   Ya{" "}
@@ -1340,7 +1347,7 @@ export default function TransactionForm({
                     id="tx-duplicate-back"
                     type="button"
                     onClick={() => setDuplicateWarning([])}
-                    className="rounded-lg border border-amber-300 dark:border-amber-800 px-3 py-1 text-xs font-medium"
+                    className="rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium"
                   >
                     Volver
                   </button>
@@ -1349,7 +1356,7 @@ export default function TransactionForm({
                     type="button"
                     onClick={() => void saveAnyway()}
                     disabled={saving}
-                    className="rounded-lg bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 text-xs font-bold disabled:opacity-50"
+                    className="rounded-lg bg-warning hover:bg-warning/90 text-primary-fg px-3 py-1 text-xs font-bold disabled:opacity-50"
                   >
                     Guardar igual
                   </button>
@@ -1361,7 +1368,7 @@ export default function TransactionForm({
                   id="tx-cancel"
                   type="button"
                   onClick={onClose}
-                  className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+                  className="flex-1 rounded-md border border-line-strong py-3 font-medium"
                 >
                   Cancelar
                 </button>
@@ -1370,7 +1377,7 @@ export default function TransactionForm({
                   type="submit"
                   form="tx-form"
                   disabled={saving}
-                  className={`flex-1 rounded-xl py-3 font-bold text-white disabled:opacity-50 ${style.badge}`}
+                  className={`flex-1 rounded-md py-3 font-bold text-primary-fg disabled:opacity-50 ${style.badge}`}
                 >
                   {saving ? "Guardando…" : "Guardar"}
                 </button>

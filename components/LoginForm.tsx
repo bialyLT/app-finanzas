@@ -53,7 +53,7 @@ export default function LoginForm({ next }: { next: string }) {
       <div>
         <label
           htmlFor="password"
-          className="block text-sm font-medium mb-2 text-zinc-700 dark:text-zinc-300"
+          className="block text-sm font-medium mb-2 text-fg-muted "
         >
           Contraseña
         </label>
@@ -66,7 +66,7 @@ export default function LoginForm({ next }: { next: string }) {
           required
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          className="w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+          className="w-full rounded-md border border-line-strong bg-surface-2 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-focus focus:border-transparent"
           placeholder="••••••••••••"
         />
       </div>
@@ -74,7 +74,7 @@ export default function LoginForm({ next }: { next: string }) {
       {error && (
         <p
           role="alert"
-          className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+          className="rounded-md border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger "
         >
           {error}
         </p>
@@ -83,7 +83,7 @@ export default function LoginForm({ next }: { next: string }) {
       <button
         type="submit"
         disabled={loading || password.length === 0}
-        className="w-full rounded-xl bg-emerald-600 px-4 py-3 font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        className="w-full rounded-lg bg-success px-4 py-3 font-semibold text-primary-fg hover:bg-success/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         {loading ? "Entrando…" : "Entrar"}
       </button>

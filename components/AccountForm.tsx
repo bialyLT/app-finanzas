@@ -11,6 +11,7 @@ import {
 } from "@/lib/finance";
 import { formatPercent } from "@/lib/format";
 import { formatAmountInput, formatMoney } from "@/lib/format";
+import { CreditCard, Check } from "lucide-react";
 
 interface Props {
   onClose: () => void;
@@ -201,7 +202,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
         role="dialog"
         aria-modal="true"
         aria-label="Nueva cuenta"
-        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-white dark:bg-zinc-900 rounded-t-3xl sm:rounded-3xl shadow-2xl"
+        className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-surface-2 rounded-t-md sm:rounded-md shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* El panel es una columna: el encabezado y el pie son `flex-none` y
@@ -215,7 +216,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
           <button
             id="acc-close"
             onClick={onClose}
-            className="text-2xl leading-none text-zinc-400 hover:text-zinc-700 px-2"
+            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×
@@ -237,7 +238,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               onChange={(e) => setName(e.target.value)}
               placeholder="Ej: Banco Galicia, Efectivo, Visa Santander"
               maxLength={60}
-              className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+              className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
             />
           </div>
 
@@ -249,7 +250,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               id="acc-kind"
               value={kind}
               onChange={(e) => setKind(e.target.value as AccountKindDTO)}
-              className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+              className="mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-3 outline-none focus:ring-2 focus:ring-focus"
             >
               {KIND_ORDER.map((option) => (
                 <option key={option} value={option}>
@@ -257,7 +258,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 </option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-zinc-500">{KIND_HELP[kind]}</p>
+            <p className="mt-1 text-xs text-fg-muted">{KIND_HELP[kind]}</p>
           </div>
 
           {/* ── Parámetros del préstamo ──────────────────────────────────── */}
@@ -275,7 +276,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                   value={principal}
                   onChange={(e) => setPrincipal(e.target.value)}
                   placeholder="500.000"
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
                 />
               </div>
 
@@ -292,7 +293,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                     value={tnaPercent}
                     onChange={(e) => setTnaPercent(e.target.value)}
                     placeholder="60"
-                    className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                   />
                 </div>
                 <div>
@@ -307,7 +308,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                     value={installmentCount}
                     onChange={(e) => setInstallmentCount(e.target.value)}
                     placeholder="12"
-                    className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                   />
                 </div>
               </div>
@@ -324,31 +325,31 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                     setFirstInstallmentDate(e.target.value);
                     clearDateInputIfEmptied(e.target);
                   }}
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                 />
               </div>
 
               {/* ── La vista previa: acá es donde el usuario entiende ─────── */}
               {previewError && (
-                <p className="text-sm rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2">
+                <p className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
                   {previewError}
                 </p>
               )}
 
               {preview && (
-                <div className="rounded-xl bg-sky-50 dark:bg-sky-950 px-4 py-3 text-sm">
-                  <p className="font-bold text-sky-900 dark:text-sky-100">
+                <div className="rounded-md bg-transfer/10 px-4 py-3 text-sm">
+                  <p className="font-bold text-transfer ">
                     {installmentCount} cuotas de {formatMoney(preview.payment)}
                   </p>
-                  <p className="mt-1 text-sky-800 dark:text-sky-200">
+                  <p className="mt-1 text-transfer ">
                     Vas a pagar en total{" "}
                     <b>{formatMoney(preview.totalPaid)}</b>.
                   </p>
-                  <p className="mt-1 text-sky-800 dark:text-sky-200">
+                  <p className="mt-1 text-transfer ">
                     De eso, <b>{formatMoney(preview.totalInterest)}</b> son
                     intereses: es lo que te cuesta el préstamo.
                   </p>
-                  <p className="mt-1 text-sky-700 dark:text-sky-300 text-xs">
+                  <p className="mt-1 text-transfer text-xs">
                     De cada 100 pesos que pagues,{" "}
                     <b>
                       {formatMoney(preview.interestSharePercent, {
@@ -361,7 +362,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 </div>
               )}
 
-              <p className="text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-zinc-600 dark:text-zinc-400">
+              <p className="text-xs rounded-lg bg-surface-3 px-3 py-2 text-fg-muted ">
                 Cuando te desembolsen la plata, se registra como una{" "}
                 <b>transferencia</b> desde esta cuenta hacia tu banco. Cobrar un
                 préstamo no es un ingreso: te endeudaste, no ganaste.
@@ -389,7 +390,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                         value={closingDay}
                         onChange={(e) => setClosingDay(e.target.value)}
                         placeholder="15"
-                        className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                        className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                       />
                     </div>
                     <div>
@@ -404,7 +405,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                         value={dueDay}
                         onChange={(e) => setDueDay(e.target.value)}
                         placeholder="5"
-                        className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                        className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                       />
                     </div>
                   </div>
@@ -412,7 +413,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                   <div>
                     <label htmlFor="acc-card-limit" className="text-sm font-medium">
                       Límite de la tarjeta{" "}
-                      <span className="font-normal text-zinc-500">(opcional)</span>
+                      <span className="font-normal text-fg-muted">(opcional)</span>
                     </label>
                     <input
                       id="acc-card-limit"
@@ -422,20 +423,20 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                       value={creditLimit}
                       onChange={(e) => setCreditLimit(e.target.value)}
                       placeholder="500.000"
-                      className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
                     />
                     {limitPreview && (
-                      <p className="mt-1 text-xs text-zinc-500">
+                      <p className="mt-1 text-xs text-fg-muted">
                         Hasta <b>{limitPreview}</b>.
                       </p>
                     )}
                   </div>
 
-                  <p className="text-xs rounded-lg bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-zinc-600 dark:text-zinc-400">
+                  <p className="text-xs rounded-lg bg-surface-3 px-3 py-2 text-fg-muted ">
                     Con el cierre y el vencimiento cargados, la app puede emitir
                     resúmenes y repartir las cuotas. Si los dejás vacíos, la
                     tarjeta existe pero no se pueden correr resúmenes — los
-                    podés cargar después desde <b>💳 Tarjetas</b>.
+                    podés cargar después desde <b><CreditCard className="size-4 inline-block align-[-2px]" aria-hidden /> Tarjetas</b>.
                   </p>
                 </>
               )}
@@ -443,7 +444,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               <div>
                 <label htmlFor="acc-opening" className="text-sm font-medium">
                   {isCard ? "Saldo inicial" : "Cuánta plata tiene hoy"}{" "}
-                  <span className="font-normal text-zinc-500">(opcional)</span>
+                  <span className="font-normal text-fg-muted">(opcional)</span>
                 </label>
                 <input
                   id="acc-opening"
@@ -453,9 +454,9 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                   value={openingBalance}
                   onChange={(e) => setOpeningBalance(e.target.value)}
                   placeholder="0,00"
-                  className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
                 />
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-1 text-xs text-fg-muted">
                   {openingPreview ? (
                     <>
                       Arranca con <b>{openingPreview}</b>.
@@ -477,7 +478,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 toque.
               */}
               {isMoney && (
-                <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
+                <div className="rounded-md border border-line border-line-strong p-3">
                   <button
                     type="button"
                     id="acc-declare-income"
@@ -488,20 +489,20 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                   >
                     <span
                       aria-hidden="true"
-                      className={`grid h-6 w-6 shrink-0 place-items-center rounded border-2 text-sm font-bold ${
+                      className={`grid h-6 w-6 shrink-0 place-items-center rounded-lg border-2 ${
                         declareIncome
-                          ? "border-sky-600 bg-sky-600 text-white"
-                          : "border-zinc-400 dark:border-zinc-500"
+                          ? "border-transfer bg-transfer text-primary-fg"
+                          : "border-line-strong text-fg-subtle"
                       }`}
                     >
-                      {declareIncome ? "✓" : ""}
+                      <Check className="size-4" aria-hidden />
                     </span>
                     <span className="text-sm font-medium">
                       Contar este saldo como ingreso de este mes
                     </span>
                   </button>
 
-                  <p className="mt-2 text-xs text-zinc-500">
+                  <p className="mt-2 text-xs text-fg-muted">
                     Sirve cuando cargás una cuenta con la plata que ya tenías y no
                     querés que el mes te quede en rojo. El saldo NO cambia: sólo
                     se dice en qué mes esa plata cuenta como ingreso.
@@ -520,9 +521,9 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                         type="month"
                         value={incomeMonth}
                         onChange={(e) => setIncomeMonth(e.target.value)}
-                        className="mt-1 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-transparent px-3 py-3 outline-none focus:ring-2 focus:ring-sky-500"
+                        className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-3 outline-none focus:ring-2 focus:ring-focus"
                       />
-                      <p className="mt-1 text-xs text-zinc-500">
+                      <p className="mt-1 text-xs text-fg-muted">
                         Por defecto, el mes en que creás la cuenta. Si la plata es
                         de un mes anterior, elegí ese mes.
                       </p>
@@ -541,11 +542,11 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             guardar nunca se pierde. El botón referencia al formulario
             (`#acc-form`) con `form=`, así el pie puede vivir fuera del
             `<form>`. */}
-        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-white dark:bg-zinc-900">
+        <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-surface-2 ">
             {error && (
               <p
                 role="alert"
-                className="text-sm text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950 rounded-lg px-3 py-2"
+                className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}
               </p>
@@ -556,7 +557,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 id="acc-cancel"
                 type="button"
                 onClick={onClose}
-                className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-3 font-medium"
+                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
               >
                 Cancelar
               </button>
@@ -565,7 +566,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 type="submit"
                 form="acc-form"
                 disabled={saving}
-                className="flex-1 rounded-xl py-3 font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:opacity-50"
+                className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
               >
                 {saving ? "Creando…" : "Crear cuenta"}
               </button>

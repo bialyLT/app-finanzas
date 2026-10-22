@@ -243,10 +243,10 @@ export default function CommandPalette({
         aria-modal="true"
         aria-label="Paleta de comandos"
         id="command-palette"
-        className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-md bg-surface-2 shadow-2xl overflow-hidden"
       >
-        <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 px-4 py-3">
-          <span aria-hidden="true" className="text-zinc-400">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+          <span aria-hidden="true" className="text-fg-subtle">
             ⌘
           </span>
           <input
@@ -286,7 +286,7 @@ export default function CommandPalette({
             type="button"
             onClick={onClose}
             aria-label="Cerrar paleta"
-            className="text-xl leading-none text-zinc-400 hover:text-zinc-700 px-1"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-1"
           >
             ×
           </button>
@@ -299,7 +299,7 @@ export default function CommandPalette({
           className="min-h-0 flex-1 overflow-y-auto py-1"
         >
           {filtered.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-zinc-500 text-center">
+            <p className="px-4 py-6 text-sm text-fg-muted text-center">
               Nada coincide con “{query}”.
             </p>
           ) : (
@@ -317,8 +317,8 @@ export default function CommandPalette({
                 onClick={() => run(action)}
                 className={`w-full text-left px-4 py-2 flex items-baseline justify-between gap-3 ${
                   active === index
-                    ? "bg-zinc-100 dark:bg-zinc-800"
-                    : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                    ? "bg-surface-3 "
+                    : "hover:bg-surface-3 hover:bg-surface-3/60"
                 } ${action.disabled ? "opacity-40 cursor-not-allowed" : ""}`}
               >
                 <span className="min-w-0">
@@ -326,12 +326,12 @@ export default function CommandPalette({
                     {action.label}
                   </span>
                   {action.hint && (
-                    <span className="block text-[11px] text-zinc-500 truncate">
+                    <span className="block text-[11px] text-fg-muted truncate">
                       {action.hint}
                     </span>
                   )}
                 </span>
-                <span className="text-[10px] uppercase tracking-wide text-zinc-400 whitespace-nowrap">
+                <span className="text-[10px] uppercase tracking-wide text-fg-subtle whitespace-nowrap">
                   {action.group}
                 </span>
               </button>
@@ -339,7 +339,7 @@ export default function CommandPalette({
           )}
         </div>
 
-        <p className="border-t border-zinc-200 dark:border-zinc-800 px-4 py-2 text-[11px] text-zinc-400">
+        <p className="border-t border-line px-4 py-2 text-[11px] text-fg-subtle">
           ↑ ↓ navegar · Enter elegir · Esc cerrar · los favoritos con cuenta
           archivada se muestran deshabilitados
         </p>

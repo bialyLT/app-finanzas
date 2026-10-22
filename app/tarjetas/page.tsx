@@ -16,6 +16,7 @@ import type {
   StatementPayResponseDTO,
 } from "@/lib/finance";
 import { formatLiability, formatMoney, formatPercent } from "@/lib/format";
+import { CreditCard, Settings, Play } from "lucide-react";
 
 /**
  * Pantalla de tarjetas de crédito y cuotas (Fase 5, ronda 2).
@@ -332,8 +333,8 @@ export default function CardsPage() {
       {/* ── Título y archivadas ──────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-extrabold">💳 Tarjetas</h1>
-          <p className="text-sm text-zinc-500">
+          <h1 className="text-2xl font-extrabold flex items-center gap-2"><CreditCard className="size-6" aria-hidden />Tarjetas</h1>
+          <p className="text-sm text-fg-muted">
             Deuda, límite, resúmenes y cuotas comprometidas de cada tarjeta. Las
             cuotas son deuda que ya nació: acá ves cuándo la vas a pagar.
           </p>
@@ -342,10 +343,10 @@ export default function CardsPage() {
           id="cards-toggle-archived"
           onClick={toggleArchived}
           aria-pressed={includeArchived}
-          className={`shrink-0 rounded-xl border px-3 py-2 text-sm font-medium ${
+          className={`shrink-0 rounded-md border px-3 py-2 text-sm font-medium ${
             includeArchived
-              ? "border-transparent bg-zinc-900 text-white dark:bg-white dark:text-black"
-              : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+              ? "border-transparent bg-primary text-primary-fg "
+              : "border-line-strong hover:bg-surface-3 "
           }`}
         >
           {includeArchived ? "Ocultar archivadas" : "Ver archivadas"}
@@ -357,10 +358,10 @@ export default function CardsPage() {
         <p
           id="cards-flash"
           role="status"
-          className={`rounded-xl px-3 py-2 text-sm ${
+          className={`rounded-md px-3 py-2 text-sm ${
             flashError
-              ? "bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300"
-              : "bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200"
+              ? "bg-danger/10 text-danger "
+              : "bg-success/10 text-success "
           }`}
         >
           {flash}
@@ -371,14 +372,14 @@ export default function CardsPage() {
         <p
           id="cards-truncated"
           role="alert"
-          className="rounded-xl bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2 text-sm"
+          className="rounded-md bg-warning/10 text-warning px-3 py-2 text-sm"
         >
           Hay más resúmenes de los que se muestran: la lista está recortada.
         </p>
       )}
 
       {loading && (
-        <p className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-10 text-center text-zinc-500 shadow-sm">
+        <p className="bg-surface-2 rounded-md px-4 py-10 text-center text-fg-muted shadow-sm">
           Cargando…
         </p>
       )}
@@ -386,23 +387,23 @@ export default function CardsPage() {
       {!loading && loadError && (
         <p
           role="alert"
-          className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-8 text-center text-rose-600 dark:text-rose-400 shadow-sm"
+          className="bg-surface-2 rounded-md px-4 py-8 text-center text-danger shadow-sm"
         >
           {loadError}
         </p>
       )}
 
       {!loading && !loadError && cards.length === 0 && (
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl px-4 py-10 text-center shadow-sm">
-          <p className="text-3xl mb-1">💳</p>
+        <div className="bg-surface-2 rounded-md px-4 py-10 text-center shadow-sm">
+          <p className="mb-1"><CreditCard className="size-8 inline-block" aria-hidden /></p>
           <p className="font-medium">No hay tarjetas de crédito cargadas</p>
-          <p className="text-sm text-zinc-500 mt-1">
+          <p className="text-sm text-fg-muted mt-1">
             Creá una desde el panel: <b>Nueva cuenta</b> → tipo{" "}
             <b>Tarjeta de crédito</b>.
           </p>
           <Link
             href="/"
-            className="inline-flex items-center justify-center touch:min-h-11 mt-3 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black px-4 py-2 font-bold"
+            className="inline-flex items-center justify-center touch:min-h-11 mt-3 rounded-lg bg-primary text-primary-fg px-4 py-2 font-bold"
           >
             Ir al panel
           </Link>
@@ -430,7 +431,7 @@ export default function CardsPage() {
             <section
               key={card.id}
               id={`card-${card.id}`}
-              className="bg-white dark:bg-zinc-900 rounded-2xl shadow-sm"
+              className="bg-surface-2 rounded-md shadow-sm"
             >
               {/* ── Encabezado de la tarjeta ─────────────────────────────── */}
               <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
@@ -442,10 +443,10 @@ export default function CardsPage() {
                   <p id={`card-debt-${card.id}`} className="mt-0.5 font-semibold">
                     {formatLiability(card.debt ?? "0")}
                   </p>
-                  <p id={`card-utilization-${card.id}`} className="text-sm text-zinc-600 dark:text-zinc-400 mt-0.5">
+                  <p id={`card-utilization-${card.id}`} className="text-sm text-fg-muted mt-0.5">
                     {utilizationText}
                   </p>
-                  <p id={`card-closing-${card.id}`} className="text-xs text-zinc-500 mt-0.5">
+                  <p id={`card-closing-${card.id}`} className="text-xs text-fg-muted mt-0.5">
                     {closingText}
                   </p>
                 </div>
@@ -453,9 +454,9 @@ export default function CardsPage() {
                   id={`card-config-${card.id}`}
                   onClick={() => setModal({ type: "config", cardId: card.id })}
                   disabled={busyId !== null}
-                  className="shrink-0 rounded-xl border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                  className="shrink-0 rounded-md border border-line-strong px-3 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                 >
-                  ⚙️ Configurar
+                  <Settings className="size-4" aria-hidden /> Configurar
                 </button>
               </div>
 
@@ -463,12 +464,12 @@ export default function CardsPage() {
               {period && (
                 <div
                   id={`card-current-${card.id}`}
-                  className="mx-4 mt-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 px-3 py-3"
+                  className="mx-4 mt-3 rounded-md bg-surface bg-surface-3/60 px-3 py-3"
                 >
                   <p className="text-sm font-semibold">
                     Período en curso: {period.periodLabel}
                   </p>
-                  <p className="text-xs text-zinc-500 mt-0.5">
+                  <p className="text-xs text-fg-muted mt-0.5">
                     Cierra el {formatCalendar(period.closingDate)} · vence el{" "}
                     {formatCalendar(period.dueDate)}.
                   </p>
@@ -477,7 +478,7 @@ export default function CardsPage() {
                     {formatMoney(period.totalDue)} · mínimo:{" "}
                     {formatMoney(period.minimumDue)}.
                   </p>
-                  <p className="text-xs text-zinc-500 mt-1">
+                  <p className="text-xs text-fg-muted mt-1">
                     {period.persisted
                       ? currentPeriodStatus(card)
                       : `${currentPeriodStatus(card)} Es una proyección: no es un documento emitido.`}
@@ -486,23 +487,23 @@ export default function CardsPage() {
                     id={`card-run-${card.id}`}
                     onClick={() => runClose(card)}
                     disabled={busyId !== null}
-                    className="mt-2 rounded-xl border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                    className="mt-2 rounded-md border border-line-strong px-3 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                   >
-                    {runBusy ? "Corriendo…" : "▶ Correr el cierre"}
+                    {runBusy ? "Corriendo…" : (<><Play className="size-4 inline-block align-[-2px]" aria-hidden /> Correr el cierre</>)}
                   </button>
                 </div>
               )}
 
               {/* ── Resúmenes emitidos ───────────────────────────────────── */}
               <div className="px-4 pt-4">
-                <p className="text-sm font-bold uppercase tracking-wide text-zinc-500">
+                <p className="text-sm font-bold uppercase tracking-wide text-fg-muted">
                   Resúmenes emitidos
                 </p>
 
                 {card.statements.length === 0 ? (
                   <p
                     id={`card-statements-empty-${card.id}`}
-                    className="text-sm text-zinc-500 mt-2"
+                    className="text-sm text-fg-muted mt-2"
                   >
                     Todavía no hay resúmenes emitidos.
                   </p>
@@ -514,14 +515,14 @@ export default function CardsPage() {
                         <div
                           key={statement.id}
                           id={`stmt-${statement.id}`}
-                          className="border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
+                          className="border border-line rounded-md px-3 py-2.5"
                         >
                           <div className="flex items-start justify-between gap-3 flex-wrap">
                             <div className="min-w-0">
                               <p className="font-semibold">
                                 {statement.periodLabel}
                               </p>
-                              <p className="text-xs text-zinc-500 mt-0.5">
+                              <p className="text-xs text-fg-muted mt-0.5">
                                 Cerró el {formatCalendar(statement.closingDate)} ·
                                 vence el {formatCalendar(statement.dueDate)}.
                               </p>
@@ -538,8 +539,8 @@ export default function CardsPage() {
                               }
                               className={`shrink-0 text-xs font-bold rounded-full px-2 py-0.5 ${
                                 statement.paid
-                                  ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300"
-                                  : "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200"
+                                  ? "bg-success/10 text-success "
+                                  : "bg-warning/10 text-warning "
                               }`}
                             >
                               {statement.paid ? "Pagado" : "Sin pagar"}
@@ -551,7 +552,7 @@ export default function CardsPage() {
                               id={`stmt-pay-${statement.id}`}
                               onClick={() => openPay(statement.id)}
                               disabled={busyId !== null}
-                              className="mt-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-sm font-bold disabled:opacity-50"
+                              className="mt-2 rounded-lg bg-success hover:bg-success/90 text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
                             >
                               Pagar resumen
                             </button>
@@ -560,16 +561,16 @@ export default function CardsPage() {
                           {!statement.paid && payingId === statement.id && (
                             <div
                               id={`stmt-pay-confirm-${statement.id}`}
-                              className="mt-2 rounded-xl bg-emerald-50 dark:bg-emerald-950 px-3 py-3"
+                              className="mt-2 rounded-md bg-success/10 px-3 py-3"
                             >
-                              <p className="text-sm text-emerald-900 dark:text-emerald-100">
+                              <p className="text-sm text-success ">
                                 Se transfieren{" "}
                                 {formatMoney(statement.totalDue)} a {card.name}{" "}
                                 desde:
                               </p>
 
                               {payOrigins.length === 0 ? (
-                                <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
+                                <p className="mt-2 text-sm text-warning ">
                                   Necesitás una cuenta de banco o efectivo
                                   (no archivada) para pagar el resumen.
                                 </p>
@@ -578,7 +579,7 @@ export default function CardsPage() {
                                   id={`stmt-pay-from-${statement.id}`}
                                   value={payFromId ?? ""}
                                   onChange={(e) => setPayFromId(e.target.value)}
-                                  className="mt-2 w-full rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2.5 outline-none focus:ring-2 focus:ring-sky-500"
+                                  className="mt-2 w-full rounded-md border border-line-strong bg-surface-2 px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
                                 >
                                   {payOrigins.map((account) => (
                                     <option key={account.id} value={account.id}>
@@ -588,7 +589,7 @@ export default function CardsPage() {
                                 </select>
                               )}
 
-                              <p className="mt-1 text-xs text-emerald-800 dark:text-emerald-200">
+                              <p className="mt-1 text-xs text-success ">
                                 Es una transferencia entre tus cuentas: baja la
                                 deuda de la tarjeta y no se cuenta como gasto
                                 otra vez.
@@ -600,7 +601,7 @@ export default function CardsPage() {
                                     id={`stmt-pay-go-${statement.id}`}
                                     onClick={() => pay(statement)}
                                     disabled={busyId !== null || !payFromId}
-                                    className="flex-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white py-2 text-sm font-bold disabled:opacity-50"
+                                    className="flex-1 rounded-md bg-success hover:bg-success/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
                                   >
                                     {payBusy ? "Pagando…" : "Confirmar pago"}
                                   </button>
@@ -609,7 +610,7 @@ export default function CardsPage() {
                                   id={`stmt-pay-cancel-${statement.id}`}
                                   onClick={() => setPayingId(null)}
                                   disabled={busyId !== null}
-                                  className="flex-1 rounded-xl border border-zinc-300 dark:border-zinc-700 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                                  className="flex-1 rounded-md border border-line-strong py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                                 >
                                   Cancelar
                                 </button>
@@ -626,7 +627,7 @@ export default function CardsPage() {
               {/* ── Compras en cuotas ────────────────────────────────────── */}
               <div className="px-4 pt-4 pb-4">
                 <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <p className="text-sm font-bold uppercase tracking-wide text-zinc-500">
+                  <p className="text-sm font-bold uppercase tracking-wide text-fg-muted">
                     Compras en cuotas
                   </p>
                   {card.closingDay !== null && (
@@ -634,7 +635,7 @@ export default function CardsPage() {
                       id={`card-new-plan-${card.id}`}
                       onClick={() => setModal({ type: "plan", cardId: card.id })}
                       disabled={busyId !== null}
-                      className="rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black px-3 py-2 text-sm font-bold disabled:opacity-50"
+                      className="rounded-lg bg-primary text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
                     >
                       ＋ Compra en cuotas
                     </button>
@@ -644,17 +645,17 @@ export default function CardsPage() {
                 {card.closingDay === null && (
                   <p
                     id={`card-plans-noclose-${card.id}`}
-                    className="text-sm text-zinc-500 mt-2"
+                    className="text-sm text-fg-muted mt-2"
                   >
                     Sin día de cierre no se pueden cargar compras en cuotas:
-                    configuralo con ⚙️ Configurar.
+                    configuralo con <Settings className="size-4 inline-block align-[-2px]" aria-hidden /> Configurar.
                   </p>
                 )}
 
                 {card.closingDay !== null && card.plans.length === 0 && (
                   <p
                     id={`card-plans-empty-${card.id}`}
-                    className="text-sm text-zinc-500 mt-2"
+                    className="text-sm text-fg-muted mt-2"
                   >
                     Sin compras en cuotas.
                   </p>
@@ -679,25 +680,25 @@ export default function CardsPage() {
                         <div
                           key={plan.id}
                           id={`plan-${plan.id}`}
-                          className="border border-zinc-100 dark:border-zinc-800 rounded-xl px-3 py-2.5"
+                          className="border border-line rounded-md px-3 py-2.5"
                         >
                           <p className="font-semibold">
                             {plan.label} · {plan.installments}{" "}
                             {plan.installments === 1 ? "cuota" : "cuotas"}
                           </p>
                           <p className="text-sm mt-0.5">{statusText}</p>
-                          <p className="text-xs text-zinc-500 mt-0.5">
+                          <p className="text-xs text-fg-muted mt-0.5">
                             Compra del {formatCalendar(plan.purchaseDate)} ·
                             total {formatMoney(plan.totalAmount)}.
                           </p>
                           {firstItem && lastItem && (
-                            <p className="text-xs text-zinc-500 mt-0.5">
+                            <p className="text-xs text-fg-muted mt-0.5">
                               Cuotas de {firstItem.periodLabel} a{" "}
                               {lastItem.periodLabel}.
                             </p>
                           )}
                           {plan.implicitRate && (
-                            <p className="text-xs mt-1 rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-2 py-1">
+                            <p className="text-xs mt-1 rounded-lg bg-warning/10 text-warning px-2 py-1">
                               Tasa implícita:{" "}
                               {formatPercent(plan.implicitRate.monthlyRatePercent)}{" "}
                               por mes — TEA{" "}
@@ -711,7 +712,7 @@ export default function CardsPage() {
                             <p
                               id={`plan-delete-notice-${plan.id}`}
                               role="alert"
-                              className="mt-2 text-xs rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-3 py-2"
+                              className="mt-2 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
                             >
                               {notice.message}
                             </p>
@@ -720,14 +721,14 @@ export default function CardsPage() {
                           <div className="mt-2 flex flex-wrap gap-2">
                             {confirmPlanId === plan.id ? (
                               <>
-                                <span className="text-sm text-zinc-500 py-1.5">
+                                <span className="text-sm text-fg-muted py-1.5">
                                   ¿Borrar la compra y su gasto?
                                 </span>
                                 <button
                                   id={`plan-delete-confirm-${plan.id}`}
                                   onClick={() => removePlan(plan)}
                                   disabled={busyId !== null}
-                                  className="rounded-lg bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 text-sm font-bold disabled:opacity-50"
+                                  className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1.5 text-sm font-bold disabled:opacity-50"
                                 >
                                   {busy ? "Borrando…" : "Sí, borrar"}
                                 </button>
@@ -735,7 +736,7 @@ export default function CardsPage() {
                                   id={`plan-delete-cancel-${plan.id}`}
                                   onClick={() => setConfirmPlanId(null)}
                                   disabled={busyId !== null}
-                                  className="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50"
+                                  className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
                                 >
                                   Mejor no
                                 </button>
@@ -748,7 +749,7 @@ export default function CardsPage() {
                                   setPlanNotice(null);
                                 }}
                                 disabled={busyId !== null}
-                                className="rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-rose-600 disabled:opacity-50"
+                                className="rounded-lg px-3 py-1.5 text-sm font-medium text-fg-muted hover:bg-surface-3 hover:text-danger disabled:opacity-50"
                               >
                                 Borrar
                               </button>
@@ -762,19 +763,19 @@ export default function CardsPage() {
               </div>
 
               {/* ── Cuotas comprometidas ─────────────────────────────────── */}
-              <div className="border-t border-zinc-100 dark:border-zinc-800 px-4 py-4">
-                <p className="text-sm font-bold uppercase tracking-wide text-zinc-500">
+              <div className="border-t border-line px-4 py-4">
+                <p className="text-sm font-bold uppercase tracking-wide text-fg-muted">
                   Cuotas comprometidas
                 </p>
 
                 {card.closingDay === null ? (
-                  <p className="text-sm text-zinc-500 mt-2">
+                  <p className="text-sm text-fg-muted mt-2">
                     Sin día de cierre no hay proyección de cuotas.
                   </p>
                 ) : card.commitments.next12Months === "0.00" ? (
                   <p
                     id={`card-commitments-empty-${card.id}`}
-                    className="text-sm text-zinc-500 mt-2"
+                    className="text-sm text-fg-muted mt-2"
                   >
                     Sin cuotas comprometidas todavía.
                   </p>
@@ -795,14 +796,14 @@ export default function CardsPage() {
                       {card.commitments.months.map((month) => (
                         <li
                           key={`${month.year}-${month.month}`}
-                          className="text-xs rounded-full bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 text-zinc-600 dark:text-zinc-300"
+                          className="text-xs rounded-full bg-surface-3 px-2 py-0.5 text-fg-muted "
                         >
                           {shortMonthLabel(month.year, month.month)}{" "}
                           {formatMoney(month.amount)}
                         </li>
                       ))}
                     </ul>
-                    <p className="text-xs text-zinc-500 mt-2">
+                    <p className="text-xs text-fg-muted mt-2">
                       Es lo que ya compraste en cuotas: los próximos resúmenes lo
                       van a cobrar sí o sí. No incluye el período en curso si ya
                       tiene resumen emitido, ni las cuotas de resúmenes pagados.
@@ -814,7 +815,7 @@ export default function CardsPage() {
           );
         })}
 
-      <p className="text-center text-xs text-zinc-400 pb-2">
+      <p className="text-center text-xs text-fg-subtle pb-2">
         <Link href="/" className="underline inline-flex items-center touch:min-h-11">
           ← Volver al panel
         </Link>
