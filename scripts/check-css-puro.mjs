@@ -29,6 +29,17 @@
  * lugar (`body { }`, `.algo { }`, un `@media` con reglas en el nivel superior,
  * un `@layer components { .card { } }`).
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA ÚNICA EXCEPCIÓN DE NIVEL SUPERIOR: LOS BLOQUES DE TOKENS
+ * Un bloque `:root { --surface: … }` o `.dark { --surface: … }` es CONFIGURACIÓN
+ * del design system, no estilo de componente: son las variables que el
+ * `@theme` mapea. Por eso se admiten en el nivel superior (además de dentro de
+ * `@layer base`, que es donde viven hoy) con dos condiciones que se verifican
+ * acá: SÓLO declaraciones de variables (`--algo: …`) y NINGUNA regla anidada.
+ * `.dark` no se usa en este proyecto (el esquema oscuro es
+ * `prefers-color-scheme`), pero el día que se use tiene que ser un bloque de
+ * tokens y no una puerta para CSS a mano.
+ *
  * Además hay una regla que blinda el bug que motivó esta ronda: la
  * `font-family` NO se puede declarar fuera del `@theme` (por eso la app
  * renderizaba en Arial: la fuente se pisaba con una regla a mano). La fuente
@@ -90,6 +101,27 @@ const CONTEXTO_LIBRE = new Set(["theme", "custom-variant", "utility"]);
 const PROPIEDADES_FUENTE = new Set(["font", "font-family", "-webkit-font-family"]);
 
 /**
+ * Los selectores que declaran TOKENS en el nivel superior.
+ *
+ * Son configuración (`--surface: #07111f`), no el estilo de un componente. El
+ * bloque se admite SÓLO si cada declaración es una variable (`--*`) y no anida
+ * reglas: un `.dark { color: red }` sigue siendo CSS a mano y se rechaza.
+ */
+export const SELECTORES_DE_TOKENS = [":root", ".dark"];
+
+/** ¿Este selector es un bloque de tokens (`:root` / `.dark`)? */
+export function esBloqueDeTokens(selector) {
+  const partes = selector
+    .split(",")
+    .map((parte) => parte.trim())
+    .filter((parte) => parte.length > 0);
+  return (
+    partes.length > 0 &&
+    partes.every((parte) => SELECTORES_DE_TOKENS.includes(parte))
+  );
+}
+
+/**
  * ¿Este selector es un DEFAULT DE ELEMENTO (o sea, un selector de tipo)?
  *
  * `button`, `input`, `select`, `textarea`, `button:hover`, `*` → sí.
@@ -124,6 +156,10 @@ export function esDefaultDeElemento(selector) {
 function contextoDe(pila) {
   let hayVariante = false;
   for (const c of pila) {
+    if (c.tipo === "atrule") continue;
+    if (c.tipo === "rule" && c.bloqueDeTokens) return "token";
+  }
+  for (const c of pila) {
     if (c.tipo !== "atrule") continue;
     if (c.nombre === "theme") return "theme";
     if (c.nombre === "utility") return "utility";
@@ -131,6 +167,11 @@ function contextoDe(pila) {
     if (c.nombre === "layer" && c.params.trim() === "base") return "layer-base";
   }
   return hayVariante ? "libre" : "ninguno";
+}
+
+/** ¿La pila está dentro de un bloque de tokens (`:root` / `.dark`)? */
+function enBloqueDeTokens(pila) {
+  return pila.some((c) => c.tipo === "rule" && c.bloqueDeTokens);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +273,13 @@ export function analizarCss(css, archivo = "(css)") {
           }
         }
         pila.push({ tipo: "atrule", nombre, params });
+        if (enBloqueDeTokens(pila.slice(0, -1))) {
+          problema(
+            "un bloque de tokens (`:root` / `.dark`) no puede anidar at-rules: sólo declara variables",
+            texto,
+            preludioLinea,
+          );
+        }
       } else {
         if (pila.length === 0) {
           construcciones.push({ texto, linea: preludioLinea, problemas: [] });
@@ -239,8 +287,23 @@ export function analizarCss(css, archivo = "(css)") {
         // Un SELECTOR. Depende del contexto en el que vive:
         const contexto = contextoDe(pila);
         if (contexto === "ninguno") {
+          if (esBloqueDeTokens(texto)) {
+            // Un bloque de tokens en el nivel superior ES configuración. Se
+            // admite, pero se marca para exigir que adentro sólo haya
+            // variables y ninguna regla anidada (ver `bloqueDeTokens`).
+            pila.push({ tipo: "rule", selector: texto, bloqueDeTokens: true });
+            preludio = "";
+            i += 1;
+            continue;
+          }
           problema(
             "selector suelto: el estilo de un componente no vive en el CSS global",
+            texto,
+            preludioLinea,
+          );
+        } else if (contexto === "token") {
+          problema(
+            "un bloque de tokens (`:root` / `.dark`) no puede anidar reglas: sólo declara variables",
             texto,
             preludioLinea,
           );
@@ -303,6 +366,17 @@ export function analizarCss(css, archivo = "(css)") {
             texto,
             preludioLinea,
           );
+        } else {
+          // Un bloque de tokens sólo puede declarar variables: cualquier
+          // propiedad de estilo (`color`, `font-family`…) es CSS a mano.
+          const regla = [...pila].reverse().find((c) => c.tipo === "rule");
+          if (regla?.bloqueDeTokens && !propiedad.startsWith("--")) {
+            problema(
+              "un bloque de tokens (`:root` / `.dark`) sólo declara variables (--token)",
+              texto,
+              preludioLinea,
+            );
+          }
         }
       }
       preludio = "";

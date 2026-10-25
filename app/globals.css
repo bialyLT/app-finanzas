@@ -218,6 +218,47 @@
 
   /* El anillo de foco */
   --color-focus: var(--focus);
+
+  /* ── EL PUENTE DE TOKENS DE SHADCN (F1) ────────────────────────────────────
+     Las primitivas de Radix vienen de shadcn y hablan otro vocabulario:
+     `background`, `foreground`, `card`, `popover`, `primary`, `secondary`,
+     `muted`, `accent`, `destructive`, `border`, `input`, `ring`. En vez de
+     copiar el tema de shadcn (que trae SUS colores, en oklch), acá se declaran
+     ALIAS que apuntan a los quince tokens de «C · Noche».
+
+     Son alias, no colores nuevos: ningún valor de este bloque es un hex. Por
+     eso el número de hex del archivo NO cambia (30: quince en `:root` y quince
+     en el bloque oscuro), y cambiar la paleta sigue siendo editar esos quince
+     valores. `npm run check:estilo` y el test de `components/ui` lo sujetan.
+
+     Los dos que NO son un calco uno-a-uno, con su motivo:
+       · `--color-primary` ya existía y se conserva; se agrega
+         `--color-primary-foreground` (el `primary-fg` de nuestro sistema).
+       · `--color-input` apunta a `--line` (el borde DECORATIVO) porque así lo
+         pide el puente. Los controles de ESTA app usan `--line-strong` (el
+         borde de control, ≥ 3:1) directamente en su componente: el alias
+         queda para las piezas de shadcn que todavía no pasaron por F2.
+       · `--color-destructive-foreground` es `--primary-fg`: el texto sobre un
+         color saturado. Verificado ≥ 4,5:1 sobre `--danger` en los DOS
+         esquemas (noche 6,26:1 · claro 6,47:1). */
+  --color-background: var(--surface);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface-2);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--surface-2);
+  --color-popover-foreground: var(--fg);
+  --color-primary-foreground: var(--primary-fg);
+  --color-secondary: var(--surface-3);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--surface-3);
+  --color-muted-foreground: var(--fg-muted);
+  --color-accent: var(--surface-3);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--primary-fg);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--focus);
 }
 
 /* ── Los valores de los tokens ───────────────────────────────────────────────

@@ -578,3 +578,83 @@ Los números de la tipografía (avances, márgenes, el factor de cada monto) se
 miden con `node scripts/medir-fuente.mjs --candidatas` (antes de elegir) y
 `node scripts/medir-fuente.mjs --url http://127.0.0.1:3101` (la fuente real
 que sirve el build).
+
+---
+
+## 7 · Las primitivas (F1)
+
+Las piezas de `components/ui/` son de Radix, **la piel es del proyecto**. No
+se corrió `npx shadcn init`: el CLI reescribe `app/globals.css` con su propio
+tema (sus `:root`/`.dark` y sus colores en oklch) y eso destruye los tokens de
+F0a/F0b. En su lugar:
+
+- `components.json` escrito a mano (formato estándar, para que un futuro
+  `shadcn add` encuentre los alias), `"cssVariables": true`, sin colores.
+- `lib/utils.ts` con el `cn()` de siempre (`clsx` + `tailwind-merge`).
+- Las dependencias mínimas: `class-variance-authority`, `clsx`,
+  `tailwind-merge` y los `@radix-ui/react-*` de cada primitiva.
+- Los `components/ui/*` adaptados a mano, con los tokens de §1 y los radios de
+  §2 (`rounded-md` 6, `rounded-lg` 8, `rounded-full`, `rounded-none`; shadcn
+  trae `rounded-sm`/`rounded-xl` y acá se normalizaron).
+
+### 7.1 · El puente de tokens
+
+`@theme inline` declara **alias** (nunca colores nuevos) para el vocabulario
+de shadcn:
+
+| Token de shadcn | Apunta a | Token de shadcn | Apunta a |
+|---|---|---|---|
+| `background` / `foreground` | `--surface` / `--fg` | `accent` / `accent-foreground` | `--surface-3` / `--fg` |
+| `card` / `card-foreground` | `--surface-2` / `--fg` | `destructive` / `destructive-foreground` | `--danger` / `--primary-fg` |
+| `popover` / `popover-foreground` | `--surface-2` / `--fg` | `border` / `input` | `--line` |
+| `primary` / `primary-foreground` | `--primary` / `--primary-fg` | `ring` | `--focus` |
+| `secondary` / `secondary-foreground` | `--surface-3` / `--fg` | `muted` / `muted-foreground` | `--surface-3` / `--fg-muted` |
+
+El archivo sigue con **30 valores hex** (15 en `:root`, 15 en el bloque
+oscuro): el puente no agregó ni uno. `destructive-foreground` es
+`primary-fg` y está medido sobre `--danger`: 6,26:1 en Noche y 6,47:1 en
+claro. El único alias que no es un calco es `input` → `--line` (el borde
+decorativo): los controles de la app usan `--line-strong` (≥ 3:1) en su
+componente y el alias queda para las piezas que todavía no pasaron por F2.
+
+### 7.2 · Las piezas y sus reglas
+
+`button` (variantes default/secondary/outline/ghost/destructive/link; tamaños
+sm/default/lg/icon) · `input` · `label` · `card` · `badge` (default, secondary,
+outline y los cuatro estados con su tinte al 10 % y borde al 40 %) ·
+`separator` · `dialog` · `sheet` · `select` · `tabs` · `table` ·
+`dropdown-menu` · `tooltip`.
+
+- **Foco:** `focus-visible:ring-2 ring-ring ring-offset-2
+  ring-offset-background` (el anillo es `--focus`).
+- **`dark:` en colores:** ninguno. El alias ya resuelve por esquema.
+- **Sin animaciones de entrada** (son F3): sólo `transition-colors` y
+  `data-[state=…]`. Nada de `tw-animate-css`.
+- **Targets táctiles:** no se declaran en las variantes. La capa base fuerza
+  44 px en `button`/`input`/`select`/`textarea` con `any-pointer: coarse`;
+  `h-9` fija `height`, no `min-height`, así que el piso sigue ganando en un
+  teléfono y el escritorio conserva la densidad.
+- **El pie del modal no se pierde:** `Dialog`/`Sheet` son columnas flex
+  (`Header` y `Footer` `flex-none`; `DialogBody`/`SheetBody` `flex-1 min-h-0
+  overflow-y-auto`). El pie queda fuera del scroller; en F2 se migran los
+  modales con esa estructura.
+- **La tabla scrollea por dentro:** `Table` envuelve el `<table>` en un
+  contenedor `overflow-x-auto`; el documento no se va de ancho.
+- **`Button` es `type="button"` por defecto** (dentro de un `<form>` un botón
+  sin `type` es un submit; el que envía lo dice).
+- **`toast` no entra en F1**: la app tiene su toast de deshacer propio y el de
+  shadcn está deprecado. Se decide en F2.
+
+### 7.3 · Cómo se verifica
+
+`components/ui/primitives.test.tsx` renderiza con `react-dom/server` las
+piezas que no usan portal (button, badge, card, input, label, separator,
+table) y verifica la piel, las variantes de `cva`, que el HTML no traiga
+radios fuera de escala / `dark:` en color / hex, y que el puente de tokens
+siga apuntando a los tokens del proyecto con 30 hex y ni uno más. Las piezas
+con portal (dialog, sheet, select, dropdown-menu, tooltip) se cubren con
+typecheck + build; su geometría se mide en F2. `npm run check:estilo` escanea
+también `components/ui/**` (un `rounded-xl` o un hex en una primitiva es una
+falla) y `npm run check:css` admite, en el nivel superior, sólo los bloques de
+tokens (`:root`, `.dark`, con variables y sin reglas anidadas) además de
+`@layer base`.

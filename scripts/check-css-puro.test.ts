@@ -174,4 +174,68 @@ describe("check-css-puro", () => {
     expect(resultado(r.salida)!.fail).toBe(0);
     expect(r.code).toBe(0);
   });
+
+  /* ───────────────────────────────────────────────────────────────────────
+   * LOS BLOQUES DE TOKENS (F1)
+   *
+   * El `@theme` mapea variables, pero las variables pueden declararse en un
+   * `:root` (o en un `.dark` el día que exista). Eso es CONFIGURACIÓN, no
+   * estilo de componente, así que el gate lo admite — con dos candados: adentro
+   * sólo hay variables (`--token: …`) y no se anidan reglas. Sin los candados,
+   * `:root` sería la puerta de atrás para escribir `color: red` a mano.
+   * ─────────────────────────────────────────────────────────────────────── */
+  it("acepta un bloque de tokens `:root` en el nivel superior", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n:root { --surface: #07111f; --fg: #e6f0fa; }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBe(0);
+    expect(r.code).toBe(0);
+  });
+
+  it("acepta un bloque de tokens `.dark` (el gemelo que todavía no se usa)", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n.dark { --surface: #07111f; }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBe(0);
+    expect(r.code).toBe(0);
+  });
+
+  it("acepta la lista `:root, .dark` (los dos esquemas en un bloque)", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n:root, .dark { --surface: #07111f; }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBe(0);
+    expect(r.code).toBe(0);
+  });
+
+  it("rechaza un bloque de tokens mezclado con un selector de clase", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n:root, .mi-estilo { --surface: #07111f; }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
+
+  it("rechaza una propiedad de estilo dentro de un bloque de tokens", () => {
+    const r = contraCss(`@import "tailwindcss";\n:root { color: red; }\n`);
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+    expect(r.salida).toMatch(/sólo declara variables/i);
+  });
+
+  it("rechaza una regla anidada dentro de un bloque de tokens", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n.dark { .mi-estilo { color: red; } }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
+
+  it("rechaza un `@media` anidado dentro de un bloque de tokens", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n:root { @media (min-width: 640px) { --surface: #fff; } }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
 });

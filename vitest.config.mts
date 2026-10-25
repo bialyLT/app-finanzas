@@ -14,10 +14,12 @@ try {
 export default defineConfig({
   test: {
     // Los tests de lógica pura corren en Node. La integración con la base usa
-    // Prisma directamente, que también es Node.
+    // Prisma directamente, que también es Node. Los tests de las primitivas de
+    // UI se renderizan con `react-dom/server` (no hay jsdom): `include` acepta
+    // `.tsx` para que puedan escribir JSX sin inventar un DOM.
     environment: "node",
 
-    include: ["**/*.test.ts"],
+    include: ["**/*.test.ts", "**/*.test.tsx"],
 
     // `.next` contiene copias compiladas de todo: sin esto, vitest corre los
     // tests dos veces y la salida se vuelve ilegible.
