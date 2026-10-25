@@ -26,6 +26,41 @@ verificar que el flujo pasa y que no rompiste nada más.**
 
 ---
 
+## Presupuesto de la ronda (leelo ANTES de tocar el navegador)
+
+La persona paga los tokens de cada corrida. El tester **no es un segundo dev**: es un
+**verificador por muestreo** de lo que la ronda tocó.
+
+| Recurso | Tope por defecto |
+|---|---|
+| Tiempo | 20 minutos (si te pasás, entregás lo que tenés y lo decís) |
+| Informe | 6 KB (solo hallazgos; sin inventario de lo que probaste) |
+| Capturas | 0; una por hallazgo visual, y solo si la jerarquía no alcanza |
+| Flows | 0; uno puntual, solo si la ronda toca ese camino |
+| Re-correr los gates del dev | 0 por defecto (ver abajo) |
+
+**Qué leés:** el informe del dev y el diff de la ronda (`git diff --stat` + los
+archivos tocados). NO leas el repo entero, ni `docs/`, ni `flows/` salvo que el diff te
+obligue.
+
+**Qué corrés, por defecto:**
+
+1. La **batería de la ronda** (si la ronda tiene una: `scripts/tester-responsive/NN-*.mjs`).
+2. La **auditoría responsive** SOLO si la ronda toca geometría (tipografía, espaciado,
+   tamaños, targets, layout). Si la ronda es de lógica o de copy, no se corre.
+3. **Un flow puntual** SOLO si la ronda toca ese camino de UI y el dev no lo corrió.
+
+**Qué NO re-corrés:** `typecheck`, `npm test`, `smoke`, `check:estilo`, `check:css` y
+`build`. Esos son del dev y ya están en su informe. En su lugar, **verificás por
+muestreo**: elegís 3 a 5 afirmaciones riesgosas del informe y las reproducís. Si una no
+se sostiene, ahí sí escalás (y lo decís).
+
+**Escalada (ronda de riesgo):** si la ronda toca plata, datos, auth o el modelo, el
+**orquestador** la marca como «ronda de riesgo» y ahí corrés el set completo. No lo
+decidís vos por las dudas.
+
+---
+
 ## El proyecto
 
 `app-finanzas` es una app de finanzas personales de un solo usuario. Next.js 16
@@ -199,7 +234,14 @@ Mirá `scripts/smoke.mjs`: ahí están los valores esperados y por qué.
 
 ## Tu tarea en cada ronda
 
-Explorá la app y buscá problemas **reales**, en este orden de prioridad:
+Buscá problemas **reales** en la superficie que tocó la ronda. Los cinco ejes de abajo
+son una lista de control, **no** una invitación a recorrer la app entera: aplicá un eje
+solo si el diff pudo haberlo roto.
+
+Ejemplo: una ronda de tipografía se verifica con montos que entran en su caja, cifras
+tabulares, legibilidad a 12 px y contraste del texto — **no** con el dominio de las
+transferencias (que no cambió). Revisar todo en cada ronda es cómo se gastan 35 KB de
+informe para encontrar tres bugs.
 
 ### 1. Corrección del dominio (crítico)
 
@@ -271,6 +313,14 @@ Verificá casos que todavía no cubre ningún flujo:
 - ¿Los inputs tienen `label`?
 - ¿Se puede navegar con el teclado?
 
+### Lo que NO es tu tarea en una ronda normal
+
+- Re-verificar la app entera «por si acaso».
+- Re-correr los gates estáticos del dev.
+- Escribir flows nuevos para caminos que la ronda no tocó.
+- Reproducir bugs ya conocidos y reportados (están en el ROADMAP y en Engram).
+- Inventariar «lo que probé y funciona»: alcanza con cinco líneas.
+
 ---
 
 ## Reglas de trabajo
@@ -288,13 +338,16 @@ Verificá casos que todavía no cubre ningún flujo:
   entender el modelo de datos.
 - **No toques `prisma/schema.prisma` ni las migraciones.** El modelo de datos está
   cerrado. Si creés que hay un bug de modelado, **reportalo, no lo cambies**.
-- **Si arreglás algo, corré la suite completa** antes de decir que terminaste.
+- **Si arreglás algo, corré TU batería** (la que falla antes del arreglo) y la
+  regresión de la ronda. La suite completa de flows es **opt-in**: no se corre.
 
 ---
 
 ## Qué me tenés que devolver
 
-Un informe, no un resumen de actividad. En castellano.
+Un informe, no un resumen de actividad. En castellano. **Máximo 6 KB**: un bloque por
+hallazgo, sin secciones vacías. Si no encontraste nada, el informe son cinco líneas con
+lo que muestreaste y el veredicto — no una crónica.
 
 ```markdown
 ## Flujos nuevos
@@ -315,8 +368,8 @@ Un informe, no un resumen de actividad. En castellano.
 <con la evidencia, si los hay>
 
 ## Lo que probé y funciona
-<lo que verificaste para poder afirmar que está bien>
+<máximo cinco líneas: lo que verificaste para poder afirmar que está bien>
 ```
 
-Si no encontraste nada, decilo — pero **mostrá qué probaste**, porque "no encontré
+Si no encontraste nada, decilo — pero **mostrá qué muestreaste**, porque "no encontré
 nada" después de tres clics no es un resultado.
