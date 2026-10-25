@@ -824,7 +824,7 @@ export default function Home() {
           >
             {formatMoney(totals.income)}
           </p>
-          <p className="text-[11px] opacity-80 mt-1">
+          <p className="text-xs opacity-80 mt-1">
             {totals.incomeCount}{" "}
             {totals.incomeCount === 1 ? "movimiento" : "movimientos"}
             {totals.declared !== "0.00" && (
@@ -844,7 +844,7 @@ export default function Home() {
           >
             {formatMoney(totals.expenses)}
           </p>
-          <p className="text-[11px] opacity-80 mt-1">
+          <p className="text-xs opacity-80 mt-1">
             {totals.expenseCount}{" "}
             {totals.expenseCount === 1 ? "movimiento" : "movimientos"}
           </p>
@@ -874,7 +874,7 @@ export default function Home() {
             Por eso el subtítulo dice las dos cosas: que el número es de este
             mes, y que el saldo inicial no cuenta como ganancia.
           */}
-          <p className="text-[11px] opacity-80 mt-1">
+          <p className="text-xs opacity-80 mt-1">
             {totals.savingRate !== null ? (
               <>
                 {/* La etiqueta cambia con la banderita: la plata declarada
@@ -889,7 +889,7 @@ export default function Home() {
               "Sin ingresos este mes"
             )}
           </p>
-          <p className="text-[11px] opacity-70 mt-0.5">
+          <p className="text-xs opacity-70 mt-0.5">
             {totals.declared !== "0.00" ? (
               <>
                 Incluye <b>{formatMoney(totals.declared)}</b> que declaraste
@@ -925,7 +925,7 @@ export default function Home() {
           >
             {formatMoney(totals.cashFlow, { withSign: true })}
           </p>
-          <p className="text-[11px] opacity-80 mt-1">
+          <p className="text-xs opacity-80 mt-1">
             {totals.transferCount === 0
               ? "Sin transferencias este mes"
               : `${totals.transferCount} ${
@@ -935,7 +935,7 @@ export default function Home() {
           {/* El mismo criterio que en "Te quedó": los dos números son del MES.
               La diferencia entre liquidez y ahorro se ve de un vistazo, pero
               sólo si los dos dicen que son de este mes. */}
-          <p className="text-[11px] opacity-70 mt-0.5">
+          <p className="text-xs opacity-70 mt-0.5">
             La plata que entró y salió de tus cuentas este mes.
           </p>
           {/* ─────────────────────────────────────────────────────────────────
@@ -954,7 +954,7 @@ export default function Home() {
               no coincide con el ahorro.
               ───────────────────────────────────────────────────────────────── */}
           {totals.declared !== "0.00" && (
-            <p className="text-[11px] opacity-70 mt-0.5">
+            <p className="text-xs opacity-70 mt-0.5">
               No cuenta {formatMoney(totals.declared)} que declaraste: esa
               plata ya estaba en tus cuentas.
             </p>
@@ -971,9 +971,9 @@ export default function Home() {
                 Patrimonio neto
               </p>
               <p
-                className={`text-2xl font-extrabold ${
+                className={`text-xl font-extrabold ${
                   Number(netWorth.net) < 0 ? "text-warning" : ""
-                }`}
+                } monto`}
               >
                 {formatMoney(netWorth.net)}
               </p>
@@ -1018,7 +1018,7 @@ export default function Home() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="text-[11px] text-fg-muted truncate">
+                        <p className="text-xs text-fg-muted truncate">
                           {account.name}
                           {declarada && (
                             <span className="text-transfer ">
@@ -1081,7 +1081,7 @@ export default function Home() {
                     {incomeToggleNotice?.id === account.id && (
                       <p
                         role="alert"
-                        className="text-[11px] text-danger "
+                        className="text-xs text-danger "
                       >
                         {incomeToggleNotice.message}
                       </p>
@@ -1133,7 +1133,7 @@ export default function Home() {
                       id={`networth-month-${point.month}`}
                       className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5"
                     >
-                      <p className="text-[11px] text-fg-muted">
+                      <p className="text-xs text-fg-muted">
                         {formatCalendar(`${point.month}-01`, LOCALE, {
                           month: "short",
                           year: "numeric",
@@ -1191,7 +1191,7 @@ export default function Home() {
                 })}
               </div>
 
-              <p className="mt-2 text-[11px] text-fg-subtle">
+              <p className="mt-2 text-xs text-fg-subtle">
                 Fotos al cierre de cada mes; el mes en curso, a hoy. La
                 variación es contra el mes anterior.
               </p>
@@ -1233,7 +1233,7 @@ export default function Home() {
 
               <div className="mt-2 grid grid-cols-3 gap-2">
                 <div className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5">
-                  <p className="text-[11px] text-fg-muted">Δ Patrimonio</p>
+                  <p className="text-xs text-fg-muted">Δ Patrimonio</p>
                   <p
                     id="reconciliation-delta"
                     className={`monto-ficha font-bold ${
@@ -1250,7 +1250,7 @@ export default function Home() {
                     {formatMoney(reconciliation.netDelta, { withSign: true })}
                   </p>
                   <p
-                    className={`text-[11px] text-fg-subtle${claseMontoLargo(
+                    className={`text-xs text-fg-subtle${claseMontoLargo(
                       `${formatMoney(reconciliation.netStart)}${formatMoney(reconciliation.netEnd)}`,
                     )}`}
                   >
@@ -1260,7 +1260,7 @@ export default function Home() {
                 </div>
 
                 <div className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5">
-                  <p className="text-[11px] text-fg-muted">Ahorro del mes</p>
+                  <p className="text-xs text-fg-muted">Ahorro del mes</p>
                   <p
                     id="reconciliation-saving"
                     className={`monto-ficha font-bold ${
@@ -1276,7 +1276,7 @@ export default function Home() {
                   >
                     {formatMoney(reconciliation.saving, { withSign: true })}
                   </p>
-                  <p className="text-[11px] text-fg-subtle">
+                  <p className="text-xs text-fg-subtle">
                     {reconciliation.declaredIncome !== "0.00"
                       ? "ingresos del mes − gastos del mes"
                       : "ingresos ganados − gastos consumidos"}
@@ -1284,7 +1284,7 @@ export default function Home() {
                 </div>
 
                 <div className="@container rounded-md bg-surface bg-surface-3/60 px-2 py-1.5">
-                  <p className="text-[11px] text-fg-muted">Diferencia</p>
+                  <p className="text-xs text-fg-muted">Diferencia</p>
                   <p
                     id="reconciliation-difference"
                     className={`monto-ficha font-bold ${
@@ -1308,7 +1308,7 @@ export default function Home() {
                     })}
                   </p>
                   <p
-                    className={`text-[11px] ${
+                    className={`text-xs ${
                       reconciliation.balanced ? "text-success" : "text-danger"
                     }`}
                   >
@@ -1356,7 +1356,7 @@ export default function Home() {
                 </p>
               )}
 
-              <p className="mt-2 text-[11px] text-fg-subtle">
+              <p className="mt-2 text-xs text-fg-subtle">
                 Dos caminos independientes al mismo número: los saldos y los
                 movimientos.
                 {reconciliation.partial
@@ -1404,11 +1404,11 @@ export default function Home() {
                   <span className="text-fg-subtle"> · en curso</span>
                 )}
               </p>
-              <p className="text-2xl font-extrabold text-danger">
+              <p className="text-xl font-extrabold text-danger monto">
                 {formatMoney(debtReport.totalDebt)}
               </p>
             </div>
-            <p className="text-[11px] text-fg-subtle text-right">
+            <p className="text-xs text-fg-subtle text-right">
               deuda viva al {formatCalendar(debtReport.cutAt)}
               {debtReport.partial ? " · el mes sigue" : ""}
             </p>
@@ -1428,7 +1428,7 @@ export default function Home() {
                   <p className="text-sm">
                     {row.name}
                     {row.archived && (
-                      <span className="text-[11px] text-fg-subtle">
+                      <span className="text-xs text-fg-subtle">
                         {" "}
                         · archivada
                       </span>
@@ -1451,21 +1451,21 @@ export default function Home() {
                         style={{ width: `${row.progressPercent}%` }}
                       />
                     </div>
-                    <p className="mt-1 text-[11px] text-fg-muted">
+                    <p className="mt-1 text-xs text-fg-muted">
                       cuota {formatMoney(row.plan.payment)} · {row.plan.paidCount}{" "}
                       de {row.plan.installmentCount} cubiertas ·{" "}
                       {row.plan.remainingCount === 0
                         ? "sin cuotas pendientes"
                         : `faltan ${row.plan.remainingCount}`}
                     </p>
-                    <p className="text-[11px] text-fg-subtle">
+                    <p className="text-xs text-fg-subtle">
                       capital devuelto {formatMoney(row.capitalPaid ?? "0.00")} (
                       {row.progressPercent}%) · interés pagado{" "}
                       {formatMoney(row.interestPaid ?? "0.00")}
                     </p>
                   </div>
                 ) : (
-                  <p className="mt-1 text-[11px] text-fg-subtle">
+                  <p className="mt-1 text-xs text-fg-subtle">
                     sin plan de cuotas: la tarjeta no pacta una cuota fija
                   </p>
                 )}
@@ -1497,12 +1497,12 @@ export default function Home() {
                 )}
               </p>
             </div>
-            <p className="text-[11px] text-fg-muted">
+            <p className="text-xs text-fg-muted">
               {debtReport.dti.percent === null
                 ? "No hubo ingresos este mes: sin ingreso, el DTI no se puede calcular."
                 : `Cuotas por ${formatMoney(debtReport.dti.monthlyCommitment)} sobre ${formatMoney(debtReport.dti.income)} de ingresos.`}
             </p>
-            <p className="text-[11px] text-fg-subtle">
+            <p className="text-xs text-fg-subtle">
               {debtReport.dti.planCount === 0
                 ? "Ningún plan con cuotas pendientes."
                 : `${debtReport.dti.planCount} ${
@@ -1528,7 +1528,7 @@ export default function Home() {
           className="rounded-md bg-success hover:bg-success/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ＋ Ingreso
-          <span className="block text-[11px] font-normal opacity-80 mt-1">
+          <span className="block text-xs font-normal opacity-80 mt-1">
             Sueldo, ventas…
           </span>
         </button>
@@ -1538,7 +1538,7 @@ export default function Home() {
           className="rounded-md bg-danger hover:bg-danger/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           － Gasto
-          <span className="block text-[11px] font-normal opacity-80 mt-1">
+          <span className="block text-xs font-normal opacity-80 mt-1">
             Comida, alquiler…
           </span>
         </button>
@@ -1548,7 +1548,7 @@ export default function Home() {
           className="rounded-md bg-transfer hover:bg-transfer/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ⇄ Transferir
-          <span className="block text-[11px] font-normal opacity-80 mt-1">
+          <span className="block text-xs font-normal opacity-80 mt-1">
             Entre tus cuentas
           </span>
         </button>
@@ -1565,7 +1565,7 @@ export default function Home() {
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div>
             <h2 className="font-bold">Plantillas</h2>
-            <p className="text-[11px] text-fg-muted">
+            <p className="text-xs text-fg-muted">
               {orderedFavorites.length} de {favoritesMax} · un toque para
               precargar el formulario
             </p>
@@ -1665,7 +1665,7 @@ export default function Home() {
                     <span className="block text-xs font-semibold">
                       {favorite.name}
                     </span>
-                    <span className="block text-[10px] text-fg-muted">
+                    <span className="block text-xs text-fg-muted">
                       {MOVEMENT_KIND_LABEL[favorite.kind]}
                       {favorite.amount ? ` · ${formatMoney(favorite.amount)}` : ""}
                       {blocked ? " · cuenta archivada" : ""}
@@ -1693,7 +1693,7 @@ export default function Home() {
       {/* Los atajos se anuncian acá para que existan para quien no los conoce;
           las guardas (no disparar escribiendo, ni con un modal abierto) viven
           en lib/quick-entry.ts, testeadas. */}
-      <p className="-mt-3 text-center text-[11px] text-fg-subtle">
+      <p className="-mt-3 text-center text-xs text-fg-subtle">
         Atajos:{" "}
         <kbd className="rounded-md border border-line-strong px-1">
           T
@@ -1899,7 +1899,7 @@ export default function Home() {
                           equivalencia que documenta el esquema). Es identidad,
                           no plata: no cambia ningún número. */}
                       {movement.recurrenceRuleId && (
-                        <span className="ml-2 align-middle text-[10px] uppercase font-bold rounded-full bg-warning/10 text-warning px-1.5 py-0.5">
+                        <span className="ml-2 align-middle text-xs uppercase font-bold rounded-full bg-warning/10 text-warning px-1.5 py-0.5">
                           <RefreshCw className="size-4" aria-hidden /> regla
                         </span>
                       )}
@@ -1935,7 +1935,7 @@ export default function Home() {
                   */}
                   <div className="mov-derecha flex items-start gap-3 shrink-0 angosta:flex-1 angosta:basis-full angosta:justify-end">
                   <p
-                    className={`mov-monto font-extrabold pt-1 ${style.amount}${
+                    className={`mov-monto monto font-extrabold pt-1 ${style.amount}${
                       montoLargo(
                         `${movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}${formatMoney(movement.amount)}`,
                       )

@@ -125,6 +125,31 @@ describe("check-estilo-propio", () => {
     expect(r.rechazado).toBe(true);
   });
 
+  it("rechaza un tamaño de letra fuera de la escala (text-2xl)", () => {
+    const r = rechaza(`export const A = () => <p className="text-2xl">h</p>;\n`, "escala");
+    expect(r.rechazado).toBe(true);
+    expect(r.nombra).toBe(true);
+  });
+
+  it("rechaza un cuerpo arbitrario (text-[11px] / text-[15px])", () => {
+    for (const tamano of ["text-[11px]", "text-[15px]", "text-[0.9rem]"]) {
+      const r = contraTsx(`export const A = () => <p className="${tamano}">h</p>;\n`);
+      expect(
+        resultado(r.salida)!.fail,
+        `${tamano} tiene que fallar: el cuerpo sale del @theme`,
+      ).toBeGreaterThan(0);
+      expect(r.code, `${tamano} tiene que salir con 1`).toBe(1);
+      expect(r.salida, `${tamano} tiene que nombrar la escala`).toMatch(/escala/);
+    }
+  });
+
+  it("rechaza TODOS los tamaños de fábrica que no son de la escala", () => {
+    for (const tamano of ["md", "2xl", "3xl", "4xl"]) {
+      const r = contraTsx(`export const A = () => <p className="text-${tamano}">h</p>;\n`);
+      expect(resultado(r.salida)!.fail, `text-${tamano} tiene que fallar`).toBeGreaterThan(0);
+    }
+  });
+
   it("rechaza un `dark:` en un color", () => {
     const r = rechaza(`export const A = () => <div className="dark:bg-black/90">h</div>;\n`, "dark");
     expect(r.rechazado).toBe(true);
@@ -140,8 +165,10 @@ describe("check-estilo-propio", () => {
       `export const A = () => <div className="font-bold font-medium">h</div>;\n`,
       // un tinte (un token con opacidad)
       `export const A = () => <div className="bg-danger/10 border-warning/40">h</div>;\n`,
-      // un tamaño de letra arbitrario NO es un color
-      `export const A = () => <div className="text-[11px]">h</div>;\n`,
+      // los cinco pasos de la escala SÍ son el cuerpo de letra del sistema
+      `export const A = () => <div className="text-xs text-sm text-base text-lg text-xl">h</div>;\n`,
+      // `text-` que no es un tamaño (alineación) y las cifras tabulares
+      `export const A = () => <p className="text-center text-right monto">h</p>;\n`,
       // un token por variable CSS (los gráficos)
       `export const A = () => <div style={{ backgroundColor: "var(--success)" }}>h</div>;\n`,
     ];
@@ -158,6 +185,24 @@ describe("check-estilo-propio", () => {
     expect(m).not.toBeNull();
     // 93 archivos: app/ (36) + components/ (12) + lib/ (45)
     expect(Number(m![1])).toBe(93);
+  }, 30_000);
+
+  it("el @theme declara la familia elegida y la escala de cinco pasos", () => {
+    const r = correr();
+    expect(resultado(r.salida)!.fail).toBe(0);
+
+    const css = readFileSync(GLOBALS, "utf8");
+    // La familia es una decisión del sistema: Archivo (no la de Next) + IBM
+    // Plex Mono. El gate la sujeta, así que volver a Geist es una falla.
+    expect(css).toMatch(/--font-sans:\s*var\(--font-archivo\)/);
+    expect(css).toMatch(/--font-mono:\s*var\(--font-plex-mono\)/);
+    // Los cinco pasos y el tope de 24 px con el que está calibrado factorMonto.
+    for (const paso of ["xs", "sm", "base", "lg", "xl"]) {
+      expect(css, `falta --text-${paso} en el @theme`).toMatch(
+        new RegExp(`--text-${paso}\\s*:`),
+      );
+    }
+    expect(css).toMatch(/--text-xl:\s*1\.5rem\s*;/);
   }, 30_000);
 
   it("el @theme declara los quince tokens y cada uno tiene valor en los dos esquemas", () => {

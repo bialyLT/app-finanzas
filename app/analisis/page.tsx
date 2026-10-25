@@ -509,7 +509,7 @@ export default function AnalisisPage() {
               >
                 {formatMoney(stats.incomeTotal)}
               </p>
-              <p className="text-[11px] opacity-80">
+              <p className="text-xs opacity-80">
                 {stats.incomeCount}{" "}
                 {stats.incomeCount === 1 ? "movimiento" : "movimientos"}
               </p>
@@ -519,7 +519,7 @@ export default function AnalisisPage() {
                   número sin explicación (y la torta no lo muestra: la plata
                   declarada no tiene categoría). */}
               {stats.declared !== "0.00" && (
-                <p className="text-[11px] opacity-80">
+                <p className="text-xs opacity-80">
                   + {formatMoney(stats.declared)} declarados
                 </p>
               )}
@@ -533,7 +533,7 @@ export default function AnalisisPage() {
               >
                 {formatMoney(stats.expenseTotal)}
               </p>
-              <p className="text-[11px] opacity-80">
+              <p className="text-xs opacity-80">
                 {stats.expenseCount}{" "}
                 {stats.expenseCount === 1 ? "movimiento" : "movimientos"}
               </p>
@@ -551,7 +551,7 @@ export default function AnalisisPage() {
               >
                 {formatMoney(stats.result, { withSign: true })}
               </p>
-              <p className="text-[11px] opacity-80">
+              <p className="text-xs opacity-80">
                 {stats.savingRate !== null
                   ? // La plata declarada (la banderita) entra en el ingreso del
                     // mes, pero nadie la ganó: ya la tenías. Decir «de lo que
@@ -574,7 +574,7 @@ export default function AnalisisPage() {
               >
                 {formatMoney(stats.transferTotal)}
               </p>
-              <p className="text-[11px] opacity-80">
+              <p className="text-xs opacity-80">
                 {stats.transferCount}{" "}
                 {stats.transferCount === 1 ? "movimiento" : "movimientos"} entre
                 tus cuentas
@@ -779,7 +779,7 @@ export default function AnalisisPage() {
                       <p className="text-lg font-extrabold mt-1">
                         {formatMoney(burn.cashResult, { withSign: true })}
                       </p>
-                      <p className="text-[11px] text-fg-muted">
+                      <p className="text-xs text-fg-muted">
                         Te quedó con el gasto entero en su mes
                       </p>
                     </div>
@@ -803,7 +803,7 @@ export default function AnalisisPage() {
                       >
                         {formatMoney(burn.burnResult, { withSign: true })}
                       </p>
-                      <p className="text-[11px] text-fg-muted">
+                      <p className="text-xs text-fg-muted">
                         Te quedó repartiendo el gasto en 12
                       </p>
                     </div>

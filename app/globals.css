@@ -114,7 +114,7 @@
    nombre: nadie puede saber si `#3E6485` es un borde o un texto.
 
    `inline` hace que el valor se INLINE en las utilidades en vez de dejar
-   una variable: `font-sans` compila a `font-family: var(--font-geist-sans)`
+   una variable: `font-sans` compila a `font-family: var(--font-archivo)`
    y `bg-surface` a `background-color: var(--surface)`.
 
    ─────────────────────────────────────────────────────────────────────────────
@@ -138,8 +138,59 @@
    consecuencia práctica: cambiar la paleta entera es editar quince
    valores de acá, no 1378 clases de los archivos. */
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* La tipografía: DOS familias elegidas (Archivo + IBM Plex Mono), no las de
+     Next. El valor real lo inyecta `next/font` en `app/layout.tsx` como
+     `--font-archivo` / `--font-plex-mono` (self-hospedados: cero peticiones a
+     Google en runtime). */
+  --font-sans: var(--font-archivo);
+  --font-mono: var(--font-plex-mono);
+
+  /* ── LA ESCALA TIPOGRÁFICA: CINCO PASOS CON NOMBRE ────────────────────────
+     Antes el markup usaba los tamaños de fábrica de Tailwind sin criterio
+     (`text-xs`, `text-sm`, `text-lg`, `text-2xl`, `text-3xl`… y 54 tamaños
+     arbitrarios `text-[11px]` / `text-[10px]`). Una escala propia es CORTA y
+     cada paso tiene un uso:
+
+       xs   12 px   metadatos, etiquetas, unidades
+       sm   14 px   texto secundario, tablas, fichas
+       base 16 px   texto normal
+       lg   18 px   subtítulos, cifras de ficha
+       xl   24 px   las cifras grandes del panel (TOPE del modelo de medidas)
+
+     El tope de 24 px es el que manda en `factorMonto` (lib/format.ts): la
+     cifra grande nunca pasa de este cuerpo; si cambia, se recalibra.
+
+     Los `--text-*--line-height` conservan los interlineados de Tailwind en los
+     cuatro pasos que no se movieron (xs/sm/base/lg) para que el cambio de
+     fuente no mueva ninguna altura; el de `xl` es 1,25 (30 px) porque ahora
+     ese paso es el de 24 px (antes era `text-2xl`, con 1,333 = 32 px).
+
+     Los `--leading-*` son los interlineados CON NOMBRE, para el markup que
+     necesita fijarlo sin atarse a un tamaño (un `leading-tight` en un título
+     que envuelve). No reemplazan a los de arriba: los de arriba son el
+     default de cada paso. */
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.3333;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.4286;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.5556;
+  --text-xl: 1.5rem;
+  --text-xl--line-height: 1.25;
+
+  --leading-tight: 1.2;
+  --leading-snug: 1.35;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.6;
+
+  /* Los pesos que la app usa tienen nombre: el 800 de las tarjetas es REAL en
+     Archivo (eje variable 100-900), no un negrito sintetizado. */
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-weight-extrabold: 800;
 
   /* Superficies (de fondo a elevada) */
   --color-surface: var(--surface);
@@ -295,18 +346,28 @@
    El factor `--k` lo calcula `factorMonto()` (lib/format.ts) a partir de la
    cantidad de caracteres del monto. Para los montos de todos los días el
    factor da un tamaño MAYOR que el de siempre: la tarjeta se ve igual. */
+@utility monto {
+  /* Las cifras de un monto son TABULARES: con Archivo, `tabular-nums` hace que
+     el «0», el «1» y el «8» avancen exactamente lo mismo (medido: 0,6270 em en
+     peso 800, 0,5981 em en 700, 0,5681 em en 400), así que una columna de
+     montos no baila cuando cambia un dígito. La familia la pone `font-sans`
+     (Archivo, del `@theme`): acá sólo se piden las cifras tabulares. */
+  font-variant-numeric: tabular-nums;
+}
+
 @utility monto-tarjeta {
+  font-variant-numeric: tabular-nums;
   font-size: min(1.125rem, calc(100cqw * var(--k, 100)));
 
-  /* Desde 640 px la tarjeta tiene lugar para el cuerpo grande: antes era
-     `1.5rem` (24 px) y el tope de 1,25 rem en el análisis (ver
-     `monto-tarjeta--analisis`). */
+  /* Desde 640 px la tarjeta tiene lugar para el cuerpo grande: el tope es el
+     paso `xl` de la escala (1,5 rem = 24 px, el que manda en `factorMonto`).
+     El análisis usa un tope más chico (ver `monto-tarjeta--analisis`). */
   @media (min-width: 640px) {
     font-size: min(var(--monto-tope, 1.5rem), calc(100cqw * var(--k, 100)));
   }
 }
 
-/* El análisis usa un cuerpo un poco más chico que el panel (sm:text-xl): el
+/* El análisis usa un cuerpo un poco más chico que el panel (24 px → 20 px): el
    tope del monto baja de 1,5 rem a 1,25 rem. */
 @utility monto-tarjeta--analisis {
   --monto-tope: 1.25rem;
@@ -333,9 +394,11 @@
    mes, que es de 11 px): el tope es el de siempre y el mecanismo es el
    mismo. */
 @utility monto-ficha {
+  font-variant-numeric: tabular-nums;
   font-size: clamp(0.5rem, min(0.875rem, calc(100cqw * var(--k, 100))), 0.875rem);
 }
 
 @utility monto-ficha--chico {
+  font-variant-numeric: tabular-nums;
   font-size: clamp(0.5rem, min(0.6875rem, calc(100cqw * var(--k, 100))), 0.6875rem);
 }

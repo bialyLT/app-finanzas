@@ -473,6 +473,21 @@ async function measureView(ui, vp, route) {
 async function measureModal(ui, vp, modal) {
   await openRoute(ui, modal.path);
 
+  // El disparador puede aparecer DESPUÉS del `load`: varias páginas son
+  // componentes de cliente que piden sus datos recién al montar (la de
+  // tarjetas, por ejemplo, resuelve /api/cards después). La espera fija de
+  // `openRoute` alcanzaba casi siempre, pero con el caché de JS frío la
+  // primera vista podía tardar más y el gate reportaba «no existe el
+  // disparador» — un FALSO NEGATIVO (medido en la F0b: pasó en la primera
+  // corrida y no en la segunda). Se espera el SELECTOR, con tope: si de verdad
+  // no existe, la falla sigue siendo una falla.
+  await ui
+    .waitFor(`!!document.querySelector(${JSON.stringify(modal.trigger)})`, {
+      timeout: 8000,
+      label: `el disparador ${modal.trigger}`,
+    })
+    .catch(() => null);
+
   // El disparador puede estar debajo del pliegue: se trae a la vista antes
   // de tocar (un tap fuera de la vista no toca nada).
   const brought = await ui.evalJs(`(() => {

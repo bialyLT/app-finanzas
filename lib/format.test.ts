@@ -48,54 +48,116 @@ describe("formatLiability", () => {
  * El corte de las cuatro columnas (940 px) está calculado para 13 caracteres;
  * con más, el número no entra y empuja al documento (scroll horizontal).
  *
- * El avance medio de un carácter de un monto en negrita es de 0,59 em en la
- * fuente de la app (GEIST, peso 800; medido en el navegador). Si la fuente
- * cambia, estos números hay que recalibrarlos: el test de abajo lo avisa.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ESTOS NÚMEROS SON MEDIDAS, NO OPINIONES (Archivo, 2026-10-22)
+ * El avance de cada glifo se midió en el navegador con el motor de texto
+ * real, con cuerpo de 100 px y `font-variant-numeric: tabular-nums`. La
+ * medición está en `docs/design-system.md` §3.3 y la reproduce
+ * `node scripts/medir-fuente.mjs`.
+ *
+ * La tabla vive ACÁ (no se importa de `lib/format.ts`) a propósito: si el
+ * modelo cambia sus constantes, este test tiene que fallar — importar las
+ * constantes del modelo haría que el test se mueva junto con el bug.
+ *
+ * Con cifras tabulares el ancho de un monto es la SUMA de sus glifos: el «0»,
+ * el «1» y el «8» miden lo mismo. Con Geist (la fuente de la F0a) los dígitos
+ * eran proporcionales (0,6931 vs 0,4491 em) y el ancho dependía de qué
+ * dígitos tuviera el monto.
  */
+const ARCHIVO_800 = {
+  digito: 0.627031,
+  separador: 0.318125,
+  simbolo: 0.579063,
+  espacio: 0.189063,
+  signo: 0.649063,
+  guion: 0.333125,
+};
+
+const ARCHIVO_700 = {
+  digito: 0.598125,
+  separador: 0.307031,
+  simbolo: 0.556094,
+  espacio: 0.196094,
+  signo: 0.641094,
+  guion: 0.333125,
+};
+
+/** El ancho de un monto en `em`, glifo por glifo (la misma composición que el modelo). */
+function anchoEm(
+  texto: string,
+  tabla: typeof ARCHIVO_700,
+): number {
+  let em = 0;
+  for (const caracter of texto) {
+    if (caracter >= "0" && caracter <= "9") em += tabla.digito;
+    else if (caracter === "." || caracter === ",") em += tabla.separador;
+    else if (caracter === "$") em += tabla.simbolo;
+    else if (caracter === " " || caracter === "\u00a0") em += tabla.espacio;
+    else if (caracter === "+" || caracter === "−") em += tabla.signo;
+    else if (caracter === "-") em += tabla.guion;
+    else em += tabla.digito;
+  }
+  return em;
+}
+
 describe("factorMonto", () => {
   /** El ancho de la caja del monto a 940 px (la tarjeta de cuatro columnas). */
   const CAJA_A_940 = 195;
-
-  /**
-   * El PEOR avance medido en la fuente de la app, en peso 800 (las tarjetas
-   * grandes, `font-extrabold`).
-   *
-   * GEIST tiene los dígitos PROPORCIONALES (el «0» mide 0,6931 em y el «1»
-   * 0,4491 em), así que el avance de un monto depende de qué dígitos tenga:
-   * el peor caso medido es «$ 000.000,00» (todos ceros) con 0,5895 em por
-   * carácter. Con Arial (la fuente de antes) los dígitos eran tabulares y el
-   * avance era 0,5835 em.
-   */
-  const AVANCE_REAL_800 = 0.5895;
 
   it("un monto de todos los días NO cambia de cuerpo de letra", () => {
     // "$ 800.000,00": 12 caracteres.
     const k = Number(factorMonto("$ 800.000,00"));
     // El tope que impone la regla es `min(1,5rem, 100cqw × k)`: si el
-    // segundo término da MÁS que 1,5 rem (24 px), el cuerpo sigue siendo el
-    // de siempre y la tarjeta se ve igual.
+    // segundo término da MÁS que 1,5 rem (24 px, el paso `xl` de la escala),
+    // el cuerpo sigue siendo el de siempre y la tarjeta se ve igual.
     expect(k * CAJA_A_940).toBeGreaterThan(24);
   });
 
   it("un monto largo entra en la caja de su tarjeta", () => {
-    // "$ 1.234.567.890,12": 18 caracteres.
+    // "$ 1.234.567.890,12": 18 caracteres · 9,5650 em medidos.
     const texto = "$ 1.234.567.890,12";
     const k = Number(factorMonto(texto));
     const cuerpo = k * CAJA_A_940; // px
     expect(cuerpo).toBeLessThan(24);
-    // El texto, medido con el avance real de la fuente, tiene que caber.
-    const ancho = AVANCE_REAL_800 * [...texto].length * cuerpo;
-    expect(ancho).toBeLessThanOrEqual(CAJA_A_940);
+    // El texto, con el ancho REAL de la fuente, tiene que caber.
+    expect(anchoEm(texto, ARCHIVO_800) * cuerpo).toBeLessThanOrEqual(CAJA_A_940);
   });
 
-  it("el avance del modelo cubre el peor caso medido de la fuente", () => {
-    // El modelo no puede usar un avance MENOR que el peor caso real: si lo
-    // hace, el monto se sale de su caja (que es lo que pasó al cambiar de
-    // fuente: el modelo estaba calibrado con el avance de Arial).
-    const texto = "$ 000.000,00";
+  it("el modelo cubre el ancho medido con ~5 % de margen (ni de menos ni de más)", () => {
+    // `1 / k` es el ancho que el modelo le asigna al monto, en em. Tiene que
+    // cubrir el ancho real (si no, el número se sale de su caja) y no pasarse
+    // del margen (si no, se achica de más y se ve chico al pedo).
+    for (const texto of [
+      "$ 000.000,00",
+      "$ 800.000,00",
+      "+$ 800.000,00",
+      "$ 100.000,00",
+      "$ 1.234.567.890,12",
+      "−$ 9.999.999,99",
+    ]) {
+      const k = Number(factorMonto(texto));
+      const margen = 1 / k / anchoEm(texto, ARCHIVO_800);
+      expect(margen).toBeGreaterThanOrEqual(1.04);
+      expect(margen).toBeLessThanOrEqual(1.06);
+    }
+  });
+
+  it("con cifras tabulares, el ancho NO depende de qué dígitos tenga el monto", () => {
+    // Tres montos de la MISMA forma (8 dígitos, 2 separadores): con Archivo
+    // tabular miden exactamente lo mismo, así que el modelo les da el mismo
+    // factor. Con Geist esto era falso («$ 111.111,11» era más angosto que
+    // «$ 800.000,00») y por eso el modelo necesitaba un avance por forma.
+    expect(factorMonto("$ 111.111,11")).toBe(factorMonto("$ 800.000,00"));
+    expect(factorMonto("$ 999.999,99")).toBe(factorMonto("$ 800.000,00"));
+    expect(factorMonto("+$ 123.456,78")).toBe(factorMonto("+$ 800.000,00"));
+  });
+
+  it("un monto CON signo entra en la caja (el «+» y la «−» son más anchos)", () => {
+    const texto = "+$ 800.000,00";
     const k = Number(factorMonto(texto));
-    const avanceDelModelo = 1 / (k * [...texto].length);
-    expect(avanceDelModelo).toBeGreaterThanOrEqual(AVANCE_REAL_800);
+    // El tope de 24 px manda: el monto de todos los días no se achica.
+    expect(k * CAJA_A_940).toBeGreaterThan(24);
+    expect(anchoEm(texto, ARCHIVO_800) * 24).toBeLessThanOrEqual(CAJA_A_940);
   });
 
   it("el factor es monótono: más caracteres, cuerpo más chico", () => {
@@ -117,49 +179,52 @@ describe("factorMontoFicha", () => {
    */
   const CAJA_A_320 = 64;
 
-  /**
-   * El PEOR avance medido en la fuente de la app, en peso 700 (las fichas,
-   * `font-bold`).
-   *
-   * GEIST tiene los dígitos proporcionales: el «0» mide 0,6931 em y el «1»
-   * 0,4491 em. El peor caso medido es «$ 000.000,00» (todos ceros) con
-   * 0,5803 em por carácter; el caso de todos los días («$ 100.000,00»)
-   * avanza 0,5578 em. Con Arial (la fuente de antes) los dígitos eran
-   * tabulares y avanzaban 0,4866 em.
-   */
-  const AVANCE_REAL_700 = 0.5803;
-
-  /** El avance del signo «+» en la fuente de la app (peso 700). */
-  const AVANCE_SIGNO = 0.57;
-
   it("el monto de todos los días entra en la caja de su ficha", () => {
-    // "$ 100.000,00": 12 caracteres.
+    // "$ 100.000,00": 12 caracteres · 6,1512 em medidos en peso 700.
     const texto = "$ 100.000,00";
     const k = Number(factorMontoFicha(texto));
     const cuerpo = k * CAJA_A_320; // px
     expect(cuerpo).toBeLessThanOrEqual(14);
     // El texto, con el avance real medido, tiene que caber en la caja: es lo
     // que evita el número partido.
-    const ancho = AVANCE_REAL_700 * [...texto].length * cuerpo;
-    expect(ancho).toBeLessThanOrEqual(CAJA_A_320);
+    expect(anchoEm(texto, ARCHIVO_700) * cuerpo).toBeLessThanOrEqual(
+      CAJA_A_320,
+    );
   });
 
   it("un monto CON signo (más ancho) también entra", () => {
-    // "+$ 310.000,00": los mismos 12 caracteres más el signo.
+    // "+$ 310.000,00": los mismos 8 dígitos más el signo.
     const texto = "+$ 310.000,00";
     const k = Number(factorMontoFicha(texto));
     const cuerpo = k * CAJA_A_320;
-    const ancho = (AVANCE_REAL_700 * [...texto].length + AVANCE_SIGNO) * cuerpo;
-    expect(ancho).toBeLessThanOrEqual(CAJA_A_320);
+    expect(anchoEm(texto, ARCHIVO_700) * cuerpo).toBeLessThanOrEqual(
+      CAJA_A_320,
+    );
   });
 
-  it("el avance del modelo de la ficha cubre el peor caso medido", () => {
-    // Si el modelo usa un avance menor que el peor caso real de la fuente,
-    // el monto se sale de su caja: fue lo que pasó al cambiar de fuente.
-    const texto = "$ 000.000,00";
-    const k = Number(factorMontoFicha(texto));
-    const avanceDelModelo = 1 / (k * [...texto].length);
-    expect(avanceDelModelo).toBeGreaterThanOrEqual(AVANCE_REAL_700);
+  it("el ancho del modelo cubre la medida de la ficha (peso 700, tabular)", () => {
+    for (const texto of [
+      "$ 000.000,00",
+      "$ 800.000,00",
+      "$ 100.000,00",
+      "+$ 310.000,00",
+      "−$ 1.234.567,89",
+    ]) {
+      const k = Number(factorMontoFicha(texto));
+      const margen = 1 / k / anchoEm(texto, ARCHIVO_700);
+      expect(margen).toBeGreaterThanOrEqual(1.04);
+      expect(margen).toBeLessThanOrEqual(1.06);
+    }
+  });
+
+  it("las fichas usan la tabla del peso 700, no la del 800", () => {
+    // Si la ficha usara la tabla del 800 (dígito 0,627031) el cuerpo saldría
+    // un 4,8 % más chico: el monto de todos los días se vería más chico
+    // aunque entre. El factor de la ficha es, con los mismos caracteres,
+    // MAYOR que el de una tarjeta grande.
+    expect(Number(factorMontoFicha("$ 100.000,00"))).toBeGreaterThan(
+      Number(factorMonto("$ 100.000,00")),
+    );
   });
 
   it("en una ficha ancha el cuerpo NO cambia (el caso común se ve igual)", () => {
@@ -168,16 +233,6 @@ describe("factorMontoFicha", () => {
     const texto = "$ 100.000,00";
     const k = Number(factorMontoFicha(texto));
     expect(k * 117).toBeGreaterThan(14);
-  });
-
-  it("el factor de la ficha es mayor que el de las tarjetas grandes", () => {
-    // Las tarjetas grandes van en peso 800 (más ancho: 0,5895 em medidos) y
-    // las fichas en peso 700 (0,5803 em): por eso el avance de la tarjeta
-    // es MAYOR y su factor MENOR. El monto de una ficha se achica MENOS
-    // (y se ve más grande) que el de una tarjeta del mismo ancho.
-    expect(Number(factorMontoFicha("$ 100.000,00"))).toBeGreaterThan(
-      Number(factorMonto("$ 100.000,00")),
-    );
   });
 
   it("un texto vacío no rompe nada", () => {

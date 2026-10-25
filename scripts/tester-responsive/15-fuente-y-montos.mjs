@@ -1,21 +1,29 @@
 #!/usr/bin/env node
 /**
- * 15-fuente-y-montos · la FUENTE real (Geist descargada, no declarada) y la
+ * 15-fuente-y-montos · la FUENTE real (Archivo descargada, no declarada) y la
  * RECALIBRACIÓN del modelo de tamaño del monto.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * QUÉ VERIFICA (los objetivos que dejó el dev de la ronda «cero CSS suelto»)
+ * QUÉ VERIFICA (los objetivos que dejó el dev de la ronda «cero CSS suelto»,
+ * actualizados en la Fase 10 F0b al cambiar Geist por Archivo)
  *
  *   1 · EL BODY NO ES ARIAL EN NINGUNA VISTA y la fuente se DESCARGA de verdad.
- *       No alcanza con que `getComputedStyle(body).fontFamily` diga «Geist»:
+ *       No alcanza con que `getComputedStyle(body).fontFamily` diga «Archivo»:
  *       eso es lo DECLARADO. Lo que se usa es:
  *         · `document.fonts` → el estado real de cada FontFace (loaded/unloaded);
  *         · las peticiones de red de los `.woff2` → el archivo se descargó;
- *         · el AVANCE del glifo «0» medido en un canvas con la fuente
- *           COMPUTADA → prueba de que la RENDERIZACIÓN usa Geist y no un
- *           fallback. Arial: el «0» mide 0,5562 em (dígitos tabulares).
- *           Geist: el «0» mide 0,6931 em (dígitos proporcionales).
- *           La diferencia es de 25 %: ningún fallback se confunde con Geist.
+ *         · el AVANCE de los glifos «0», «1» y «8» medido en un canvas con la
+ *           fuente COMPUTADA. OJO: con Archivo el «0» solo NO alcanza como
+ *           prueba, porque mide 0,573 em y Arial mide 0,5562 em (1,7 % de
+ *           diferencia: se confunden). Lo que sí discrimina es la RELACIÓN
+ *           entre dígitos: en Archivo 400 las cifras son PROPORCIONALES
+ *           («0» 0,573 · «1» 0,521, 5,2 % de diferencia) y en todo fallback
+ *           del sistema (Arial, Helvetica, Liberation Sans) son TABULARES
+ *           (los tres dígitos miden exactamente lo mismo). Se verifica además
+ *           que los píxeles que se pintan NO son los del fallback.
+ *         · las cifras del monto llevan `tabular-nums` (utilidad `monto`): el
+ *           modelo de medidas de `lib/format.ts` está calibrado con las
+ *           tabulares, no con las proporcionales del canvas.
  *
  *   2 · LA REGLA DE 44 PX (que ahora vive en `@layer base`) NO ESTÁ PISADA:
  *       con el dedo, TODO control (button/input/select/textarea) tiene
@@ -24,16 +32,15 @@
  *       puso un `min-h-9` explícito, la regla se pierde — y eso hay que
  *       detectarlo, no suponerlo.
  *
- *   3 · LA RECALIBRACIÓN DEL MONTO (el efecto colateral de cambiar a Geist):
+ *   3 · LA RECALIBRACIÓN DEL MONTO (el efecto colateral de cambiar de fuente):
  *       · en la ficha angosta el monto entra en su caja y se lee (≥ 8 px);
- *       · en la ficha ANCHA (480 px en adelante) el cuerpo es EXACTAMENTE el
- *         de siempre (14 px): el escritorio no se enteró del cambio de fuente;
+ *       · en las cajas cómodas el cuerpo llega a su tope (14 px en la ficha);
  *       · el modelo no quedó descalibrado para el otro lado: el monto de
  *         todos los días no se achicó de más (no quedó en el piso de 8 px
- *         cuando la caja localería un cuerpo mayor).
+ *         cuando la caja da para un cuerpo mayor).
  *
- * Requiere: la app arriba en 127.0.0.1:3000 y la base sembrada (hay filas de
- * movimiento para medir).
+ * Requiere: la app arriba en `BASE_URL` (127.0.0.1:3000 por defecto) y la base
+ * sembrada (hay filas de movimiento para medir).
  */
 
 import { check, checkTrue, section } from "../tester-fase7/helpers.mjs";
@@ -49,15 +56,23 @@ import {
 /** Las seis vistas de la app. */
 const VISTAS = ["/login", "/", "/analisis", "/prestamos", "/recurrencia", "/tarjetas"];
 
-/** El avance del «0» en Arial (tabular) y en Geist (proporcional). */
+/**
+ * Las métricas medidas en el navegador (canvas, peso 400, sin `tnum`) el
+ * 2026-10-22 con `scripts/medir-fuente.mjs` y este mismo probe:
+ *   Archivo «0» 0,573 em · «1» 0,521 em · «8» 0,574 em  (proporcionales)
+ *   Arial   «0» = «1» = «8» = 0,5562 em              (tabulares)
+ */
 const AVANCE_ARIAL = 0.5562;
-const AVANCE_GEIST_MIN = 0.62; // Geist medido: 0,663 (peso 400) · 0,693 (700) · 0,703 (800)
-const AVANCE_GEIST_MAX = 0.71;
+const AVANCE_ARCHIVO_0 = 0.573;
+const AVANCE_ARCHIVO_TOL = 0.008;
+/** La diferencia mínima entre «0» y «1» que prueba cifras proporcionales. */
+const PROPORCIONAL_MIN = 0.03;
 
 /**
  * La fuente REAL: lo declarado, lo cargado y lo que se midió en un canvas.
  * El canvas con la fuente COMPUTADA del body es la prueba que no miente:
- * si Geist no estuviera disponible, el canvas caería al fallback del sistema.
+ * si Archivo no estuviera disponible, el canvas caería al fallback del sistema
+ * —y además los píxeles pintados serían idénticos a los del fallback.
  */
 const FUENTE = `(() => {
   const cs = getComputedStyle(document.body);
@@ -77,6 +92,30 @@ const FUENTE = `(() => {
   c.font = "100px " + cs.fontFamily;
   const cero = c.measureText("0").width / 100;
   const uno = c.measureText("1").width / 100;
+  const ocho = c.measureText("8").width / 100;
+
+  // ¿Los píxeles que se pintan son los de Archivo o los del fallback? Se pinta
+  // el mismo texto dos veces: con la familia computada y con la genérica. Si
+  // Archivo no hubiera cargado, los dos dibujos serían idénticos.
+  const lienzo = document.createElement("canvas");
+  lienzo.width = 160; lienzo.height = 40;
+  const ctx = lienzo.getContext("2d");
+  const pintar = (familia) => {
+    ctx.clearRect(0, 0, 160, 40);
+    ctx.font = "32px " + familia;
+    ctx.fillStyle = "#000";
+    ctx.fillText("0123456789", 2, 30);
+    return Array.from(ctx.getImageData(0, 0, 160, 40).data).join(",");
+  };
+  const conArchivo = pintar(cs.fontFamily);
+  const conFallback = pintar("monospace");
+  const tinta = (datos) => {
+    const px = datos.split(",");
+    let pintados = 0;
+    for (let i = 3; i < px.length; i += 4) if (Number(px[i]) > 0) pintados++;
+    return pintados;
+  };
+
   return {
     body: cs.fontFamily,
     html: getComputedStyle(document.documentElement).fontFamily,
@@ -85,7 +124,11 @@ const FUENTE = `(() => {
     woff,
     cero: Math.round(cero * 10000) / 10000,
     uno: Math.round(uno * 10000) / 10000,
-    geistDisponible: document.fonts.check("16px Geist")
+    ocho: Math.round(ocho * 10000) / 10000,
+    archivoDisponible: document.fonts.check("16px Archivo"),
+    pixelesDistintosDelFallback: conArchivo !== conFallback,
+    tintaConArchivo: tinta(conArchivo),
+    tintaConFallback: tinta(conFallback)
   };
 })()`;
 
@@ -235,26 +278,42 @@ async function main() {
 
       checkTrue(
         `${vista} · el body NO se renderiza en Arial`,
-        !/arial/i.test(f.body),
+        !/arial|helvetica|liberation/i.test(f.body),
         `font-family=${f.body}`,
       );
       checkTrue(
-        `${vista} · la fuente del body es Geist`,
-        /geist/i.test(f.body),
+        `${vista} · la fuente del body es Archivo`,
+        /archivo/i.test(f.body),
         `font-family=${f.body}`,
       );
       checkTrue(
-        `${vista} · el «0» avanza como en Geist (proporcional), no como en Arial (tabular)`,
-        f.cero > 0.62 && f.cero < 0.71 && Math.abs(f.cero - AVANCE_ARIAL) > 0.05,
-        `avance=${f.cero} em (Arial=${AVANCE_ARIAL}, Geist≈0,66-0,70 según el peso)`,
-      );
-      const geistCargada = f.fuentes.some(
-        (x) => /geist/i.test(x.familia) && x.estado === "loaded",
+        `${vista} · el «0» avanza como Archivo 400 (0,573 em), no como Arial (0,5562 em)`,
+        Math.abs(f.cero - AVANCE_ARCHIVO_0) < AVANCE_ARCHIVO_TOL &&
+          Math.abs(f.cero - AVANCE_ARIAL) > 0.005,
+        `avance=${f.cero} em (Archivo≈${AVANCE_ARCHIVO_0}, Arial=${AVANCE_ARIAL})`,
       );
       checkTrue(
-        `${vista} · la fuente Geist está CARGADA (document.fonts: loaded, no unloaded)`,
-        geistCargada,
+        `${vista} · las cifras son PROPORCIONALES (0 ≠ 1): ningún fallback tabular se confunde con Archivo`,
+        Math.abs(f.cero - f.uno) > PROPORCIONAL_MIN,
+        `«0»=${f.cero} em · «1»=${f.uno} em · «8»=${f.ocho} em (en Arial los tres son ${AVANCE_ARIAL})`,
+      );
+      checkTrue(
+        `${vista} · los PÍXELES que se pintan son los de Archivo, no los del fallback`,
+        f.pixelesDistintosDelFallback === true,
+        `tinta con la fuente del body=${f.tintaConArchivo} px · tinta del fallback=${f.tintaConFallback} px`,
+      );
+      const archivoCargada = f.fuentes.some(
+        (x) => /^archivo$/i.test(x.familia) && x.estado === "loaded",
+      );
+      checkTrue(
+        `${vista} · la fuente Archivo está CARGADA (document.fonts: loaded, no unloaded)`,
+        archivoCargada,
         JSON.stringify(f.fuentes),
+      );
+      checkTrue(
+        `${vista} · Archivo está DISPONIBLE para el motor de texto (document.fonts.check)`,
+        f.archivoDisponible === true,
+        `check=${f.archivoDisponible}`,
       );
       const descargada = f.woff.filter((w) => (w.encoded || 0) > 0);
       checkTrue(

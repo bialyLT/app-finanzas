@@ -472,11 +472,11 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
             cargado se perdía — el BUG-3 de la ronda). */}
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold flex items-center gap-2"><Handshake className="size-5" aria-hidden />Nuevo préstamo</h2>
+          <h2 className="text-lg font-bold flex items-center gap-2"><Handshake className="size-5" aria-hidden />Nuevo préstamo</h2>
           <button
             id="loanalta-close"
             onClick={closeOrSkip}
-            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×

@@ -127,11 +127,11 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
             `sticky` dentro del área y tapaba los campos: trampa 15). */}
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold flex items-center gap-2"><Settings className="size-5" aria-hidden />{card.name}</h2>
+          <h2 className="text-lg font-bold flex items-center gap-2"><Settings className="size-5" aria-hidden />{card.name}</h2>
           <button
             id="cardconf-close"
             onClick={onClose}
-            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×

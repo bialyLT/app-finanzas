@@ -694,7 +694,7 @@ export default function TransactionForm({
       // con Escape o con el botón; ambos caminos son deliberados.
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
         <div className="w-full sm:max-w-md bg-surface-2 rounded-t-md sm:rounded-md p-6 shadow-2xl">
-          <h2 className="text-xl font-bold mb-3">Primero creá una cuenta</h2>
+          <h2 className="text-lg font-bold mb-3">Primero creá una cuenta</h2>
           <p className="text-sm text-fg-muted mb-4">
             Todo movimiento sale de una cuenta o entra a una. Sin al menos una
             cuenta creada no hay dónde registrar la plata.
@@ -830,7 +830,7 @@ export default function TransactionForm({
                     {formatMoney(suggestion.amount)}
                   </span>
                 </span>
-                <span className="block text-[11px] text-fg-muted truncate">
+                <span className="block text-xs text-fg-muted truncate">
                   {suggestion.category?.name ?? "Sin categoría"} ·{" "}
                   {suggestion.account.name}
                   {suggestion.kind === "TRANSFER" && suggestion.toAccount
@@ -872,12 +872,12 @@ export default function TransactionForm({
       >
         <div className="flex-none px-6 pt-6">
           <div className="flex items-center justify-between mb-2 gap-2">
-          <h2 className={`text-xl font-bold min-w-0 ${style.accent}`}>
+          <h2 className={`text-lg font-bold min-w-0 ${style.accent}`}>
             {style.title}
             {favoriteSourceName && favoriteId && (
               <span
                 id="tx-favorite-banner"
-                className="ml-2 align-middle text-[10px] font-bold uppercase rounded-full bg-transfer/10 text-transfer px-1.5 py-0.5"
+                className="ml-2 align-middle text-xs font-bold uppercase rounded-full bg-transfer/10 text-transfer px-1.5 py-0.5"
               >
                 plantilla: {favoriteSourceName}
               </span>
@@ -910,7 +910,7 @@ export default function TransactionForm({
             <button
               id="tx-close"
               onClick={onClose}
-              className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+              className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
               aria-label="Cerrar"
             >
               ×
@@ -979,7 +979,7 @@ export default function TransactionForm({
               maxLength={40}
               className={`w-full rounded-lg border border-line-strong bg-surface-2 px-3 py-2 text-sm outline-none focus:ring-2 ${style.focus}`}
             />
-            <p className="text-[11px] text-fg-muted">
+            <p className="text-xs text-fg-muted">
               Guarda tipo, monto, cuenta, categoría y nota. No crea un
               movimiento.
             </p>
@@ -1033,7 +1033,7 @@ export default function TransactionForm({
                 clearDuplicateWarning();
               }}
               placeholder="0,00"
-              className={`mt-1 w-full text-2xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full text-xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 ${style.focus}`}
             />
             <p className="mt-1 text-xs text-fg-muted h-4">
               {amountPreview ? (

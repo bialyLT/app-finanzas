@@ -212,11 +212,11 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             en un campo tapado caía en el pie. */}
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-bold">Nueva cuenta</h2>
+          <h2 className="text-lg font-bold">Nueva cuenta</h2>
           <button
             id="acc-close"
             onClick={onClose}
-            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×

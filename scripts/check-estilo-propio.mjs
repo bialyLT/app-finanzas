@@ -33,12 +33,17 @@
  *   5 · GRADIENTE (`bg-linear-*` —el nombre de Tailwind v4—, `bg-gradient-*`,
  *       `bg-radial-*`, `from-*`, `via-*`, `to-*`): el spike de estilos que
  *       eligió la persona («C · Noche») no tiene ni uno.
- *   6 · FUENTE fuera del tema: la fuente sale del `@theme` (`font-sans`,
- *       `font-mono`); una `font-family` a mano la pisa (ya pasó: la app
- *       renderizaba en Arial). `font-bold` es un PESO, no una fuente: no cae.
+ *   6 · FUENTE fuera del tema: la fuente sale del `@theme` (`font-sans` =
+ *       Archivo, `font-mono` = IBM Plex Mono); una `font-family` a mano la
+ *       pisa (ya pasó: la app renderizaba en Arial). `font-bold` es un PESO,
+ *       no una fuente: no cae.
  *   7 · `dark:` EN UN COLOR: el token ya es el del esquema que está en
  *       pantalla, así que el markup no lleva `dark:` en ningún color
  *       (`docs/design-system.md` §5.8).
+ *   8 · CUERPO DE LETRA fuera de la escala: los cinco pasos del `@theme`
+ *       (`xs` 12, `sm` 14, `base` 16, `lg` 18, `xl` 24 px) son la escala; un
+ *       `text-2xl`, un `text-3xl` o un arbitrario `text-[15px]` es un tamaño
+ *       que nadie eligió (F0b: había 54 `text-[11px]` / `text-[10px]`).
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * CONTRATO DE SALIDA (el mismo que `check-css-puro.mjs` y la auditoría)
@@ -47,7 +52,8 @@
  *
  * El conteo: un check por archivo (que se pueda leer) + un check por regla
  * evaluada en ese archivo (ok si la regla se respeta, falla si hay al menos
- * una violación) + un check de repo (que el `@theme` declare los tokens).
+ * una violación) + los checks de repo (los tokens del `@theme`, sus valores en
+ * los dos esquemas, la familia del tema y la escala tipográfica).
  *
  * Uso:
  *   node scripts/check-estilo-propio.mjs
@@ -90,6 +96,20 @@ const PESOS_FUENTE = new Set([
 
 /** Las familias de fuente que SÍ salen del `@theme`. */
 const FAMILIAS_TEMA = new Set(["sans", "mono"]);
+
+/**
+ * Los cinco pasos de la escala tipográfica (`@theme`, `--text-*`).
+ *
+ * Un tamaño fuera de esta lista es un tamaño que alguien escribió de memoria:
+ * la app llegó a tener 54 `text-[11px]` y 25 `text-2xl`/`text-xl` mezclados
+ * con los de fábrica. El cuerpo de letra es parte del sistema, como el color.
+ */
+export const ESCALA_TIPOGRAFICA = ["xs", "sm", "base", "lg", "xl"];
+
+/** Los tamaños de fábrica de Tailwind que NO son de la escala. */
+const TAMANOS_DE_FABRICA = new Set([
+  "md", "2xl", "3xl", "4xl", "5xl", "6xl", "7xl", "8xl", "9xl",
+]);
 
 /** Los tokens que el `@theme` tiene que declarar. */
 export const TOKENS_ESPERADOS = [
@@ -382,6 +402,24 @@ export function analizarArchivo(contenido, archivo = "(archivo)") {
           });
         }
       }
+
+      // 8 · el cuerpo de letra, fuera de la escala.
+      //   Los cinco pasos del `@theme` son la escala; `text-2xl`, `text-3xl`
+      //   y los arbitrarios (`text-[15px]`) son tamaños que nadie eligió.
+      //   OJO: `text-center`, `text-ellipsis` y `text-fg-muted` también
+      //   empiezan con `text-` y NO son tamaños: la regla sólo mira `2xl`…
+      //   `9xl`, `md` (de fábrica) y el corchete (arbitrario).
+      if (base.startsWith("text-")) {
+        const valor = base.slice(5);
+        const arbitrario = valor.startsWith("[");
+        if (arbitrario || TAMANOS_DE_FABRICA.has(valor)) {
+          violaciones.push({
+            regla: "cuerpo-fuera-de-escala",
+            linea: lineaDe(contenido, lit.inicio),
+            detalle: `«${clase}»: el cuerpo sale de la escala del tema (${ESCALA_TIPOGRAFICA.join(" · ")})`,
+          });
+        }
+      }
     }
   }
 
@@ -421,7 +459,7 @@ function main() {
     const violaciones = analizarArchivo(contenido, relative(RAIZ, archivo));
     // Un check por regla: si la regla se respeta en este archivo, cuenta ok.
     const reglas = new Set(violaciones.map((v) => v.regla));
-    const reglasEvaluadas = 7;
+    const reglasEvaluadas = 8;
     if (violaciones.length === 0) {
       ok += reglasEvaluadas;
     } else {
@@ -475,6 +513,52 @@ function main() {
     });
   }
 
+  // ── El tercer check de repo: la FAMILIA del tema es la que se eligió.
+  //
+  // POR QUÉ ESTE CHECK EXISTE
+  // La regla 6 impide una `font-family` en el MARKUP, pero no mira el `@theme`:
+  // volver a `--font-sans: var(--font-geist-sans)` (la fuente por defecto de
+  // Next) pasaba el gate. La familia es una DECISIÓN del sistema («Archivo, no
+  // la de Next»), así que el candado la sujeta: el `@theme` tiene que mapear
+  // `font-sans` al archivo que carga `app/layout.tsx`.
+  const familiaOk =
+    /--font-sans:\s*var\(--font-archivo\)/.test(tema) &&
+    /--font-mono:\s*var\(--font-plex-mono\)/.test(tema);
+  if (familiaOk) ok += 1;
+  else {
+    fail += 1;
+    problemas.push({
+      archivo: "app/globals.css",
+      linea: 0,
+      regla: "familia-del-tema",
+      detalle:
+        "el @theme tiene que mapear --font-sans a var(--font-archivo) y --font-mono a var(--font-plex-mono)",
+    });
+  }
+
+  // ── El cuarto check de repo: LA ESCALA TIPOGRÁFICA está declarada.
+  //
+  // Y el paso `xl` vale 1,5 rem: es el tope de 24 px de las cifras grandes, el
+  // número con el que está calibrado `factorMonto` (lib/format.ts). Si cambia,
+  // el modelo de medidas queda descalibrado y el monto se sale de su tarjeta.
+  const escalaFaltante = ESCALA_TIPOGRAFICA.filter(
+    (paso) => !new RegExp(`--text-${paso}\\s*:`).test(tema),
+  );
+  const topeOk = /--text-xl:\s*1\.5rem\s*;/.test(tema);
+  if (escalaFaltante.length === 0 && topeOk) ok += 1;
+  else {
+    fail += 1;
+    problemas.push({
+      archivo: "app/globals.css",
+      linea: 0,
+      regla: "escala-tipografica",
+      detalle:
+        escalaFaltante.length > 0
+          ? `el @theme no declara los pasos: ${escalaFaltante.join(", ")}`
+          : "el paso xl (el tope de las cifras grandes) tiene que valer 1,5rem (24 px): si cambia, se recalibra factorMonto",
+    });
+  }
+
   if (problemas.length > 0) {
     console.log("Estilo propio (no permitido):\n");
     for (const p of problemas) {
@@ -484,7 +568,7 @@ function main() {
     console.log("");
   } else {
     console.log(
-      `Estilo propio: ${iniciales.length} archivo(s) sin color de fábrica, sin emoji, sin radio fuera de escala, sin color suelto, sin gradiente, sin fuente fuera del tema y sin «dark:» en un color.`,
+      `Estilo propio: ${iniciales.length} archivo(s) sin color de fábrica, sin emoji, sin radio fuera de escala, sin color suelto, sin gradiente, sin fuente fuera del tema, sin «dark:» en un color y sin cuerpo fuera de la escala.`,
     );
   }
 

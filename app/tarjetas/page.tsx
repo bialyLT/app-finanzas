@@ -333,7 +333,7 @@ export default function CardsPage() {
       {/* ── Título y archivadas ──────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-extrabold flex items-center gap-2"><CreditCard className="size-6" aria-hidden />Tarjetas</h1>
+          <h1 className="text-xl font-extrabold flex items-center gap-2"><CreditCard className="size-6" aria-hidden />Tarjetas</h1>
           <p className="text-sm text-fg-muted">
             Deuda, límite, resúmenes y cuotas comprometidas de cada tarjeta. Las
             cuotas son deuda que ya nació: acá ves cuándo la vas a pagar.

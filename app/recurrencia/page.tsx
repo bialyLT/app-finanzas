@@ -324,7 +324,7 @@ export default function RecurrencePage() {
       {/* ── Título y alta ────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-extrabold flex items-center gap-2"><RefreshCw className="size-6" aria-hidden />Recurrencia</h1>
+          <h1 className="text-xl font-extrabold flex items-center gap-2"><RefreshCw className="size-6" aria-hidden />Recurrencia</h1>
           <p className="text-sm text-fg-muted">
             Lo que pasa cada tanto: alquiler, sueldo, servicios. Vos decís qué
             hacer cuando vence.
@@ -602,7 +602,7 @@ export default function RecurrencePage() {
                         <p className="font-semibold truncate">
                           {rule.title}
                           <span
-                            className={`ml-2 align-middle text-[10px] uppercase font-bold rounded-full px-2 py-0.5 ${STATUS_STYLE[rule.status]}`}
+                            className={`ml-2 align-middle text-xs uppercase font-bold rounded-full px-2 py-0.5 ${STATUS_STYLE[rule.status]}`}
                           >
                             {RECURRENCE_STATUS_LABEL[rule.status]}
                           </span>

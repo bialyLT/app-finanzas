@@ -40,7 +40,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   return (
     <main className="mx-auto max-w-sm px-4 py-16">
       <div className="rounded-md border border-line bg-surface-2 bg-surface p-8 shadow-sm">
-        <h1 className="text-2xl font-extrabold tracking-tight mb-1">Mis Finanzas</h1>
+        <h1 className="text-xl font-extrabold tracking-tight mb-1">Mis Finanzas</h1>
         <p className="text-sm text-fg-muted mb-6">
           Esta aplicación es privada. Ingresá tu contraseña para continuar.
         </p>

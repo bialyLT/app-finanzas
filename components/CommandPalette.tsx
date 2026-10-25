@@ -286,7 +286,7 @@ export default function CommandPalette({
             type="button"
             onClick={onClose}
             aria-label="Cerrar paleta"
-            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-1"
+            className="text-lg leading-none text-fg-subtle hover:text-fg-muted px-1"
           >
             ×
           </button>
@@ -326,12 +326,12 @@ export default function CommandPalette({
                     {action.label}
                   </span>
                   {action.hint && (
-                    <span className="block text-[11px] text-fg-muted truncate">
+                    <span className="block text-xs text-fg-muted truncate">
                       {action.hint}
                     </span>
                   )}
                 </span>
-                <span className="text-[10px] uppercase tracking-wide text-fg-subtle whitespace-nowrap">
+                <span className="text-xs uppercase tracking-wide text-fg-subtle whitespace-nowrap">
                   {action.group}
                 </span>
               </button>
@@ -339,7 +339,7 @@ export default function CommandPalette({
           )}
         </div>
 
-        <p className="border-t border-line px-4 py-2 text-[11px] text-fg-subtle">
+        <p className="border-t border-line px-4 py-2 text-xs text-fg-subtle">
           ↑ ↓ navegar · Enter elegir · Esc cerrar · los favoritos con cuenta
           archivada se muestran deshabilitados
         </p>

@@ -458,7 +458,7 @@ export default function LoansPage() {
       {/* ── Título, alta y archivadas ────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-2xl font-extrabold flex items-center gap-2"><Handshake className="size-6" aria-hidden />Préstamos</h1>
+          <h1 className="text-xl font-extrabold flex items-center gap-2"><Handshake className="size-6" aria-hidden />Préstamos</h1>
           <p className="text-sm text-fg-muted">
             Lo que debés y lo que te deben, con su cronograma y su progreso.
             Cada pago mueve plata de verdad: una transferencia por el capital y

@@ -352,7 +352,7 @@ export default function RecurrenceRuleForm({
         id="rec-form"
         className="mx-auto w-full max-w-xl bg-surface-2 rounded-md p-6 shadow-sm"
       >
-        <h2 className="text-xl font-bold mb-3">Primero creá una cuenta</h2>
+        <h2 className="text-lg font-bold mb-3">Primero creá una cuenta</h2>
         <p className="text-sm text-fg-muted mb-4">
           Toda regla postea (o propone) movimientos sobre una cuenta. Sin al
           menos una cuenta creada no hay dónde registrar la plata.
@@ -396,13 +396,13 @@ export default function RecurrenceRuleForm({
     >
       <div className="p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className={`text-xl font-bold ${style.accent}`}>
+          <h2 className={`text-lg font-bold ${style.accent}`}>
             <RefreshCw className="size-4" aria-hidden /> {editing ? "Editar regla" : "Nueva regla"}
           </h2>
           <button
             id="rec-form-close"
             onClick={onClose}
-            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
             aria-label="Cerrar"
           >
             ×
@@ -464,7 +464,7 @@ export default function RecurrenceRuleForm({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0,00"
-              className="mt-1 w-full text-2xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+              className="mt-1 w-full text-xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
             />
             <p className="mt-1 text-xs text-fg-muted h-4">
               {amountPreview ? (

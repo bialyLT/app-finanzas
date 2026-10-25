@@ -7,7 +7,9 @@
 > El candado mecánico es `npm run check:estilo`
 > (`scripts/check-estilo-propio.mjs`): falla si reaparece la paleta de fábrica,
 > un emoji como icono, un radio fuera de escala, un color suelto, un gradiente,
-> una fuente fuera del tema o un `dark:` en un color.
+> una fuente fuera del tema, un `dark:` en un color o un **cuerpo de letra
+> fuera de la escala**; y comprueba que el `@theme` declare los quince tokens,
+> la familia elegida (Archivo / IBM Plex Mono) y los cinco pasos tipográficos.
 
 ---
 
@@ -240,17 +242,152 @@ diálogo en el escritorio (`sm:rounded-md`).
 
 ---
 
-## 3 · La escala tipográfica
+## 3 · La tipografía
 
-> **Pendiente de F0b** (tipografía, cifras tabulares y cambio de fuente, con
-> la recalibración del modelo de medidas de `lib/format.ts`). Lo que hay hoy:
+### 3.1 · La fuente: Archivo (interfaz) + IBM Plex Mono (código)
 
-| Uso | Clase | Nota |
-|---|---|---|
-| Monto de tarjeta | `monto-tarjeta` | utilidad propia: el cuerpo acompaña al ancho de la tarjeta (container query) |
-| Monto de ficha | `monto-ficha` | ídem, para la ficha de un mes |
-| Cuerpo | `font-sans` | Geist, desde el `@theme` |
-| Cifras | `tabular-nums` (pendiente) | llega con F0b |
+La app usaba **Geist**, que es la fuente por defecto de **Next.js** y de
+**Vercel**: la tipografía la había elegido el framework, igual que antes la
+había elegido el navegador (Arial). Desde la F0b la fuente es una **decisión**:
+
+| | Familia | Dónde | Por qué |
+|---|---|---|---|
+| Interfaz | **Archivo** (Omnibus-Type, 2019) | `font-sans`, todo el texto y los montos | grotesca de voz técnica/institucional; eje variable 100-900 (el **800** es real); cifras **tabulares** de verdad |
+| Código / datos crudos | **IBM Plex Mono** | `font-mono` (el textarea del CSV) | monoespaciada: los separadores alinean |
+
+Los criterios de aceptación, en orden, y cómo los cumple (medidos en el
+navegador con `node scripts/medir-fuente.mjs --candidatas`, 2026-10-22):
+
+1. **Cifras tabulares REALES.** Con `font-variant-numeric: tabular-nums` los
+   dígitos `0`, `1` y `8` avanzan **exactamente lo mismo** en los tres pesos
+   que usa la app (tabla en §3.3). Sin `tnum` no sirve: los montos bailan.
+2. **Peso 800 real.** Archivo es variable en `wght` 100-900 y `next/font`
+   sirve el eje completo: `font-extrabold` no se sintetiza.
+3. **Legible a 12/13/14 px** sobre `#07111F` y sobre `#F7F8FA`: la altura de
+   x de Archivo (0,52 em) y sus contraformas abiertas sostienen el texto
+   chico; los ratios de contraste de §1.2 no cambian (son del color, no de la
+   fuente).
+4. **No parece «la fuente de un framework»**: no es la default de ningún
+   framework ni de ningún sistema operativo.
+5. **Self-hospedable**: `next/font/google` descarga el `.woff2` en el BUILD y
+   lo sirve desde `/_next/static/media`: en runtime el navegador no le pide
+   nada a Google.
+
+Las otras tres candidatas se midieron igual (y por eso el orden no fue una
+corazonada): **DM Sans no tiene cifras tabulares** (`0`/`1`/`8` = 0,6951 /
+0,3220 / 0,5900 em en peso 800: con `tnum` **no cambian**, o sea que el
+`tnum` no existe); **Public Sans** y **Figtree** sí las tienen (0,70 / 0,70 /
+0,70) y quedan como el fallback documentado si algún día hay que reemplazar
+Archivo. La preferencia del brief pasó los cinco criterios, así que no hubo
+que bajar a los fallbacks.
+
+### 3.2 · La escala: cinco pasos con nombre
+
+En el `@theme` de `app/globals.css` (`--text-*` + `--text-*--line-height` +
+`--leading-*` + `--font-weight-*`). El markup usa **los tokens**, no los
+tamaños de fábrica de Tailwind:
+
+| Token | Cuerpo | Interlineado | Uso |
+|---|---|---|---|
+| `text-xs` | 12 px | 1,3333 | metadatos, etiquetas, unidades, fechas |
+| `text-sm` | 14 px | 1,4286 | texto secundario, tablas, fichas |
+| `text-base` | 16 px | 1,5 | texto normal |
+| `text-lg` | 18 px | 1,5556 | subtítulos, títulos de modal |
+| `text-xl` | **24 px (tope)** | 1,25 | las cifras grandes del panel y del análisis |
+
+El **tope de 24 px** de `text-xl` es el que manda en el modelo de medidas
+(§3.3): `factorMonto` asume que una cifra grande nunca pasa de ese cuerpo. El
+candado `check:estilo` ahora **falla** con un `text-2xl`, un `text-3xl` o un
+arbitrario `text-[15px]`, y también si el `@theme` deja de declarar la escala
+o si `--text-xl` deja de valer `1.5rem`.
+
+**Qué se migró** (la ronda anterior tenía 139 tamaños de fábrica y 54
+arbitrarios):
+
+| Antes | Ahora | Cuántos | Efecto |
+|---|---|---|---|
+| `text-2xl` (24 px) | `text-xl` (24 px) | 15 | mismo cuerpo; el interlineado pasa de 32 a 30 px |
+| `text-xl` (20 px) | `text-lg` (18 px) | 10 | títulos de modal 2 px más chicos (la caja de línea no cambia: 28 px) |
+| `text-[11px]` | `text-xs` (12 px) | 49 | 1 px más grande (y legible) |
+| `text-[10px]` | `text-xs` (12 px) | 5 | 2 px más grande |
+
+`text-xs`, `text-sm`, `text-base` y `text-lg` conservan los valores de
+Tailwind: no movieron nada.
+
+### 3.3 · Las cifras tabulares (la evidencia) y el modelo de medidas
+
+**El instrumento**: `scripts/medir-fuente.mjs` mide en el DOM (no en canvas:
+canvas no tiene `font-variant-numeric`) el avance de cada glifo con cuerpo de
+100 px, con y sin `tabular-nums`, en los pesos de la app.
+
+**La prueba de que el `tnum` es real** (avance de un dígito, en px con cuerpo
+de 100 px; «sin» = `font-variant-numeric: normal`):
+
+| Fuente | peso | «0» sin | «1» sin | «8» sin | «0» con `tnum` | «1» con `tnum` | «8» con `tnum` | ¿tabular? |
+|---|---|---|---|---|---|---|---|---|
+| **Archivo** | 400 | 57,3125 | 52,1094 | 57,4063 | **56,8125** | **56,8125** | **56,8125** | **sí** |
+| **Archivo** | 700 | 59,5 | 59,6094 | 59,6094 | **59,8125** | **59,8125** | **59,8125** | **sí** |
+| **Archivo** | 800 | 62,5 | 62,5 | 62,5 | **62,7031** | **62,7031** | **62,7031** | **sí** |
+| Public Sans | 800 | 65,9531 | 43,8125 | 68,1563 | 70 | 70 | 70 | sí |
+| DM Sans | 800 | 69,5 | 32,2031 | 59 | 69,5 | 32,2031 | 59 | **NO** |
+| Figtree | 800 | 65,2031 | 42,6094 | 61,1094 | 63,6094 | 63,6094 | 63,6094 | sí |
+
+(Por eso DM Sans quedó descartada: su `tnum` no existe y el «1» mide menos de
+la mitad que el «0».)
+
+**La tabla de avances de Archivo con `tabular-nums`** (em = px / 100), que es
+la que calibra `lib/format.ts`:
+
+| Glifo | peso 400 | peso 700 (fichas) | peso 800 (tarjetas) |
+|---|---|---|---|
+| dígito (0-9) | 0,568125 | 0,598125 | 0,627031 |
+| `.` y `,` | 0,277031 | 0,307031 | 0,318125 |
+| `$` | 0,510000 | 0,556094 | 0,579063 |
+| espacio (y NBSP) | 0,209063 | 0,196094 | 0,189063 |
+| `+` y `−` | 0,625000 | 0,641094 | 0,649063 |
+| `-` (guion) | 0,333125 | 0,333125 | 0,333125 |
+
+**El modelo, antes y después.** Con Geist los dígitos eran proporcionales y
+el ancho de un monto dependía de qué dígitos tuviera; el modelo usaba un
+avance **medio por carácter** con un margen del 5 % (tarjetas, 0,62) y un
+0,60 + 0,60 por signo (fichas). Con Archivo tabular el ancho es la **suma de
+los glifos**, y el modelo lo calcula así: `factorMonto` suma el avance de cada
+carácter y aplica **un solo margen del 5 %**.
+
+| Monto | Ancho medido (em) | Por carácter | Modelo viejo (Geist) | Modelo nuevo (Archivo) |
+|---|---|---|---|---|
+| `$ 000.000,00` (800) | 6,4206 | 0,5351 | 0,5895 | **0,5351** |
+| `$ 800.000,00` (800) | 6,4206 | 0,5351 | 0,5861 | **0,5351** (idéntico al de ceros) |
+| `+$ 800.000,00` (800) | 7,0697 | 0,5438 | 0,5861 | **0,5438** |
+| `$ 1.234.567.890,12` (800) | 9,5650 | 0,5314 | 0,5099 | **0,5314** |
+| `$ 100.000,00` (700) | 6,1512 | 0,5126 | 0,5578 | **0,5126** |
+| `$ 000.000,00` (700) | 6,1512 | 0,5126 | 0,5803 | **0,5126** |
+| `+$ 310.000,00` (700) | 6,7923 | 0,5225 | 0,57 | **0,5225** |
+
+El factor es `1 / (ancho del texto × 1,05)` (con el ancho calculado glifo por
+glifo, no un promedio). Números nuevos, con el efecto en la app:
+
+| Caso | factor viejo | factor nuevo | Cuerpo a 195 px (tarjeta) / 64 px (ficha) |
+|---|---|---|---|
+| `$ 800.000,00` · tarjeta | 0,13441 | **0,14833** | 28,9 px → **tope de 24 px** (igual que antes) |
+| `$ 1.234.567.890,12` · tarjeta | 0,08961 | **0,09957** | 17,5 px → **19,4 px** (185,8 px de ancho en 195) |
+| `$ 100.000,00` · ficha a 320 px | 0,13889 | **0,15483** | 8,89 px → **9,91 px** (61,0 px de ancho en 64) |
+| `+$ 310.000,00` · ficha a 320 px | — | **0,14021** | 8,97 px (60,7 px de ancho en 64) |
+
+**El efecto neto**: los montos de todos los días se ven **exactamente igual**
+(el tope de 24 px y el de 14 px mandan); los montos largos se ven **más
+grandes** que antes (19,4 px en vez de 17,5) y siguen entrando; las fichas
+angostas a 320 px suben de 8,9 a 9,9 px y siguen entrando. Los tests de
+`lib/format.test.ts` verifican las tres cosas con la tabla medida arriba
+(ancho real ≤ caja, margen entre 4 y 6 %, y que con cifras tabulares el ancho
+no dependa de los dígitos).
+
+**Dónde se aplican las cifras tabulares**: en los montos, no en los textos.
+La utilidad `monto` (y las que la incluyen: `monto-tarjeta`, `monto-ficha`,
+`monto-ficha--chico`) pide `font-variant-numeric: tabular-nums`; el markup la
+usa en las cuatro tarjetas del panel, las del análisis, las fichas del
+patrimonio y de la reconciliación, el patrimonio neto, el total de deudas y
+las filas de movimientos.
 
 ---
 
@@ -376,9 +513,14 @@ están prohibidos.
 // ANTES — en el CSS global: `body { font-family: Arial }`
 // (la app renderizaba en ARIAL y descargaba dos archivos de fuente al pedo)
 
-// DESPUÉS — la fuente sale del @theme
+// DESPUÉS — la fuente sale del @theme (Archivo, la elige el design system)
 <body className="font-sans" />
 ```
+
+Y tampoco alcanza con «una fuente cualquiera»: la familia es una **decisión**
+del sistema (§3.1). `--font-sans: var(--font-geist-sans)` —la fuente por
+defecto de Next— es una falla del candado: el `@theme` tiene que mapear
+`font-sans` a `var(--font-archivo)`.
 
 ### 5.7 · No uses `shadow` como decoración
 
@@ -422,7 +564,17 @@ El gate de estilo falla si aparece **una sola** clase de la paleta de fábrica
 radio fuera de escala (incluido el `rounded` pelado, el arbitrario y las
 variantes lógicas de esquina), un color suelto (hex, `rgb()`, `oklch()` o un
 estilo en línea), un gradiente (`bg-linear-*`, `bg-gradient-*`, `bg-radial-*`,
-`from-*`, `via-*`, `to-*`), una fuente fuera del tema o un `dark:` en un
-color; y además comprueba que el `@theme` declare los quince tokens **y que
-cada token tenga valor en los dos esquemas** (un token sin valor es un token
-muerto: la utilidad compila a un `var(--token)` sin definir).
+`from-*`, `via-*`, `to-*`), una fuente fuera del tema, un `dark:` en un color
+o un **cuerpo de letra fuera de la escala** (`text-2xl`, `text-3xl`, un
+`text-[15px]`); y además comprueba que el `@theme` declare los quince tokens,
+**que cada token tenga valor en los dos esquemas** (un token sin valor es un
+token muerto: la utilidad compila a un `var(--token)` sin definir), **que la
+familia del tema sea la elegida** (`--font-sans: var(--font-archivo)` /
+`--font-mono: var(--font-plex-mono)`) y **que la escala de cinco pasos esté
+declarada con el tope de 24 px** (`--text-xl: 1.5rem`, el número con el que
+está calibrado `factorMonto`).
+
+Los números de la tipografía (avances, márgenes, el factor de cada monto) se
+miden con `node scripts/medir-fuente.mjs --candidatas` (antes de elegir) y
+`node scripts/medir-fuente.mjs --url http://127.0.0.1:3101` (la fuente real
+que sirve el build).

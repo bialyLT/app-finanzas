@@ -181,7 +181,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
         <div className="flex-none px-5 pt-5">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div>
-            <h2 className="text-xl font-bold">Importar CSV</h2>
+            <h2 className="text-lg font-bold">Importar CSV</h2>
             <p className="text-xs text-fg-muted">
               Pegá el texto o elegí un archivo. Primero se previsualiza; nada
               se guarda hasta confirmar.
@@ -192,7 +192,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
             type="button"
             onClick={onClose}
             aria-label="Cerrar importación"
-            className="text-2xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
           >
             ×
           </button>
@@ -278,7 +278,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
               </span>
             </div>
             {fileName && (
-              <p className="mt-1 text-[11px] text-fg-muted">
+              <p className="mt-1 text-xs text-fg-muted">
                 Archivo: {fileName}
               </p>
             )}
@@ -317,11 +317,11 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                   className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center"
                 >
                   <div className="rounded-lg bg-surface bg-surface-3/60 px-2 py-2">
-                    <p className="text-[11px] text-fg-muted">Filas</p>
+                    <p className="text-xs text-fg-muted">Filas</p>
                     <p className="font-bold">{preview.totalRows}</p>
                   </div>
                   <div className="rounded-lg bg-success/10 px-2 py-2">
-                    <p className="text-[11px] text-success ">
+                    <p className="text-xs text-success ">
                       Importables
                     </p>
                     <p className="font-bold text-success ">
@@ -329,7 +329,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                     </p>
                   </div>
                   <div className="rounded-lg bg-danger/10 px-2 py-2">
-                    <p className="text-[11px] text-danger ">
+                    <p className="text-xs text-danger ">
                       Inválidas
                     </p>
                     <p className="font-bold text-danger ">
@@ -337,7 +337,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                     </p>
                   </div>
                   <div className="rounded-lg bg-warning/10 px-2 py-2">
-                    <p className="text-[11px] text-warning ">
+                    <p className="text-xs text-warning ">
                       Duplicadas
                     </p>
                     <p className="font-bold text-warning ">
@@ -345,7 +345,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                     </p>
                   </div>
                   <div className="rounded-lg bg-surface bg-surface-3/60 px-2 py-2">
-                    <p className="text-[11px] text-fg-muted">Vacías</p>
+                    <p className="text-xs text-fg-muted">Vacías</p>
                     <p className="font-bold">{preview.emptyRows}</p>
                   </div>
                 </div>
@@ -408,7 +408,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                       <div
                         key={`movil-${row.line}-${row.status}`}
                         id={`csv-fila-${row.line}`}
-                        className="rounded-lg border border-line p-2 text-[11px]"
+                        className="rounded-lg border border-line p-2 text-xs"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-fg-muted">Línea {row.line}</span>
@@ -450,7 +450,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
                   id="csv-rows"
                   className="hidden sm:block mt-2 max-h-64 overflow-auto rounded-md border border-line "
                 >
-                  <table className="w-full text-left text-[11px]">
+                  <table className="w-full text-left text-xs">
                     <thead className="sticky top-0 bg-surface-3 ">
                       <tr>
                         <th className="px-2 py-1.5">Línea</th>
