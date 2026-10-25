@@ -380,7 +380,7 @@ export default function RecurrencePage() {
       {/* ── Generador ────────────────────────────────────────────────────── */}
       {/* La app no tiene cron: el disparador es abrir la pantalla (o el panel)
           y este botón. La tarjeta cuenta qué hizo la última corrida. */}
-      <section className="bg-surface-2 rounded-md px-4 py-4 shadow-sm">
+      <section className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-4 shadow-sm">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
             <p className="text-xs uppercase text-fg-muted tracking-wide">
@@ -440,14 +440,14 @@ export default function RecurrencePage() {
       {loadError && (
         <p
           role="alert"
-          className="bg-surface-2 rounded-md px-4 py-8 text-center text-danger shadow-sm"
+          className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-8 text-center text-danger shadow-sm"
         >
           {loadError}
         </p>
       )}
 
       {!loadError && loading && (
-        <p className="bg-surface-2 rounded-md px-4 py-10 text-center text-fg-muted shadow-sm">
+        <p className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-10 text-center text-fg-muted shadow-sm">
           Cargando…
         </p>
       )}
@@ -455,7 +455,7 @@ export default function RecurrencePage() {
       {!loadError && !loading && (
         <>
           {/* ── Bandeja de pendientes ────────────────────────────────────── */}
-          <section className="bg-surface-2 rounded-md shadow-sm">
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm shadow-sm">
             <div className="px-4 pt-4">
               <h2 className="text-lg font-bold">
                 Pendientes{" "}
@@ -549,7 +549,7 @@ export default function RecurrencePage() {
           </section>
 
           {/* ── Reglas ───────────────────────────────────────────────────── */}
-          <section className="bg-surface-2 rounded-md shadow-sm">
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm shadow-sm">
             <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="text-lg font-bold">Reglas</h2>

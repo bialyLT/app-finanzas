@@ -43,6 +43,7 @@ import {
   toCents,
 } from "@/lib/format";
 import { shortcutMovementKind } from "@/lib/quick-entry";
+import { Button } from "@/components/ui/button";
 import { isPaletteShortcut } from "@/lib/command-palette";
 import { Banknote, Receipt, ArrowLeftRight, RefreshCw, Import, Coins, Search, StickyNote, Trash, Check, X, type LucideIcon } from "lucide-react";
 
@@ -730,14 +731,15 @@ export default function Home() {
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
       {/* ── Selector de mes ───────────────────────────────────────────────── */}
       <div className="flex items-center justify-between bg-surface-2 rounded-md px-4 py-3 shadow-sm">
-        <button
+        <Button
           id="btn-prev-month"
+          variant="ghost"
+          size="icon"
           onClick={() => shiftMonth(-1)}
-          className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
           aria-label="Mes anterior"
         >
           ←
-        </button>
+        </Button>
         <div className="text-center">
           {/*
             `first-letter:uppercase` y NO `capitalize`.
@@ -757,14 +759,15 @@ export default function Home() {
             {movements.length === 1 ? "movimiento" : "movimientos"}
           </p>
         </div>
-        <button
+        <Button
           id="btn-next-month"
+          variant="ghost"
+          size="icon"
           onClick={() => shiftMonth(1)}
-          className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
           aria-label="Mes siguiente"
         >
           →
-        </button>
+        </Button>
       </div>
 
       {/* ── Aviso del generador de recurrencia ───────────────────────────── */}
@@ -1368,13 +1371,15 @@ export default function Home() {
             </div>
           )}
 
-          <button
+          <Button
             id="btn-add-account"
+            variant="link"
+            size="sm"
             onClick={() => setModal("ACCOUNT")}
-            className="mt-3 text-xs underline text-fg-muted hover:text-fg hover:text-fg-muted"
+            className="mt-3 text-xs text-muted-foreground"
           >
             + Agregar cuenta
-          </button>
+          </Button>
         </div>
       )}
 
@@ -1522,36 +1527,39 @@ export default function Home() {
 
       {/* ── Botones principales ──────────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-3">
-        <button
+        <Button
           id="btn-income"
+          variant="secondary"
           onClick={() => openMovement("INCOME")}
-          className="rounded-md bg-success hover:bg-success/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
+          className="min-w-0 whitespace-normal rounded-md bg-success hover:bg-success/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ＋ Ingreso
           <span className="block text-xs font-normal opacity-80 mt-1">
             Sueldo, ventas…
           </span>
-        </button>
-        <button
+        </Button>
+        <Button
           id="btn-expense"
+          variant="secondary"
           onClick={() => openMovement("EXPENSE")}
-          className="rounded-md bg-danger hover:bg-danger/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
+          className="min-w-0 whitespace-normal rounded-md bg-danger hover:bg-danger/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           － Gasto
           <span className="block text-xs font-normal opacity-80 mt-1">
             Comida, alquiler…
           </span>
-        </button>
-        <button
+        </Button>
+        <Button
           id="btn-transfer"
+          variant="secondary"
           onClick={() => openMovement("TRANSFER")}
-          className="rounded-md bg-transfer hover:bg-transfer/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
+          className="min-w-0 whitespace-normal rounded-md bg-transfer hover:bg-transfer/90 text-primary-fg font-bold py-5 shadow-lg active:scale-[0.98] transition"
         >
           ⇄ Transferir
           <span className="block text-xs font-normal opacity-80 mt-1">
             Entre tus cuentas
           </span>
-        </button>
+        </Button>
       </div>
 
       {/* ── Plantillas y entrada a la carga inteligente ──────────────────── */}

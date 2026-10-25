@@ -17,6 +17,9 @@ import type {
 } from "@/lib/finance";
 import { formatLiability, formatMoney, formatPercent } from "@/lib/format";
 import { CreditCard, Settings, Play } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /**
  * Pantalla de tarjetas de crédito y cuotas (Fase 5, ronda 2).
@@ -339,18 +342,16 @@ export default function CardsPage() {
             cuotas son deuda que ya nació: acá ves cuándo la vas a pagar.
           </p>
         </div>
-        <button
+        <Button
           id="cards-toggle-archived"
+          variant={includeArchived ? "default" : "outline"}
+          size="sm"
           onClick={toggleArchived}
           aria-pressed={includeArchived}
-          className={`shrink-0 rounded-md border px-3 py-2 text-sm font-medium ${
-            includeArchived
-              ? "border-transparent bg-primary text-primary-fg "
-              : "border-line-strong hover:bg-surface-3 "
-          }`}
+          className="shrink-0"
         >
           {includeArchived ? "Ocultar archivadas" : "Ver archivadas"}
-        </button>
+        </Button>
       </div>
 
       {/* ── Aviso de la última acción ────────────────────────────────────── */}
@@ -379,7 +380,7 @@ export default function CardsPage() {
       )}
 
       {loading && (
-        <p className="bg-surface-2 rounded-md px-4 py-10 text-center text-fg-muted shadow-sm">
+        <p className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-10 text-center text-fg-muted shadow-sm">
           Cargando…
         </p>
       )}
@@ -387,14 +388,14 @@ export default function CardsPage() {
       {!loading && loadError && (
         <p
           role="alert"
-          className="bg-surface-2 rounded-md px-4 py-8 text-center text-danger shadow-sm"
+          className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-8 text-center text-danger shadow-sm"
         >
           {loadError}
         </p>
       )}
 
       {!loading && !loadError && cards.length === 0 && (
-        <div className="bg-surface-2 rounded-md px-4 py-10 text-center shadow-sm">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-10 text-center shadow-sm">
           <p className="mb-1"><CreditCard className="size-8 inline-block" aria-hidden /></p>
           <p className="font-medium">No hay tarjetas de crédito cargadas</p>
           <p className="text-sm text-fg-muted mt-1">
@@ -431,7 +432,7 @@ export default function CardsPage() {
             <section
               key={card.id}
               id={`card-${card.id}`}
-              className="bg-surface-2 rounded-md shadow-sm"
+              className="rounded-lg border bg-card text-card-foreground shadow-sm shadow-sm"
             >
               {/* ── Encabezado de la tarjeta ─────────────────────────────── */}
               <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
@@ -450,14 +451,16 @@ export default function CardsPage() {
                     {closingText}
                   </p>
                 </div>
-                <button
+                <Button
                   id={`card-config-${card.id}`}
+                  variant="outline"
+                  size="sm"
                   onClick={() => setModal({ type: "config", cardId: card.id })}
                   disabled={busyId !== null}
-                  className="shrink-0 rounded-md border border-line-strong px-3 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                  className="shrink-0"
                 >
                   <Settings className="size-4" aria-hidden /> Configurar
-                </button>
+                </Button>
               </div>
 
               {/* ── Período en curso ─────────────────────────────────────── */}
@@ -483,14 +486,16 @@ export default function CardsPage() {
                       ? currentPeriodStatus(card)
                       : `${currentPeriodStatus(card)} Es una proyección: no es un documento emitido.`}
                   </p>
-                  <button
+                  <Button
                     id={`card-run-${card.id}`}
+                    variant="outline"
+                    size="sm"
                     onClick={() => runClose(card)}
                     disabled={busyId !== null}
-                    className="mt-2 rounded-md border border-line-strong px-3 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                    className="mt-2"
                   >
                     {runBusy ? "Corriendo…" : (<><Play className="size-4 inline-block align-[-2px]" aria-hidden /> Correr el cierre</>)}
-                  </button>
+                  </Button>
                 </div>
               )}
 
@@ -548,14 +553,16 @@ export default function CardsPage() {
                           </div>
 
                           {!statement.paid && payingId !== statement.id && (
-                            <button
+                            <Button
                               id={`stmt-pay-${statement.id}`}
+                              variant="default"
+                              size="sm"
                               onClick={() => openPay(statement.id)}
                               disabled={busyId !== null}
-                              className="mt-2 rounded-lg bg-success hover:bg-success/90 text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
+                              className="mt-2 bg-success hover:bg-success/90 text-primary-fg"
                             >
                               Pagar resumen
-                            </button>
+                            </Button>
                           )}
 
                           {!statement.paid && payingId === statement.id && (
@@ -575,18 +582,24 @@ export default function CardsPage() {
                                   (no archivada) para pagar el resumen.
                                 </p>
                               ) : (
-                                <select
-                                  id={`stmt-pay-from-${statement.id}`}
+                                <Select
                                   value={payFromId ?? ""}
-                                  onChange={(e) => setPayFromId(e.target.value)}
-                                  className="mt-2 w-full rounded-md border border-line-strong bg-surface-2 px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                                  onValueChange={setPayFromId}
                                 >
-                                  {payOrigins.map((account) => (
-                                    <option key={account.id} value={account.id}>
-                                      {account.name}
-                                    </option>
-                                  ))}
-                                </select>
+                                  <SelectTrigger
+                                    id={`stmt-pay-from-${statement.id}`}
+                                    className="mt-2 w-full"
+                                  >
+                                    <SelectValue placeholder="Cuenta de origen" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {payOrigins.map((account) => (
+                                      <SelectItem key={account.id} value={account.id}>
+                                        {account.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               )}
 
                               <p className="mt-1 text-xs text-success ">
@@ -597,23 +610,27 @@ export default function CardsPage() {
 
                               <div className="mt-2 flex gap-2">
                                 {payOrigins.length > 0 && (
-                                  <button
+                                  <Button
                                     id={`stmt-pay-go-${statement.id}`}
+                                    variant="default"
+                                    size="sm"
                                     onClick={() => pay(statement)}
                                     disabled={busyId !== null || !payFromId}
-                                    className="flex-1 rounded-md bg-success hover:bg-success/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
+                                    className="flex-1 bg-success hover:bg-success/90 text-primary-fg"
                                   >
                                     {payBusy ? "Pagando…" : "Confirmar pago"}
-                                  </button>
+                                  </Button>
                                 )}
-                                <button
+                                <Button
                                   id={`stmt-pay-cancel-${statement.id}`}
+                                  variant="outline"
+                                  size="sm"
                                   onClick={() => setPayingId(null)}
                                   disabled={busyId !== null}
-                                  className="flex-1 rounded-md border border-line-strong py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                                  className="flex-1"
                                 >
                                   Cancelar
-                                </button>
+                                </Button>
                               </div>
                             </div>
                           )}

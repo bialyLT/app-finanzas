@@ -32,6 +32,9 @@ import {
   toCents,
 } from "@/lib/format";
 import { TriangleAlert, Search, ChartColumn, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
 
 /**
  * Análisis del período: tarjetas, torta por categoría y evolución por día.
@@ -389,48 +392,50 @@ export default function AnalisisPage() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
       {/* ── Selector de período ──────────────────────────────────────────── */}
-      <div className="bg-surface-2 rounded-md p-4 shadow-sm flex flex-col gap-3">
-        <div className="flex gap-1 text-sm">
-          {(["week", "month", "year"] as const).map((option) => (
-            <button
-              key={option}
-              onClick={() => setMode(option)}
-              className={`px-3 py-1.5 rounded-full ${
-                mode === option
-                  ? "bg-primary text-primary-fg "
-                  : "hover:bg-surface-3 "
-              }`}
-            >
-              {MODE_LABEL[option]}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => shift(-1)}
-            className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
-            aria-label="Período anterior"
-          >
-            ←
-          </button>
-          <div className="text-center">
-            {/* `first-letter:uppercase` y NO `capitalize`: `capitalize` pondría
-                "Octubre De 2026", que en español está mal escrito. */}
-            <p className="font-bold first-letter:uppercase">{label}</p>
-            <p className="text-xs text-fg-muted">
-              {range.from} → {range.to}
-            </p>
+      <Card>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex gap-1 text-sm">
+            {(["week", "month", "year"] as const).map((option) => (
+              <Button
+                key={option}
+                variant={mode === option ? "default" : "ghost"}
+                size="sm"
+                className="rounded-full"
+                onClick={() => setMode(option)}
+              >
+                {MODE_LABEL[option]}
+              </Button>
+            ))}
           </div>
-          <button
-            onClick={() => shift(1)}
-            className="px-3 py-1.5 rounded-full hover:bg-surface-3 text-lg"
-            aria-label="Período siguiente"
-          >
-            →
-          </button>
-        </div>
-      </div>
+
+          <div className="flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => shift(-1)}
+              aria-label="Período anterior"
+            >
+              ←
+            </Button>
+            <div className="text-center">
+              {/* `first-letter:uppercase` y NO `capitalize`: `capitalize` pondría
+                  "Octubre De 2026", que en español está mal escrito. */}
+              <p className="font-bold first-letter:uppercase">{label}</p>
+              <p className="text-xs text-fg-muted">
+                {range.from} → {range.to}
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => shift(1)}
+              aria-label="Período siguiente"
+            >
+              →
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* ── Filtros ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-2">
@@ -438,7 +443,7 @@ export default function AnalisisPage() {
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
           aria-label="Filtrar por categoría"
-          className="flex-1 rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
+          className="flex-1 rounded-md border border-border bg-secondary px-3 py-2 text-sm outline-none [&>option]:bg-card [&>option]:text-fg [&>option]:bg-secondary "
         >
           <option value="">Todas las categorías</option>
           {categories.map((category) => (
@@ -455,26 +460,28 @@ export default function AnalisisPage() {
           anuncian—. El `id` además es el ancla estable de los tests
           (`flows/06` lo toca por id, no por texto).
         */}
-        <input
+        <Input
           id="analisis-search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Buscar…"
           aria-label="Buscar movimientos"
-          className="flex-1 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
+          className="flex-1 border-border bg-transparent"
         />
 
         {hasFilters && (
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
               setCategoryId("");
               setSearch("");
             }}
-            className="text-sm px-3 py-2 rounded-md hover:bg-surface-3 text-fg-muted"
+            className="text-sm text-muted-foreground"
           >
             Limpiar
             <X className="size-4 inline-block align-[-2px] ml-1" aria-hidden />
-          </button>
+          </Button>
         )}
       </div>
 
@@ -486,7 +493,7 @@ export default function AnalisisPage() {
           la culpa al período. Un error de conexión tiene que parecer un error
           de conexión. */}
       {!loading && loadError && (
-        <div className="bg-surface-2 rounded-md p-8 shadow-sm text-center text-danger ">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8 text-center text-danger ">
           <p className="mb-2"><TriangleAlert className="size-8 inline-block" aria-hidden /></p>
           <p role="alert">{loadError}</p>
         </div>
@@ -501,7 +508,7 @@ export default function AnalisisPage() {
               deja margen). Antes entraban en 640 px y el monto se salía de la
               tarjeta. A 384 px entran dos columnas; por debajo, una. */}
           <div className="grid grid-cols-1 min-[384px]:grid-cols-2 min-[940px]:grid-cols-4 gap-3">
-            <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+            <div className="@container min-w-0 rounded-lg border bg-card text-card-foreground shadow-sm p-4">
               <p className="text-xs uppercase text-fg-muted">Ingresos</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-success"
@@ -525,7 +532,7 @@ export default function AnalisisPage() {
               )}
             </div>
 
-            <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+            <div className="@container min-w-0 rounded-lg border bg-card text-card-foreground shadow-sm p-4">
               <p className="text-xs uppercase text-fg-muted">Gastos</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-danger"
@@ -566,7 +573,7 @@ export default function AnalisisPage() {
 
             {/* Las transferencias se muestran aparte, y eso es informativo: deja
                 claro que ese dinero se movió sin ser ganancia ni pérdida. */}
-            <div className="@container min-w-0 bg-surface-2 rounded-md p-4">
+            <div className="@container min-w-0 rounded-lg border bg-card text-card-foreground shadow-sm p-4">
               <p className="text-xs uppercase text-fg-muted">Transferencias</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-transfer"
@@ -583,7 +590,7 @@ export default function AnalisisPage() {
           </div>
 
           {/* ── Evolución ───────────────────────────────────────────────── */}
-          <div className="bg-surface-2 rounded-md p-4 shadow-sm">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4">
             <h2 className="font-bold mb-3">Evolución</h2>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -612,7 +619,7 @@ export default function AnalisisPage() {
 
           {/* ── Gastos por categoría ─────────────────────────────────────── */}
           {stats.pie.length > 0 ? (
-            <div className="bg-surface-2 rounded-md p-4 shadow-sm">
+            <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4">
               <h2 className="font-bold mb-3">En qué se fue</h2>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
@@ -678,7 +685,7 @@ export default function AnalisisPage() {
             // filtros. Decir "No hay gastos en este período" sería culpar al
             // período —y mandar a cargar un gasto que existe—. Un estado vacío
             // honesto habla de los filtros y ofrece la salida.
-            <div className="bg-surface-2 rounded-md p-8 shadow-sm text-center text-fg-muted">
+            <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8 text-center text-fg-muted">
               <p className="mb-2"><Search className="size-8 inline-block" aria-hidden /></p>
               <p className="font-medium">No hay gastos con esos filtros</p>
               <button
@@ -692,7 +699,7 @@ export default function AnalisisPage() {
               </button>
             </div>
           ) : (
-            <div className="bg-surface-2 rounded-md p-8 shadow-sm text-center text-fg-muted">
+            <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8 text-center text-fg-muted">
               <p className="mb-2"><ChartColumn className="size-8 inline-block" aria-hidden /></p>
               <p className="font-medium">No hay gastos en este período</p>
               <p className="text-sm mt-1">
@@ -709,7 +716,7 @@ export default function AnalisisPage() {
             el selector de categorías): un selector no se filtra a sí mismo.
           */}
           {burnCandidates.length > 0 && (
-            <div className="bg-surface-2 rounded-md p-4 shadow-sm flex flex-col gap-3">
+            <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4 flex flex-col gap-3">
               <div>
                 <h2 className="font-bold">Burn mensualizado</h2>
                 <p className="text-sm text-fg-muted">
