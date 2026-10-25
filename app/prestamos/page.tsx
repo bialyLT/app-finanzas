@@ -35,42 +35,42 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 /**
  * Pantalla de préstamos (Fase 4, ronda 2): lo que debés y lo que te deben.
  *
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * ─────────────────────────────────────────────────────────────────────────────
  * UNA SOLA FOTO POR PANTALLA
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
- * Todo sale de `GET /api/loans` (mÃ¡s `/api/accounts` para los selectores de
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Todo sale de `GET /api/loans` (más `/api/accounts` para los selectores de
  * cuenta). La pantalla no recalcula NADA del contrato: cuota, capital pagado,
- * progreso y compromisos ya vienen calculados del servidor â€” la misma fuente
+ * progreso y compromisos ya vienen calculados del servidor — la misma fuente
  * que usó el smoke de la ronda 1. El cliente sólo suma en centavos enteros
  * (`sumAmounts`) para los totales de sección y de compromisos.
  *
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ * ─────────────────────────────────────────────────────────────────────────────
  * LA PLATA SE MUEVE EN TRES LUGARES (y los tres son transferencias guiadas)
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
- * Â· **Desembolso**: cuando la tarjeta avisa que falta (el préstamo no tiene la
+ * ─────────────────────────────────────────────────────────────────────────────
+ * · **Desembolso**: cuando la tarjeta avisa que falta (el préstamo no tiene la
  *   transferencia real), el bloque `loan-disburse-*` la registra con el monto
  *   del contrato ya cargado (`principal`). Sin esto la deuda "vive de la nada"
  *   (ver `disbursed` en `lib/finance.ts`).
- * Â· **Pago de cuota**: el desglose se muestra TAL CUAL llega en
+ * · **Pago de cuota**: el desglose se muestra TAL CUAL llega en
  *   `nextInstallment` (interés + capital): el cliente no divide nada, y manda
  *   `installmentNumber` explícito para que el servidor no adivine. El espacio
  *   "capital extra" no reimplementa la cancelación: es un dato opcional que la
  *   ruta suma al capital.
- * Â· **Cancelación**: dos pasos EN LÃNEA (nunca `window.confirm`), con el monto
- *   = capital pendiente calculado en centavos (`principal âˆ’ capitalPaid`).
+ * · **Cancelación**: dos pasos EN LÍNEA (nunca `window.confirm`), con el monto
+ *   = capital pendiente calculado en centavos (`principal − capitalPaid`).
  *
  * `created: false` NUNCA es un error: es la respuesta idempotente de un doble
  * toque, y la pantalla lo cuenta como "ya estaba al día".
  *
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
- * QUÃ‰ NO HACE ESTA PANTALLA (diferidos explícitos de la ronda)
- * â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
- * Â· No da de alta un préstamo con cronograma IMPORTADO: la ronda cubre el alta
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUÉ NO HACE ESTA PANTALLA (diferidos explícitos de la ronda)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * · No da de alta un préstamo con cronograma IMPORTADO: la ronda cubre el alta
  *   guiada que genera el cronograma (el modelo y el `LoanForm` ya lo soportan
  *   como sistema, pero la ruta de alta guiada no lo expone).
- * Â· No borra ni archiva desde acÃ¡: archivar/borrar una cuenta sigue viviendo
+ * · No borra ni archiva desde acá: archivar/borrar una cuenta sigue viviendo
  *   en el panel, igual que el resto de las cuentas.
- * Â· No adelanta cuotas futuras sin la persona: el botón paga la cuota que la
+ * · No adelanta cuotas futuras sin la persona: el botón paga la cuota que la
  *   ruta acepta (`nextInstallment`), que es la próxima impaga.
  */
 
@@ -155,7 +155,7 @@ export default function LoansPage() {
       setAccounts(accountsData.accounts);
     } catch {
       setLoadError(
-        "No se pudieron cargar los préstamos. RevisÃ¡ que la base esté levantada y recargÃ¡.",
+        "No se pudieron cargar los préstamos. Revisá que la base esté levantada y recargá.",
       );
     } finally {
       setLoading(false);
@@ -227,7 +227,7 @@ export default function LoansPage() {
     receivables.map((loan) => loan.receivable ?? "0"),
   );
 
-  // â”€â”€ Compromisos próximos: sólo lo que YO tengo que pagar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Compromisos próximos: sólo lo que YO tengo que pagar ───────────────────
   // Un préstamo dado (RECEIVABLE) no compromete plata mía: no entra en la
   // suma. Los meses se agrupan por período y se suman en centavos.
   const debtCommitments = loanDebts
@@ -253,7 +253,7 @@ export default function LoansPage() {
     return [...byMonth.entries()];
   })();
 
-  // â”€â”€ Pagar UNA cuota (o extra de capital) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Pagar UNA cuota (o extra de capital) ───────────────────────────────────
   async function pay(loan: LoanViewDTO) {
     const installment = loan.nextInstallment;
     if (!installment || busyId) return;
@@ -267,7 +267,7 @@ export default function LoansPage() {
     }
     const extraRaw = blockExtra.trim();
     if (extraRaw !== "" && formatAmountInput(blockExtra) === null) {
-      setBlockError("El capital extra tiene que ser un monto vÃ¡lido.");
+      setBlockError("El capital extra tiene que ser un monto válido.");
       return;
     }
 
@@ -301,7 +301,7 @@ export default function LoansPage() {
       const result = data as LoanPayResponseDTO;
       if (!result.created) {
         // Idempotente: la cuota ya estaba cubierta. Se cuenta, no se grita.
-        showFlash("El préstamo ya estaba al día: no se duplicó ningÃºn pago.");
+        showFlash("El préstamo ya estaba al día: no se duplicó ningún pago.");
       } else {
         const parts: string[] = [];
         if (result.principalPaid !== null) {
@@ -329,7 +329,7 @@ export default function LoansPage() {
     }
   }
 
-  // â”€â”€ Cancelar el préstamo entero (sin interés de lo que falta) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Cancelar el préstamo entero (sin interés de lo que falta) ─────────────
   async function cancelLoan(loan: LoanViewDTO) {
     if (busyId) return;
     if (!cashId) {
@@ -389,7 +389,7 @@ export default function LoansPage() {
     }
   }
 
-  // â”€â”€ Registrar el desembolso que faltaba â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Registrar el desembolso que faltaba ────────────────────────────────────
   async function disburse(loan: LoanViewDTO) {
     if (busyId) return;
     if (!cashId) {
@@ -402,7 +402,7 @@ export default function LoansPage() {
     }
     // El monto es el PRINCIPAL del contrato, no la deuda viva: un préstamo
     // recién creado vale 0 (la plata todavía no se movió), y usar la deuda
-    // acÃ¡ daría un desembolso de $ 0. Mismo criterio que el paso 2 del alta.
+    // acá daría un desembolso de $ 0. Mismo criterio que el paso 2 del alta.
     const amount = loan.principal;
     if (amount === null || toCents(amount) <= 0) {
       setBlockError("El préstamo no tiene un monto pendiente para desembolsar.");
@@ -458,7 +458,7 @@ export default function LoansPage() {
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-5">
-      {/* â”€â”€ Título, alta y archivadas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Título, alta y archivadas ────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-extrabold flex items-center gap-2"><Handshake className="size-6" aria-hidden />Préstamos</h1>
@@ -478,7 +478,7 @@ export default function LoansPage() {
             disabled={busyId !== null}
             className="rounded-lg bg-primary text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
           >
-            ï¼‹ Nuevo préstamo
+            ＋ Nuevo préstamo
           </button>
           <button
             id="loans-toggle-archived"
@@ -495,7 +495,7 @@ export default function LoansPage() {
         </div>
       </div>
 
-      {/* â”€â”€ Aviso de la Ãºltima acción â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Aviso de la última acción ────────────────────────────────────── */}
       {flash && (
         <p
           id="loans-flash"
@@ -512,7 +512,7 @@ export default function LoansPage() {
 
       {loading && (
         <p className="bg-surface-2 rounded-md px-4 py-10 text-center text-fg-muted shadow-sm">
-          Cargandoâ€¦
+          Cargando…
         </p>
       )}
 
@@ -527,7 +527,7 @@ export default function LoansPage() {
 
       {!loading && !loadError && (
         <>
-          {/* â”€â”€ Compromisos próximos (sólo lo que debo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Compromisos próximos (sólo lo que debo) ──────────────────── */}
           {loanDebts.length > 0 && (
             <section
               id="loans-commitments"
@@ -579,7 +579,7 @@ export default function LoansPage() {
             </section>
           )}
 
-          {/* â”€â”€ Debo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Debo ─────────────────────────────────────────────────────── */}
           <section className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-2 flex-wrap">
               <h2 className="text-lg font-bold flex items-center gap-2"><ArrowUpRight className="size-5" aria-hidden />Debo</h2>
@@ -600,7 +600,7 @@ export default function LoansPage() {
             {loanDebts.map(renderLoan)}
           </section>
 
-          {/* â”€â”€ Me deben â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+          {/* ── Me deben ─────────────────────────────────────────────────── */}
           <section className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between gap-2 flex-wrap">
               <h2 className="text-lg font-bold flex items-center gap-2"><ArrowDownLeft className="size-5" aria-hidden />Me deben</h2>
@@ -625,11 +625,11 @@ export default function LoansPage() {
 
       <p className="text-center text-xs text-fg-subtle pb-2">
         <Link href="/" className="underline inline-flex items-center touch:min-h-11">
-          â† Volver al panel
+          ← Volver al panel
         </Link>
       </p>
 
-      {/* â”€â”€ Alta guiada â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+      {/* ── Alta guiada ──────────────────────────────────────────────────── */}
       {formOpen && (
         <LoanForm
           cashAccounts={payOrigins}
@@ -674,7 +674,7 @@ export default function LoansPage() {
         ? ""
         : `${progressVerb} ${plan.paidCount} de ${plan.installmentCount}` +
           (loan.principal !== null && loan.capitalPaid !== null
-            ? ` Â· capital ${formatMoney(loan.capitalPaid)} de ${formatMoney(loan.principal)}`
+            ? ` · capital ${formatMoney(loan.capitalPaid)} de ${formatMoney(loan.principal)}`
             : "") +
           (loan.progressPercent !== null
             ? ` (${formatPercent(loan.progressPercent)})`
@@ -687,7 +687,7 @@ export default function LoansPage() {
           ? "Solo interés: el interés del mes va como gasto y el capital se cancela aparte."
           : next === null
             ? "No queda ninguna cuota por pagar."
-            : `Próxima cuota ${next.number} de ${plan.installmentCount}: ${formatMoney(next.payment)} Â· vence el ${formatCalendar(next.dueDate)}${
+            : `Próxima cuota ${next.number} de ${plan.installmentCount}: ${formatMoney(next.payment)} · vence el ${formatCalendar(next.dueDate)}${
                 next.dueDate < today ? " (ya venció)" : ""
               }`;
 
@@ -697,7 +697,7 @@ export default function LoansPage() {
         id={`loan-${loan.id}`}
         className="bg-surface-2 rounded-md shadow-sm"
       >
-        {/* â”€â”€ Encabezado de la tarjeta â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Encabezado de la tarjeta ───────────────────────────────────── */}
         <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
             <p className="text-lg font-bold truncate">
@@ -751,7 +751,7 @@ export default function LoansPage() {
           </p>
         </div>
 
-        {/* â”€â”€ El desembolso que falta (aviso + alta en un toque) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── El desembolso que falta (aviso + alta en un toque) ─────────── */}
         {!loan.disbursed && (
           <div
             id={`loan-warning-${loan.id}`}
@@ -824,8 +824,8 @@ export default function LoansPage() {
 
                 {payOrigins.length === 0 && (
                   <p>
-                    NecesitÃ¡s una cuenta de banco o efectivo (no archivada):
-                    creÃ¡ una para poder registrar el desembolso.
+                    Necesitás una cuenta de banco o efectivo (no archivada):
+                    creá una para poder registrar el desembolso.
                   </p>
                 )}
 
@@ -847,7 +847,7 @@ export default function LoansPage() {
                     className="flex-1 rounded-md bg-success hover:bg-success/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
                   >
                     {busyId === `disburse-${loan.id}`
-                      ? "Registrandoâ€¦"
+                      ? "Registrando…"
                       : loan.principal !== null
                         ? `Sí, registrar el desembolso de ${formatMoney(loan.principal)}`
                         : "Sí, registrar el desembolso"}
@@ -866,7 +866,7 @@ export default function LoansPage() {
           </div>
         )}
 
-        {/* â”€â”€ Acciones: pagar la próxima cuota / cancelar todo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Acciones: pagar la próxima cuota / cancelar todo ───────────── */}
         {!isOpen && (next !== null || canCancel) && (
           <div className="px-4 mt-3 flex flex-wrap gap-2">
             {next !== null && (
@@ -876,7 +876,7 @@ export default function LoansPage() {
                 disabled={busyId !== null}
                 className="rounded-lg bg-transfer hover:bg-transfer/90 text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
               >
-                {verb} cuota {next.number} Â· {formatMoney(next.payment)}
+                {verb} cuota {next.number} · {formatMoney(next.payment)}
               </button>
             )}
             {canCancel && (
@@ -892,7 +892,7 @@ export default function LoansPage() {
           </div>
         )}
 
-        {/* â”€â”€ Bloque de pago de cuota â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Bloque de pago de cuota ────────────────────────────────────── */}
         {openPay && next !== null && plan !== null && (
           <div
             id={`loan-pay-confirm-${loan.id}`}
@@ -902,7 +902,7 @@ export default function LoansPage() {
               Cuota {next.number} de {plan.installmentCount}: interés{" "}
               {formatMoney(next.interest)} + capital{" "}
               {formatMoney(next.principal)} ={" "}
-              <b>{formatMoney(next.payment)}</b> Â· vence el{" "}
+              <b>{formatMoney(next.payment)}</b> · vence el{" "}
               {formatCalendar(next.dueDate)}.
             </p>
             <p className="mt-1 text-xs text-transfer ">
@@ -962,8 +962,8 @@ export default function LoansPage() {
                 className="block text-xs font-medium text-transfer "
               >
                 {loan.kind === "LOAN"
-                  ? "Â¿De qué cuenta sale el pago?"
-                  : "Â¿A qué cuenta entra el cobro?"}
+                  ? "¿De qué cuenta sale el pago?"
+                  : "¿A qué cuenta entra el cobro?"}
               </label>
               <Select
                 value={cashId ?? ""}
@@ -985,7 +985,7 @@ export default function LoansPage() {
               </Select>
               {payOrigins.length === 0 && (
                 <p className="mt-1 text-sm text-warning ">
-                  NecesitÃ¡s una cuenta de banco o efectivo (no archivada) para
+                  Necesitás una cuenta de banco o efectivo (no archivada) para
                   registrar el pago.
                 </p>
               )}
@@ -1017,7 +1017,7 @@ export default function LoansPage() {
                   className="flex-1 rounded-md bg-transfer hover:bg-transfer/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
                 >
                   {busyId === `pay-${loan.id}`
-                    ? "Registrandoâ€¦"
+                    ? "Registrando…"
                     : loan.kind === "LOAN"
                       ? "Confirmar pago"
                       : "Confirmar cobro"}
@@ -1035,7 +1035,7 @@ export default function LoansPage() {
           </div>
         )}
 
-        {/* â”€â”€ Bloque de cancelación (dos pasos, sin diÃ¡logo nativo) â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Bloque de cancelación (dos pasos, sin diálogo nativo) ──────── */}
         {openCancel && plan !== null && canCancel && (
           <div
             id={`loan-cancel-confirm-${loan.id}`}
@@ -1074,7 +1074,7 @@ export default function LoansPage() {
                   htmlFor={`loan-cancel-account-${loan.id}`}
                   className="block text-xs font-medium text-danger "
                 >
-                  {loan.kind === "LOAN" ? "Â¿De qué cuenta sale?" : "Â¿A qué cuenta entra?"}
+                  {loan.kind === "LOAN" ? "¿De qué cuenta sale?" : "¿A qué cuenta entra?"}
                 </label>
                 <Select
                   value={cashId ?? ""}
@@ -1099,7 +1099,7 @@ export default function LoansPage() {
 
             {payOrigins.length === 0 && (
               <p className="mt-1 text-sm text-warning ">
-                NecesitÃ¡s una cuenta de banco o efectivo (no archivada).
+                Necesitás una cuenta de banco o efectivo (no archivada).
               </p>
             )}
 
@@ -1121,7 +1121,7 @@ export default function LoansPage() {
                 className="flex-1 rounded-md bg-danger hover:bg-danger/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
               >
                 {busyId === `cancel-${loan.id}`
-                  ? "Cancelandoâ€¦"
+                  ? "Cancelando…"
                   : loan.kind === "LOAN"
                     ? "Sí, cancelar el préstamo"
                     : "Sí, cobrar todo"}
@@ -1138,7 +1138,7 @@ export default function LoansPage() {
           </div>
         )}
 
-        {/* â”€â”€ Cronograma completo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Cronograma completo ────────────────────────────────────────── */}
         {plan !== null && (
           <details
             id={`loan-schedule-${loan.id}`}
@@ -1160,11 +1160,11 @@ export default function LoansPage() {
                     className="flex items-center justify-between gap-2 text-sm border-b border-line last:border-0 pb-1.5"
                   >
                     <span className="min-w-0">
-                      <b>Cuota {row.number}</b> Â· {formatMoney(row.payment)} Â·
+                      <b>Cuota {row.number}</b> · {formatMoney(row.payment)} ·
                       vence el {formatCalendar(row.dueDate)}
                       <span className="text-xs text-fg-muted">
                         {" "}
-                        Â· interés {formatMoney(row.interest)} + capital{" "}
+                        · interés {formatMoney(row.interest)} + capital{" "}
                         {formatMoney(row.principal)}
                       </span>
                     </span>
