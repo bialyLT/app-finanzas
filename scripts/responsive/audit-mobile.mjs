@@ -230,6 +230,10 @@ const MODALS = [
     // tocarlo, el panel existe pero está oculto (`hidden`): que aparezca de
     // verdad es lo que se verifica.
     //
+    // El menú del teléfono es un `Sheet` (Radix Dialog, side=left): al tocar
+    // `#nav-toggle` se ve el panel `#nav-sheet` (`role=dialog`) con los mismos
+    // destinos que la fila de escritorio. Se mide el panel abierto.
+    //
     // OJO: el botón del menú (`#nav-toggle`) es `md:hidden` — desde 768 px
     // la navegación es una fila y el botón no existe. El caso NO aplica en
     // pantalla ancha (y en landscape de teléfono, con 844 px, tampoco): por
@@ -237,12 +241,11 @@ const MODALS = [
     name: "nav-abierto",
     path: "/",
     trigger: "#nav-toggle",
-    scope: "#nav-destinos",
+    scope: "#nav-sheet",
     aplicaHasta: 768,
     verify:
-      "!!document.querySelector('#nav-destinos') " +
-      "&& document.querySelector('#nav-destinos').getBoundingClientRect().height > 0 " +
-      "&& document.querySelector('#nav-toggle').getAttribute('aria-expanded') === 'true'",
+      "!!document.querySelector('#nav-sheet') " +
+      "&& document.querySelector('#nav-sheet').getBoundingClientRect().width > 0",
   },
 ];
 

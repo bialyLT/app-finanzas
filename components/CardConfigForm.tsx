@@ -5,6 +5,9 @@ import { cardDaysError } from "@/lib/card-form";
 import type { CardViewDTO } from "@/lib/finance";
 import { formatAmountInput, formatMoney } from "@/lib/format";
 import { Settings } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface Props {
   card: CardViewDTO;
@@ -128,14 +131,16 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold flex items-center gap-2"><Settings className="size-5" aria-hidden />{card.name}</h2>
-          <button
+          <Button
             id="cardconf-close"
+            variant="ghost"
+            size="icon"
             onClick={onClose}
-            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2 h-auto w-auto"
             aria-label="Cerrar"
           >
             ×
-          </button>
+          </Button>
         </div>
         </div>
 
@@ -148,10 +153,10 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="cardconf-closing" className="text-sm font-medium">
+              <Label htmlFor="cardconf-closing" className="text-sm font-medium">
                 Día de cierre
-              </label>
-              <input
+              </Label>
+              <Input
                 id="cardconf-closing"
                 type="text"
                 inputMode="numeric"
@@ -160,14 +165,14 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 value={closingDay}
                 onChange={(e) => setClosingDay(e.target.value)}
                 placeholder="15"
-                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
               />
             </div>
             <div>
-              <label htmlFor="cardconf-due" className="text-sm font-medium">
+              <Label htmlFor="cardconf-due" className="text-sm font-medium">
                 Día de vencimiento
-              </label>
-              <input
+              </Label>
+              <Input
                 id="cardconf-due"
                 type="text"
                 inputMode="numeric"
@@ -175,17 +180,17 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 value={dueDay}
                 onChange={(e) => setDueDay(e.target.value)}
                 placeholder="5"
-                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
               />
             </div>
           </div>
 
           <div>
-            <label htmlFor="cardconf-limit" className="text-sm font-medium">
+            <Label htmlFor="cardconf-limit" className="text-sm font-medium">
               Límite de la tarjeta{" "}
               <span className="font-normal text-fg-muted">(opcional)</span>
-            </label>
-            <input
+            </Label>
+            <Input
               id="cardconf-limit"
               type="text"
               inputMode="decimal"
@@ -193,7 +198,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
               value={creditLimit}
               onChange={(e) => setCreditLimit(e.target.value)}
               placeholder="500.000"
-              className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+              className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
             />
             <p className="mt-1 text-xs text-fg-muted">
               {limitPreview ? (
@@ -228,23 +233,24 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
             )}
 
             <div className="flex gap-3">
-              <button
+              <Button
                 id="cardconf-cancel"
-                type="button"
+                variant="outline"
                 onClick={onClose}
-                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
+                className="flex-1 py-3"
               >
                 Cancelar
-              </button>
-              <button
+              </Button>
+              <Button
                 id="cardconf-save"
                 type="submit"
                 form="cardconf-form"
+                variant="secondary"
                 disabled={saving}
-                className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
+                className="flex-1 py-3 bg-transfer hover:bg-transfer/90 text-primary-fg"
               >
                 {saving ? "Guardando…" : "Guardar"}
-              </button>
+              </Button>
             </div>
           </div>
       </div>

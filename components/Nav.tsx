@@ -5,6 +5,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import LogoutButton from "./LogoutButton";
 import { RefreshCw, CreditCard, Handshake, ChartColumn, Menu, X, type LucideIcon } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 
 /**
  * Destinos de la navegación.
@@ -71,42 +78,66 @@ export default function Nav() {
 
   return (
     <>
-      <button
-        id="nav-toggle"
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-controls="nav-destinos"
-        className="md:hidden inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line-strong px-4 py-2 text-sm font-medium hover:bg-surface-3 "
+      <Sheet
+        open={open}
+        onOpenChange={(next) => setOpen(next)}
       >
-        {open ? (
-          <>
-            <X className="size-4" aria-hidden />
-            Cerrar
-          </>
-        ) : (
-          <>
+        <SheetTrigger asChild>
+          <button
+            id="nav-toggle"
+            type="button"
+            aria-controls="nav-destinos"
+            className="md:hidden inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line-strong px-4 py-2 text-sm font-medium hover:bg-surface-3 "
+          >
             <Menu className="size-4" aria-hidden />
             Menú
-          </>
-        )}
-      </button>
+          </button>
+        </SheetTrigger>
 
-      {/* Los destinos. En pantalla ancha: una fila a la derecha de la marca
-          (y si no entran, envuelven). En teléfono: ocultos hasta que se
-          abre el menú, y entonces un panel de dos columnas debajo de la
-          marca. */}
+        <SheetContent id="nav-sheet" side="left" showCloseButton={false} className="w-full sm:w-80">
+          <SheetHeader>
+            <SheetTitle>Menú</SheetTitle>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-4 pb-4">
+            <div className="grid grid-cols-2 gap-2">
+              {LINKS.map((link) => (
+                <Link
+                  key={link.href}
+                  id={link.id}
+                  href={link.href}
+                  className={
+                    link.highlighted
+                      ? "inline-flex items-center justify-center gap-2 touch:min-h-11 px-4 py-2 rounded-full text-sm font-medium bg-primary text-primary-fg hover:opacity-90"
+                      : "inline-flex items-center justify-center gap-2 touch:min-h-11 px-4 py-2 rounded-full text-sm font-medium hover:bg-surface-3 "
+                  }
+                >
+                  {link.icon ? (
+                    <>
+                      <link.icon className="size-4" aria-hidden />
+                      <span>{link.label}</span>
+                    </>
+                  ) : (
+                    link.label
+                  )}
+                </Link>
+              ))}
+              <LogoutButton />
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Fila de escritorio (md+). El panel móvil vive dentro de `Sheet`; la
+          fila siempre existe y se oculta en el teléfono. Los destinos se
+          repiten por intención: cada presentación es una sola lista. */}
       <div
         id="nav-destinos"
-        className={
-          open
-            ? "w-full mt-2 grid grid-cols-2 gap-2 md:w-auto md:mt-0 md:flex md:flex-wrap md:items-center md:justify-end md:gap-2"
-            : "hidden md:flex md:flex-wrap md:items-center md:justify-end md:gap-2"
-        }
+        className="hidden md:flex md:flex-wrap md:items-center md:justify-end md:gap-2"
       >
         {LINKS.map((link) => (
           <Link
-            key={link.href}
+            key={`desktop-${link.href}`}
             id={link.id}
             href={link.href}
             className={

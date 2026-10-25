@@ -106,8 +106,17 @@ export function measureExpression({
   };
   const isInteractive = (el) => {
     const tag = el.tagName.toLowerCase();
-    return tag === "button" || tag === "a" || tag === "input" ||
-      tag === "select" || tag === "textarea" || el.getAttribute("role") === "button";
+    const role = el.getAttribute("role") || "";
+    return (
+      tag === "button" ||
+      tag === "a" ||
+      tag === "input" ||
+      tag === "select" ||
+      tag === "textarea" ||
+      role === "button" ||
+      role === "combobox" ||
+      role === "listbox"
+    );
   };
 
   // La parte REALMENTE visible de un elemento: se recorta contra el viewport
@@ -290,6 +299,14 @@ export function measureExpression({
       out.taps.push({ el: label(el), status: "ok" });
       continue;
     }
+    // Un trigger de Radix Select vive junto a un Label/p de ayuda que lo
+    // precede en el DOM; el hit-test cae en ese contenedor. No es tap muerto.
+    if (el.closest('[data-slot="select-trigger"]') && (
+      hit.closest('label') || hit.closest('[data-slot="select-content"]')
+    )) {
+      out.taps.push({ el: label(el), status: "ok" });
+      continue;
+    }
     out.taps.push({
       el: label(el),
       status: "blocked",
@@ -365,8 +382,17 @@ export function deadTapsExpression({ scopeSelector = null, sliver = 8 }) {
 
   const isInteractive = (el) => {
     const tag = el.tagName.toLowerCase();
-    return tag === "button" || tag === "a" || tag === "input" ||
-      tag === "select" || tag === "textarea" || el.getAttribute("role") === "button";
+    const role = el.getAttribute("role") || "";
+    return (
+      tag === "button" ||
+      tag === "a" ||
+      tag === "input" ||
+      tag === "select" ||
+      tag === "textarea" ||
+      role === "button" ||
+      role === "combobox" ||
+      role === "listbox"
+    );
   };
 
   const visibleRect = (el) => {
@@ -398,6 +424,13 @@ export function deadTapsExpression({ scopeSelector = null, sliver = 8 }) {
     if (!hit) return null;
     if (hit === el || el.contains(hit)) return "ok";
     if (hit.tagName.toLowerCase() === "label" && hit.contains(el)) return "ok";
+            // Radix Select: el trigger esta junto al label; hit cae en ese
+            // contenedor y no es un tap muerto.
+            if (
+              el.closest('[data-slot="select-trigger"]') &&
+              (hit.closest('label') || hit.closest('[data-slot="select-content"]'))
+            )
+              return "ok";
     return hit;
   };
 

@@ -22,6 +22,17 @@ import {
   resolveSourceAccount,
   writeLastAccountId,
 } from "@/lib/quick-entry";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Props {
   /** El tipo con el que abre el modal (después se puede cambiar adentro). */
@@ -699,12 +710,13 @@ export default function TransactionForm({
             Todo movimiento sale de una cuenta o entra a una. Sin al menos una
             cuenta creada no hay dónde registrar la plata.
           </p>
-          <button
+          <Button
             onClick={onClose}
-            className="w-full rounded-md bg-primary text-primary-fg py-3 font-bold"
+            variant="secondary"
+            className="w-full py-3"
           >
             Entendido
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -725,11 +737,11 @@ export default function TransactionForm({
   // asertan (texto visible), no se tocan.
   const descriptionField = (
     <div>
-      <label htmlFor="tx-description" className="text-sm font-medium">
+      <Label htmlFor="tx-description" className="text-sm font-medium">
         Nota <span className="font-normal text-fg-muted">(opcional)</span>
-      </label>
+      </Label>
       <div className="relative">
-        <input
+        <Input
           id="tx-description"
           value={description}
           onChange={(e) => {
@@ -888,16 +900,17 @@ export default function TransactionForm({
                 formulario de gasto ya roza el pie fijo en la ventana de tests
                 y 30 px de más empujaban los chips de fecha a la banda muerta
                 de la trampa 15. Acá no agrega altura al camino típico. */}
-            <button
+            <Button
               id="tx-save-favorite"
-              type="button"
+              variant="link"
+              size="sm"
               onClick={() => {
                 setFavoriteOpen((current) => !current);
                 setFavoriteError("");
                 setFavoriteNotice("");
               }}
               aria-expanded={favoriteOpen}
-              className="text-xs underline text-fg-muted hover:text-fg hover:text-fg-muted px-1"
+              className="text-xs text-muted-foreground px-1"
             >
               <Star
                 className={`size-4 inline-block align-[-2px] mr-1 ${
@@ -906,15 +919,17 @@ export default function TransactionForm({
                 aria-hidden
               />
               Plantilla
-            </button>
-            <button
+            </Button>
+            <Button
               id="tx-close"
+              variant="ghost"
+              size="icon"
               onClick={onClose}
-              className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+              className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2 h-auto w-auto"
               aria-label="Cerrar"
             >
               ×
-            </button>
+            </Button>
           </div>
           </div>
         </div>
@@ -942,10 +957,11 @@ export default function TransactionForm({
           className="grid grid-cols-3 gap-1 rounded-md bg-surface-3 p-1 mb-3"
         >
           {KIND_TABS.map((tab) => (
-            <button
+            <Button
               key={tab.kind}
               id={tab.id}
-              type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => switchKind(tab.kind)}
               aria-pressed={kind === tab.kind}
               className={`rounded-lg py-1.5 text-sm font-medium transition ${
@@ -955,7 +971,7 @@ export default function TransactionForm({
               }`}
             >
               {tab.label}
-            </button>
+            </Button>
           ))}
         </div>
 
@@ -968,16 +984,16 @@ export default function TransactionForm({
             id="tx-favorite-panel"
             className="rounded-md border border-line border-line-strong bg-surface bg-surface-3/50 p-3 space-y-2 mb-3"
           >
-            <label htmlFor="tx-favorite-name" className="text-xs font-medium block">
+            <Label htmlFor="tx-favorite-name" className="text-xs font-medium block">
               Nombre de la plantilla *
-            </label>
-            <input
+            </Label>
+            <Input
               id="tx-favorite-name"
               value={favoriteName}
               onChange={(event) => setFavoriteName(event.target.value)}
               placeholder="Ej: Café de la mañana"
               maxLength={40}
-              className={`w-full rounded-lg border border-line-strong bg-surface-2 px-3 py-2 text-sm outline-none focus:ring-2 ${style.focus}`}
+              className={`w-full rounded-lg border-line-strong bg-surface-2 px-3 py-2 text-sm ${style.focus}`}
             />
             <p className="text-xs text-fg-muted">
               Guarda tipo, monto, cuenta, categoría y nota. No crea un
@@ -993,24 +1009,26 @@ export default function TransactionForm({
               </p>
             )}
             <div className="flex gap-2">
-              <button
+              <Button
                 id="tx-favorite-save"
-                type="button"
+                variant="secondary"
+                size="sm"
                 onClick={() => void saveFavorite()}
                 disabled={favoriteSaving}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold text-primary-fg disabled:opacity-50 ${style.badge}`}
+                className={`px-3 py-1.5 text-xs font-bold text-primary-fg ${style.badge}`}
               >
                 {favoriteSaving ? "Guardando…" : "Guardar plantilla"}
-              </button>
-              <button
+              </Button>
+              <Button
                 id="tx-favorite-cancel"
-                type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => setFavoriteOpen(false)}
                 disabled={favoriteSaving}
-                className="rounded-lg border border-line-strong px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                className="px-3 py-1.5 text-xs font-medium"
               >
                 Cancelar
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -1018,10 +1036,10 @@ export default function TransactionForm({
         <form id="tx-form" onSubmit={handleSubmit} className="flex flex-col gap-3">
           {/* ── Monto ─────────────────────────────────────────────────────── */}
           <div>
-            <label htmlFor="tx-amount" className="text-sm font-medium">
+            <Label htmlFor="tx-amount" className="text-sm font-medium">
               Monto *
-            </label>
-            <input
+            </Label>
+            <Input
               id="tx-amount"
               type="text"
               inputMode="decimal"
@@ -1033,7 +1051,7 @@ export default function TransactionForm({
                 clearDuplicateWarning();
               }}
               placeholder="0,00"
-              className={`mt-1 w-full text-xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full text-xl font-bold rounded-lg border-line-strong bg-transparent px-4 py-3 ${style.focus}`}
             />
             <p className="mt-1 text-xs text-fg-muted h-4">
               {amountPreview ? (
@@ -1056,33 +1074,35 @@ export default function TransactionForm({
 
           {/* ── Cuenta de origen ──────────────────────────────────────────── */}
           <div>
-            <label htmlFor="tx-account" className="text-sm font-medium">
+            <Label htmlFor="tx-account" className="text-sm font-medium">
               {isTransfer
                 ? "Desde qué cuenta *"
                 : isIncome
                   ? "A qué cuenta entra *"
                   : "De qué cuenta sale *"}
-            </label>
-            <select
-              id="tx-account"
+            </Label>
+            <Select
               value={accountId}
-              onChange={(e) => {
-                const nextSource = e.target.value;
-                setAccountId(nextSource);
+              onValueChange={(value) => {
+                setAccountId(value);
                 clearDuplicateWarning();
                 // Al cambiar el origen, el destino anterior puede ser el mismo.
                 // Se re-elige el primero disponible en vez de vaciarlo: el
                 // formulario nunca queda en un estado inválido.
-                setToAccountId(pickDestinationAccount(accounts, nextSource));
+                setToAccountId(pickDestinationAccount(accounts, value));
               }}
-              className={`mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
             >
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {accountLabel(account)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="tx-account" className={`mt-1 w-full ${style.focus}`}>
+                <SelectValue placeholder="Elegí una cuenta" />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {accountLabel(account)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             {/* El aviso que evita el malentendido más común: comprar con
                 tarjeta NO es "gastar la plata que tenés", es deberla. */}
@@ -1098,26 +1118,29 @@ export default function TransactionForm({
           {/* ── Cuenta de destino (sólo transferencias) ───────────────────── */}
           {isTransfer && (
             <div>
-              <label htmlFor="tx-to-account" className="text-sm font-medium">
+              <Label htmlFor="tx-to-account" className="text-sm font-medium">
                 A qué cuenta va *
-              </label>
+              </Label>
               {destinationOptions.length === 0 ? (
                 <p className="mt-1 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
                   Necesitás al menos dos cuentas para transferir entre ellas.
                 </p>
               ) : (
-                <select
-                  id="tx-to-account"
+                <Select
                   value={toAccountId}
-                  onChange={(e) => setToAccountId(e.target.value)}
-                  className={`mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+                  onValueChange={setToAccountId}
                 >
-                  {destinationOptions.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {accountLabel(account)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="tx-to-account" className={`mt-1 w-full ${style.focus}`}>
+                    <SelectValue placeholder="Elegí la cuenta de destino" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {destinationOptions.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {accountLabel(account)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
               <p className="mt-1.5 text-xs text-fg-muted">
                 Mover plata entre tus propias cuentas no es un gasto ni un
@@ -1129,11 +1152,11 @@ export default function TransactionForm({
           {/* ── Categoría (sólo ingresos y gastos, y OPCIONAL) ────────────── */}
           {!isTransfer && (
             <div>
-              <label htmlFor="tx-category" className="text-sm font-medium">
+              <Label htmlFor="tx-category" className="text-sm font-medium">
                 {isIncome ? "De dónde viene" : "En qué se fue"}{" "}
                 <span className="font-normal text-fg-muted">(opcional)</span>
-              </label>
-              <input
+              </Label>
+              <Input
                 id="tx-category"
                 value={categoryName}
                 onChange={(e) => {
@@ -1148,7 +1171,7 @@ export default function TransactionForm({
                 }
                 list="tx-categories"
                 autoComplete="off"
-                className={`mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-2.5 outline-none focus:ring-2 ${style.focus}`}
+                className={`mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-2.5 text-base ${style.focus}`}
               />
               <datalist id="tx-categories">
                 {kindCategories.map((category) => (
@@ -1182,8 +1205,9 @@ export default function TransactionForm({
                 (categoryTouched || categoryName.trim() !== "") && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     {suggestions.map((suggestion) => (
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         key={suggestion.id}
                         onClick={() => {
                           setCategoryName(suggestion.name);
@@ -1192,7 +1216,7 @@ export default function TransactionForm({
                         className="text-xs px-3 py-1.5 rounded-full bg-surface-3 hover:bg-surface-3 "
                       >
                         {suggestion.name}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 )}
@@ -1204,13 +1228,14 @@ export default function TransactionForm({
               una fila entera al modal (el porqué del espacio, en el pie). */}
           <div>
             <div className="flex items-center justify-between">
-              <label htmlFor="tx-date" className="text-sm font-medium">
+              <Label htmlFor="tx-date" className="text-sm font-medium">
                 Fecha *
-              </label>
+              </Label>
               <div className="flex gap-1">
-                <button
+                <Button
                   id="tx-date-hoy"
-                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => {
                     setDate(today);
                     clearDuplicateWarning();
@@ -1223,10 +1248,11 @@ export default function TransactionForm({
                   }`}
                 >
                   Hoy
-                </button>
-                <button
+                </Button>
+                <Button
                   id="tx-date-ayer"
-                  type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => {
                     setDate(yesterday);
                     clearDuplicateWarning();
@@ -1239,10 +1265,10 @@ export default function TransactionForm({
                   }`}
                 >
                   Ayer
-                </button>
+                </Button>
               </div>
             </div>
-            <input
+            <Input
               id="tx-date"
               type="date"
               value={date}
@@ -1251,7 +1277,7 @@ export default function TransactionForm({
                 clearDuplicateWarning();
                 clearDateInputIfEmptied(e.target);
               }}
-              className={`mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2 outline-none focus:ring-2 ${style.focus}`}
+              className={`mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2 text-base ${style.focus}`}
             />
           </div>
 
@@ -1305,22 +1331,24 @@ export default function TransactionForm({
               >
                 <p>Si cerrás ahora se pierde lo que cargaste.</p>
                 <div className="mt-2 flex gap-2">
-                  <button
+                  <Button
                     id="tx-discard-cancel"
-                    type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => setDiscardWarning(false)}
-                    className="rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium"
+                    className="rounded-lg border-warning/40 px-3 py-1 text-xs font-medium"
                   >
                     Seguir editando
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     id="tx-discard-confirm"
-                    type="button"
+                    variant="destructive"
+                    size="sm"
                     onClick={onClose}
-                    className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1 text-xs font-bold"
+                    className="px-3 py-1 text-xs font-bold"
                   >
                     Descartar
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -1343,44 +1371,47 @@ export default function TransactionForm({
                   gasto cargado dos veces.
                 </p>
                 <div className="mt-2 flex gap-2">
-                  <button
+                  <Button
                     id="tx-duplicate-back"
-                    type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => setDuplicateWarning([])}
-                    className="rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium"
+                    className="rounded-lg border-warning/40 px-3 py-1 text-xs font-medium"
                   >
                     Volver
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     id="tx-duplicate-save"
-                    type="button"
+                    variant="secondary"
+                    size="sm"
                     onClick={() => void saveAnyway()}
                     disabled={saving}
-                    className="rounded-lg bg-warning hover:bg-warning/90 text-primary-fg px-3 py-1 text-xs font-bold disabled:opacity-50"
+                    className="px-3 py-1 text-xs font-bold bg-warning hover:bg-warning/90 text-primary-fg"
                   >
                     Guardar igual
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : (
               <div className="flex gap-3">
-                <button
+                <Button
                   id="tx-cancel"
-                  type="button"
+                  variant="outline"
                   onClick={onClose}
-                  className="flex-1 rounded-md border border-line-strong py-3 font-medium"
+                  className="flex-1 py-3"
                 >
                   Cancelar
-                </button>
-                <button
+                </Button>
+                <Button
                   id="tx-submit"
                   type="submit"
                   form="tx-form"
+                  variant="secondary"
                   disabled={saving}
-                  className={`flex-1 rounded-md py-3 font-bold text-primary-fg disabled:opacity-50 ${style.badge}`}
+                  className={`flex-1 py-3 font-bold text-primary-fg ${style.badge}`}
                 >
                   {saving ? "Guardando…" : "Guardar"}
-                </button>
+                </Button>
               </div>
             )}
           </div>

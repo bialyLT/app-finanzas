@@ -9,6 +9,9 @@ import {
   type CsvRowPreviewDTO,
 } from "@/lib/finance";
 import { formatMoney } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface Props {
   onClose: () => void;
@@ -187,15 +190,16 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
               se guarda hasta confirmar.
             </p>
           </div>
-          <button
+          <Button
             id="csv-close"
-            type="button"
+            variant="ghost"
+            size="icon"
             onClick={onClose}
             aria-label="Cerrar importación"
-            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2 h-auto w-auto"
           >
             ×
-          </button>
+          </Button>
         </div>
         </div>
 
@@ -230,21 +234,22 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
               </p>
             )}
             <div className="mt-3">
-              <button
+              <Button
                 id="csv-result-close"
-                type="button"
+                variant="secondary"
+                size="sm"
                 onClick={onClose}
-                className="rounded-lg bg-success hover:bg-success/90 text-primary-fg px-3 py-1.5 text-xs font-bold"
+                className="bg-success hover:bg-success/90 text-primary-fg"
               >
                 Listo
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
           <>
-            <label htmlFor="csv-text" className="block text-sm font-medium">
+            <Label htmlFor="csv-text" className="block text-sm font-medium">
               Texto CSV *
-            </label>
+            </Label>
             <textarea
               id="csv-text"
               value={text}
@@ -258,9 +263,9 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
             />
 
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-              <label htmlFor="csv-file" className="font-medium">
+              <Label htmlFor="csv-file" className="font-medium">
                 …o elegí un archivo .csv
-              </label>
+              </Label>
               <input
                 id="csv-file"
                 type="file"
@@ -520,32 +525,31 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
 
         {!result && (
           <div className="flex-none px-5 py-3 bg-surface-2 border-t border-line flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               id="csv-cancel"
-              type="button"
+              variant="outline"
               onClick={onClose}
-              className="rounded-md border border-line-strong px-4 py-2 text-sm font-medium"
+              className="py-2 touch:min-h-11"
             >
               Cancelar
-            </button>
-            <button
+            </Button>
+            <Button
               id="csv-preview-button"
-              type="button"
               onClick={() => void runPreview()}
               disabled={busy}
-              className="rounded-lg bg-primary text-primary-fg px-4 py-2 text-sm font-bold disabled:opacity-50"
+              className="py-2 touch:min-h-11"
             >
               {busy && !preview ? "Leyendo…" : "Previsualizar"}
-            </button>
-            <button
+            </Button>
+            <Button
               id="csv-confirm"
-              type="button"
+              variant="secondary"
               onClick={() => void confirmImport()}
               disabled={!canConfirm}
-              className="rounded-lg bg-success hover:bg-success/90 text-primary-fg px-4 py-2 text-sm font-bold disabled:opacity-50"
+              className="py-2 touch:min-h-11 bg-success hover:bg-success/90 text-primary-fg"
             >
               {busy && preview ? "Importando…" : "Confirmar importación"}
-            </button>
+            </Button>
           </div>
         )}
       </div>

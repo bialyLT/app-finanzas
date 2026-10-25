@@ -6,6 +6,9 @@ import { todayCalendar } from "@/lib/dates";
 import type { CardPlanPreviewDTO, CardViewDTO, CategoryDTO } from "@/lib/finance";
 import { formatAmountInput, formatMoney, formatPercent } from "@/lib/format";
 import { Receipt } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 interface Props {
   card: CardViewDTO;
@@ -188,14 +191,16 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold flex items-center gap-2"><Receipt className="size-5" aria-hidden />Compra en cuotas · {card.name}</h2>
-          <button
+          <Button
             id="plan-close"
+            variant="ghost"
+            size="icon"
             onClick={onClose}
-            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2 h-auto w-auto"
             aria-label="Cerrar"
           >
             ×
-          </button>
+          </Button>
         </div>
         </div>
 
@@ -220,10 +225,10 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
             {/* ── Columna de campos ─────────────────────────────────────── */}
             <div className="flex flex-col gap-4">
               <div>
-                <label htmlFor="plan-label" className="block text-sm font-medium">
+                <Label htmlFor="plan-label" className="block text-sm font-medium">
                   Qué compraste *
-                </label>
-                <input
+                </Label>
+                <Input
                   id="plan-label"
                   autoFocus
                   autoComplete="off"
@@ -231,16 +236,16 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                   onChange={(e) => setLabel(e.target.value)}
                   placeholder="Ej: Heladera"
                   maxLength={200}
-                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+                  className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="plan-total" className="block text-sm font-medium">
+                  <Label htmlFor="plan-total" className="block text-sm font-medium">
                     Total *
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     id="plan-total"
                     type="text"
                     inputMode="decimal"
@@ -248,17 +253,17 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     value={totalAmount}
                     onChange={(e) => setTotalAmount(e.target.value)}
                     placeholder="120.000"
-                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                    className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                   />
                   {totalPreview && (
                     <p className="mt-1 text-xs text-fg-muted">{totalPreview}</p>
                   )}
                 </div>
                 <div>
-                  <label htmlFor="plan-installments" className="block text-sm font-medium">
+                  <Label htmlFor="plan-installments" className="block text-sm font-medium">
                     Cuotas *
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     id="plan-installments"
                     type="text"
                     inputMode="numeric"
@@ -266,17 +271,17 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     value={installments}
                     onChange={(e) => setInstallments(e.target.value)}
                     placeholder="12"
-                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                    className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="plan-cash" className="block text-sm font-medium">
+                  <Label htmlFor="plan-cash" className="block text-sm font-medium">
                     Precio de contado
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     id="plan-cash"
                     type="text"
                     inputMode="decimal"
@@ -284,14 +289,14 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     value={cashPrice}
                     onChange={(e) => setCashPrice(e.target.value)}
                     placeholder="108.000"
-                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                    className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                   />
                 </div>
                 <div>
-                  <label htmlFor="plan-date" className="block text-sm font-medium">
+                  <Label htmlFor="plan-date" className="block text-sm font-medium">
                     Fecha de la compra
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     id="plan-date"
                     type="date"
                     value={purchaseDate}
@@ -299,7 +304,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                       setPurchaseDate(e.target.value);
                       clearDateInputIfEmptied(e.target);
                     }}
-                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                    className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                   />
                 </div>
               </div>
@@ -313,10 +318,10 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                 modal (ver el comentario del grid).
               */}
               <div>
-                <label htmlFor="plan-category" className="block text-sm font-medium">
+                <Label htmlFor="plan-category" className="block text-sm font-medium">
                   Categoría del gasto *
-                </label>
-                <input
+                </Label>
+                <Input
                   id="plan-category"
                   autoComplete="off"
                   value={categoryName}
@@ -324,7 +329,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                   placeholder="Ej: Tecnología"
                   maxLength={60}
                   list="plan-categories"
-                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+                  className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
                 />
                 <datalist id="plan-categories">
                   {expenseCategories.map((category) => (
@@ -414,23 +419,24 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
             )}
 
             <div className="flex gap-3">
-              <button
+              <Button
                 id="plan-cancel"
-                type="button"
+                variant="outline"
                 onClick={onClose}
-                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
+                className="flex-1 py-3"
               >
                 Cancelar
-              </button>
-              <button
+              </Button>
+              <Button
                 id="plan-submit"
                 type="submit"
                 form="plan-form"
+                variant="secondary"
                 disabled={saving}
-                className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
+                className="flex-1 py-3 bg-transfer hover:bg-transfer/90 text-primary-fg"
               >
                 {saving ? "Registrando…" : "Registrar compra"}
-              </button>
+              </Button>
             </div>
           </div>
       </div>

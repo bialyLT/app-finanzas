@@ -13,6 +13,8 @@ import {
   type MovementKindDTO,
 } from "@/lib/finance";
 import { formatMoney } from "@/lib/format";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 interface Props {
   favorites: FavoriteDTO[];
@@ -249,7 +251,7 @@ export default function CommandPalette({
           <span aria-hidden="true" className="text-fg-subtle">
             ⌘
           </span>
-          <input
+          <Input
             ref={inputRef}
             id="palette-input"
             value={query}
@@ -279,17 +281,18 @@ export default function CommandPalette({
             aria-autocomplete="list"
             placeholder="Buscar acciones, pantallas o plantillas…"
             autoComplete="off"
-            className="flex-1 bg-transparent text-sm outline-none"
+            className="flex-1 text-sm"
           />
-          <button
+          <Button
             id="palette-close"
-            type="button"
+            variant="ghost"
+            size="icon"
             onClick={onClose}
             aria-label="Cerrar paleta"
-            className="text-lg leading-none text-fg-subtle hover:text-fg-muted px-1"
+            className="text-lg leading-none text-fg-subtle hover:text-fg-muted px-1 h-auto w-auto"
           >
             ×
-          </button>
+          </Button>
         </div>
 
         <div
@@ -304,10 +307,11 @@ export default function CommandPalette({
             </p>
           ) : (
             filtered.map((action, index) => (
-              <button
+              <Button
                 key={action.id}
                 id={`palette-item-${index}`}
-                type="button"
+                variant="ghost"
+                size="sm"
                 role="option"
                 aria-selected={active === index}
                 aria-disabled={action.disabled}
@@ -315,7 +319,7 @@ export default function CommandPalette({
                 onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => run(action)}
-                className={`w-full text-left px-4 py-2 flex items-baseline justify-between gap-3 ${
+                className={`w-full justify-between px-4 py-2 text-left ${
                   active === index
                     ? "bg-surface-3 "
                     : "hover:bg-surface-3 hover:bg-surface-3/60"
@@ -334,7 +338,7 @@ export default function CommandPalette({
                 <span className="text-xs uppercase tracking-wide text-fg-subtle whitespace-nowrap">
                   {action.group}
                 </span>
-              </button>
+              </Button>
             ))
           )}
         </div>
