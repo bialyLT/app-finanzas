@@ -23,6 +23,10 @@ import {
 } from "@/lib/finance";
 import { formatAmountInput, formatLiability, formatMoney } from "@/lib/format";
 import { RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface Props {
   /** La regla a editar, o `null` para crear una nueva. */
@@ -357,13 +361,14 @@ export default function RecurrenceRuleForm({
           Toda regla postea (o propone) movimientos sobre una cuenta. Sin al
           menos una cuenta creada no hay dónde registrar la plata.
         </p>
-        <button
+        <Button
           id="rec-form-close"
+          variant="secondary"
           onClick={onClose}
-          className="w-full rounded-md bg-primary text-primary-fg py-3 font-bold"
+          className="w-full py-3"
         >
           Entendido
-        </button>
+        </Button>
       </section>
     );
   }
@@ -399,23 +404,25 @@ export default function RecurrenceRuleForm({
           <h2 className={`text-lg font-bold ${style.accent}`}>
             <RefreshCw className="size-4" aria-hidden /> {editing ? "Editar regla" : "Nueva regla"}
           </h2>
-          <button
+          <Button
             id="rec-form-close"
+            variant="ghost"
+            size="icon"
             onClick={onClose}
-            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2 h-auto w-auto"
             aria-label="Cerrar"
           >
             ×
-          </button>
+          </Button>
         </div>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           {/* ── Nombre ────────────────────────────────────────────────────── */}
           <div>
-            <label htmlFor="rec-title" className="text-sm font-medium">
+            <Label htmlFor="rec-title" className="text-sm font-medium">
               Nombre *
-            </label>
-            <input
+            </Label>
+            <Input
               id="rec-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -423,7 +430,7 @@ export default function RecurrenceRuleForm({
               maxLength={200}
               autoComplete="off"
               autoFocus
-              className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+              className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
             />
           </div>
 
@@ -453,10 +460,10 @@ export default function RecurrenceRuleForm({
 
           {/* ── Monto ─────────────────────────────────────────────────────── */}
           <div>
-            <label htmlFor="rec-amount" className="text-sm font-medium">
+            <Label htmlFor="rec-amount" className="text-sm font-medium">
               Monto *
-            </label>
-            <input
+            </Label>
+            <Input
               id="rec-amount"
               type="text"
               inputMode="decimal"
@@ -464,7 +471,7 @@ export default function RecurrenceRuleForm({
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0,00"
-              className="mt-1 w-full text-xl font-bold rounded-lg border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+              className="mt-1 w-full text-xl font-bold rounded-lg border-line-strong bg-transparent px-4 py-3"
             />
             <p className="mt-1 text-xs text-fg-muted h-4">
               {amountPreview ? (
@@ -502,17 +509,17 @@ export default function RecurrenceRuleForm({
               ))}
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <label htmlFor="rec-interval" className="text-sm text-fg-muted">
+              <Label htmlFor="rec-interval" className="text-sm text-fg-muted">
                 Cada
-              </label>
-              <input
+              </Label>
+              <Input
                 id="rec-interval"
                 type="number"
                 min={1}
                 max={365}
                 value={interval}
                 onChange={(e) => setInterval(e.target.value)}
-                className="w-20 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
+                className="w-20 rounded-md border-line-strong bg-transparent px-3 py-2 text-sm"
               />
               <span className="text-sm text-fg-muted">
                 {freq === "DAILY"
@@ -529,11 +536,11 @@ export default function RecurrenceRuleForm({
           {/* ── Ancla del día del mes (sólo mensual/anual) ────────────────── */}
           {isFreqWithAnchor(freq) && (
             <div>
-              <label htmlFor="rec-day-of-month" className="text-sm font-medium">
+              <Label htmlFor="rec-day-of-month" className="text-sm font-medium">
                 Día del mes{" "}
                 <span className="font-normal text-fg-muted">(opcional)</span>
-              </label>
-              <input
+              </Label>
+              <Input
                 id="rec-day-of-month"
                 type="number"
                 min={1}
@@ -541,7 +548,7 @@ export default function RecurrenceRuleForm({
                 value={dayOfMonth}
                 onChange={(e) => setDayOfMonth(e.target.value)}
                 placeholder={anchorHint ? `Vacío = día ${anchorHint}` : "Vacío = día de inicio"}
-                className="mt-1 w-28 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
+                className="mt-1 w-28 rounded-md border-line-strong bg-transparent px-3 py-2 text-sm"
               />
               <p className="mt-1 text-xs text-fg-muted">
                 Si el mes no tiene ese día, usa el último (31 → 30 de abril).
@@ -551,57 +558,63 @@ export default function RecurrenceRuleForm({
 
           {/* ── Cuenta de origen ──────────────────────────────────────────── */}
           <div>
-            <label htmlFor="rec-account" className="text-sm font-medium">
+            <Label htmlFor="rec-account" className="text-sm font-medium">
               {isTransfer
                 ? "Desde qué cuenta *"
                 : isIncome
                   ? "A qué cuenta entra *"
                   : "De qué cuenta sale *"}
-            </label>
+            </Label>
             {sourceOptions.length === 0 ? (
               <p className="mt-1 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
                 Un ingreso necesita una cuenta de dinero (efectivo o banco): las
                 tarjetas y los préstamos no reciben ingresos.
               </p>
             ) : (
-              <select
-                id="rec-account"
+              <Select
                 value={effectiveAccountId}
-                onChange={(e) => setAccountId(e.target.value)}
-                className="mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-3 outline-none focus:ring-2 focus:ring-focus"
+                onValueChange={setAccountId}
               >
-                {sourceOptions.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {accountLabel(account)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="rec-account" className="mt-1 w-full py-3">
+                  <SelectValue placeholder="Cuenta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {sourceOptions.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {accountLabel(account)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </div>
 
           {/* ── Cuenta de destino (sólo transferencias) ───────────────────── */}
           {isTransfer && (
             <div>
-              <label htmlFor="rec-to-account" className="text-sm font-medium">
+              <Label htmlFor="rec-to-account" className="text-sm font-medium">
                 A qué cuenta va *
-              </label>
+              </Label>
               {destinationOptions.length === 0 ? (
                 <p className="mt-1 text-sm rounded-lg bg-warning/10 text-warning px-3 py-2">
                   Necesitás al menos dos cuentas para transferir entre ellas.
                 </p>
               ) : (
-                <select
-                  id="rec-to-account"
+                <Select
                   value={effectiveToAccountId}
-                  onChange={(e) => setToAccountId(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-3 outline-none focus:ring-2 focus:ring-focus"
+                  onValueChange={setToAccountId}
                 >
-                  {destinationOptions.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {accountLabel(account)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="rec-to-account" className="mt-1 w-full py-3">
+                    <SelectValue placeholder="Cuenta de destino" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {destinationOptions.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {accountLabel(account)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
               <p className="mt-1.5 text-xs text-fg-muted">
                 Mover plata entre tus propias cuentas no es un gasto ni un
@@ -613,10 +626,10 @@ export default function RecurrenceRuleForm({
           {/* ── Categoría (sólo ingresos y gastos) ────────────────────────── */}
           {!isTransfer && (
             <div>
-              <label htmlFor="rec-category" className="text-sm font-medium">
+              <Label htmlFor="rec-category" className="text-sm font-medium">
                 {isIncome ? "De dónde viene *" : "En qué se gasta *"}
-              </label>
-              <input
+              </Label>
+              <Input
                 id="rec-category"
                 value={categoryName}
                 onChange={(e) => setCategoryName(e.target.value)}
@@ -625,7 +638,7 @@ export default function RecurrenceRuleForm({
                 }
                 list="rec-categories"
                 autoComplete="off"
-                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+                className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
               />
               <datalist id="rec-categories">
                 {/* Sólo las categorías del tipo activo: ofrecer una combinación
@@ -705,10 +718,10 @@ export default function RecurrenceRuleForm({
           {/* ── Fechas: inicio, fin y tope ────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label htmlFor="rec-start-date" className="text-sm font-medium">
+              <Label htmlFor="rec-start-date" className="text-sm font-medium">
                 Desde *
-              </label>
-              <input
+              </Label>
+              <Input
                 id="rec-start-date"
                 type="date"
                 value={startDate}
@@ -716,14 +729,14 @@ export default function RecurrenceRuleForm({
                   setStartDate(e.target.value);
                   clearDateInputIfEmptied(e.target);
                 }}
-                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
               />
             </div>
             <div>
-              <label htmlFor="rec-end-date" className="text-sm font-medium">
+              <Label htmlFor="rec-end-date" className="text-sm font-medium">
                 Hasta <span className="font-normal text-fg-muted">(opcional)</span>
-              </label>
-              <input
+              </Label>
+              <Input
                 id="rec-end-date"
                 type="date"
                 value={endDate}
@@ -731,17 +744,17 @@ export default function RecurrenceRuleForm({
                   setEndDate(e.target.value);
                   clearDateInputIfEmptied(e.target);
                 }}
-                className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
               />
             </div>
           </div>
 
           <div>
-            <label htmlFor="rec-count" className="text-sm font-medium">
+            <Label htmlFor="rec-count" className="text-sm font-medium">
               Cantidad de veces{" "}
               <span className="font-normal text-fg-muted">(opcional)</span>
-            </label>
-            <input
+            </Label>
+            <Input
               id="rec-count"
               type="number"
               min={1}
@@ -749,7 +762,7 @@ export default function RecurrenceRuleForm({
               value={count}
               onChange={(e) => setCount(e.target.value)}
               placeholder="Vacío = para siempre"
-              className="mt-1 w-40 rounded-md border border-line-strong bg-transparent px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
+              className="mt-1 w-40 rounded-md border-line-strong bg-transparent px-3 py-2 text-sm"
             />
             <p className="mt-1 text-xs text-fg-muted">
               Hasta la fecha de fin o la cantidad: lo que corte primero.
@@ -807,40 +820,43 @@ export default function RecurrenceRuleForm({
               >
                 <p>Si cerrás ahora se pierde lo que cargaste.</p>
                 <div className="mt-2 flex gap-2">
-                  <button
+                  <Button
                     id="rec-discard-cancel"
-                    type="button"
+                    variant="outline"
+                    size="sm"
                     onClick={() => setDiscardWarning(false)}
-                    className="rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium"
+                    className="border-warning/40 px-3 py-1 text-xs font-medium"
                   >
                     Seguir editando
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     id="rec-discard-confirm"
-                    type="button"
+                    variant="destructive"
+                    size="sm"
                     onClick={onClose}
-                    className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1 text-xs font-bold"
+                    className="px-3 py-1 text-xs font-bold"
                   >
                     Descartar
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
 
             <div className="flex gap-3">
-              <button
+              <Button
                 id="rec-form-cancel"
-                type="button"
+                variant="outline"
                 onClick={() => (dirty ? setDiscardWarning(true) : onClose())}
-                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
+                className="flex-1 py-3"
               >
                 Cancelar
-              </button>
-              <button
+              </Button>
+              <Button
                 id="rec-form-submit"
                 type="submit"
+                variant="secondary"
                 disabled={saving}
-                className={`flex-1 rounded-md py-3 font-bold text-primary-fg disabled:opacity-50 ${
+                className={`flex-1 py-3 font-bold text-primary-fg ${
                   isTransfer
                     ? "bg-transfer hover:bg-transfer/90"
                     : isIncome
@@ -849,7 +865,7 @@ export default function RecurrenceRuleForm({
                 }`}
               >
                 {saving ? "Guardando…" : editing ? "Guardar cambios" : "Crear regla"}
-              </button>
+              </Button>
             </div>
           </div>
         </form>

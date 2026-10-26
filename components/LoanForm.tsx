@@ -498,10 +498,10 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
               {/* ── Columna de campos ─────────────────────────────────────── */}
               <div className="flex flex-col gap-4">
                 <div>
-                  <label htmlFor="loanalta-name" className="block text-sm font-medium">
+                  <Label htmlFor="loanalta-name" className="block text-sm font-medium">
                     Nombre *
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     id="loanalta-name"
                     autoFocus
                     autoComplete="off"
@@ -509,7 +509,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Ej: Préstamo del banco"
                     maxLength={100}
-                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+                    className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
                   />
                 </div>
 
@@ -549,13 +549,13 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label
+                    <Label
                       htmlFor="loanalta-principal"
                       className="block text-sm font-medium"
                     >
                       Monto *
-                    </label>
-                    <input
+                    </Label>
+                    <Input
                       id="loanalta-principal"
                       type="text"
                       inputMode="decimal"
@@ -563,7 +563,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       value={principal}
                       onChange={(e) => setPrincipal(e.target.value)}
                       placeholder="500.000"
-                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                      className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                     />
                     {principalPreview && (
                       <p className="mt-1 text-xs text-fg-muted">
@@ -572,10 +572,10 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                     )}
                   </div>
                   <div>
-                    <label htmlFor="loanalta-tna" className="block text-sm font-medium">
+                    <Label htmlFor="loanalta-tna" className="block text-sm font-medium">
                       {mode === "RATE" ? "TNA % *" : "TNA % (derivada)"}
-                    </label>
-                    <input
+                    </Label>
+                    <Input
                       id="loanalta-tna"
                       ref={tnaRef}
                       type="text"
@@ -592,7 +592,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                           ? "Tasa anual (TNA) en porcentaje"
                           : "Tasa anual (TNA) en porcentaje: la calculó la app, tocá para cargarla a mano"
                       }
-                      className={`mt-1 w-full rounded-md border px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus ${
+                      className={`mt-1 w-full rounded-md border px-3 py-2.5 focus:ring-2 focus:ring-focus ${
                         mode === "RATE"
                           ? "border-line-strong bg-transparent"
                           : "border-line bg-surface-3 bg-surface-3/60 text-fg-muted "
@@ -611,15 +611,15 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 {/* ── Lo que la persona sabe: la cuota o el total ─────────────── */}
                 {mode !== "RATE" && (
                   <div>
-                    <label
+                    <Label
                       htmlFor={mode === "PAYMENT" ? "loanalta-payment" : "loanalta-total"}
                       className="block text-sm font-medium"
                     >
                       {mode === "PAYMENT"
                         ? "Cuota por mes *"
                         : "Total a devolver *"}
-                    </label>
-                    <input
+                    </Label>
+                    <Input
                       id={mode === "PAYMENT" ? "loanalta-payment" : "loanalta-total"}
                       type="text"
                       inputMode="decimal"
@@ -659,10 +659,10 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label htmlFor="loanalta-count" className="block text-sm font-medium">
+                    <Label htmlFor="loanalta-count" className="block text-sm font-medium">
                       Cuotas *
-                    </label>
-                    <input
+                    </Label>
+                    <Input
                       id="loanalta-count"
                       type="text"
                       inputMode="numeric"
@@ -670,14 +670,14 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       value={count}
                       onChange={(e) => setCount(e.target.value)}
                       placeholder="12"
-                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                      className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                     />
                   </div>
                   <div>
-                    <label htmlFor="loanalta-first" className="block text-sm font-medium">
+                    <Label htmlFor="loanalta-first" className="block text-sm font-medium">
                       Primera cuota *
-                    </label>
-                    <input
+                    </Label>
+                    <Input
                       id="loanalta-first"
                       type="date"
                       value={firstDate}
@@ -685,7 +685,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                         setFirstDate(e.target.value);
                         clearDateInputIfEmptied(e.target);
                       }}
-                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                      className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                     />
                   </div>
                 </div>
@@ -726,11 +726,14 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 </div>
 
                 <div>
-                  <label htmlFor="loanalta-cash" className="block text-sm font-medium">
+                  <Label
+                    htmlFor="loanalta-cash"
+                    className="block text-sm font-medium"
+                  >
                     {direction === "I_OWE"
                       ? "¿Dónde entró la plata? *"
                       : "¿De qué cuenta salió? *"}
-                  </label>
+                  </Label>
                   {cashAccounts.length === 0 ? (
                     <p className="mt-1 text-xs rounded-md bg-warning/10 text-warning px-3 py-2">
                       No hay cuentas de banco o efectivo: creá una primero para
@@ -947,13 +950,13 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label
+                <Label
                   htmlFor="loanalta-disburse-date"
                   className="block text-sm font-medium"
                 >
                   Fecha del desembolso
-                </label>
-                <input
+                </Label>
+                <Input
                   id="loanalta-disburse-date"
                   type="date"
                   value={disburseDate}
@@ -961,25 +964,25 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                     setDisburseDate(e.target.value);
                     clearDateInputIfEmptied(e.target);
                   }}
-                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                  className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                 />
               </div>
               <div>
-                <label htmlFor="loanalta-cash" className="block text-sm font-medium">
+                <Label htmlFor="loanalta-cash" className="block text-sm font-medium">
                   {direction === "I_OWE" ? "Cuenta que lo recibió" : "Cuenta que lo prestó"}
-                </label>
-                <select
-                  id="loanalta-cash"
-                  value={cashId}
-                  onChange={(e) => setCashId(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-line-strong bg-surface-2 px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
-                >
-                  {cashAccounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
+                </Label>
+                <Select value={cashId} onValueChange={setCashId}>
+                  <SelectTrigger id="loanalta-cash" className="mt-1 w-full">
+                    <SelectValue placeholder="Cuenta de dinero" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cashAccounts.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {account.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
