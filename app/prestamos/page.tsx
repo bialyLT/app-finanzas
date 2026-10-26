@@ -469,29 +469,27 @@ export default function LoansPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button
+          <Button
             id="loans-new"
+            variant="default"
             onClick={() => {
               showFlash("");
               setFormOpen(true);
             }}
             disabled={busyId !== null}
-            className="rounded-lg bg-primary text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
+            className="px-3 py-2"
           >
             ＋ Nuevo préstamo
-          </button>
-          <button
+          </Button>
+          <Button
             id="loans-toggle-archived"
+            variant={includeArchived ? "secondary" : "outline"}
             onClick={toggleArchived}
             aria-pressed={includeArchived}
-            className={`rounded-md border px-3 py-2 text-sm font-medium ${
-              includeArchived
-                ? "border-transparent bg-primary text-primary-fg "
-                : "border-line-strong hover:bg-surface-3 "
-            }`}
+            className={`px-3 py-2 ${includeArchived ? "bg-primary text-primary-fg" : ""}`}
           >
             {includeArchived ? "Ocultar archivados" : "Ver archivados"}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -764,14 +762,16 @@ export default function LoansPage() {
             </p>
 
             {!isOpen && (
-              <button
+              <Button
                 id={`loan-disburse-open-${loan.id}`}
+                variant="outline"
+                size="sm"
                 onClick={() => openBlock(loan.id, "disburse")}
                 disabled={busyId !== null}
-                className="mt-2 rounded-md border border-warning/40 px-3 py-1.5 text-sm font-medium hover:bg-warning/15 disabled:opacity-50"
+                className="mt-2 border-warning/40 px-3 py-1.5 hover:bg-warning/15"
               >
                 Registrar el desembolso
-              </button>
+              </Button>
             )}
 
             {openDisburse && (
@@ -840,26 +840,28 @@ export default function LoansPage() {
                 )}
 
                 <div className="flex gap-2">
-                  <button
+                  <Button
                     id={`loan-disburse-go-${loan.id}`}
+                    variant="secondary"
                     onClick={() => disburse(loan)}
                     disabled={busyId !== null || !cashId}
-                    className="flex-1 rounded-md bg-success hover:bg-success/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
+                    className="flex-1 py-2 bg-success hover:bg-success/90 text-primary-fg"
                   >
                     {busyId === `disburse-${loan.id}`
                       ? "Registrando…"
                       : loan.principal !== null
                         ? `Sí, registrar el desembolso de ${formatMoney(loan.principal)}`
                         : "Sí, registrar el desembolso"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     id={`loan-disburse-back-${loan.id}`}
+                    variant="outline"
                     onClick={closeBlock}
                     disabled={busyId !== null}
-                    className="flex-1 rounded-md border border-warning/40 py-2 text-sm font-medium hover:bg-warning/15 disabled:opacity-50"
+                    className="flex-1 py-2 border-warning/40 hover:bg-warning/15"
                   >
                     Mejor no
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -870,24 +872,26 @@ export default function LoansPage() {
         {!isOpen && (next !== null || canCancel) && (
           <div className="px-4 mt-3 flex flex-wrap gap-2">
             {next !== null && (
-              <button
+              <Button
                 id={`loan-pay-open-${loan.id}`}
+                variant="secondary"
                 onClick={() => openBlock(loan.id, "pay")}
                 disabled={busyId !== null}
-                className="rounded-lg bg-transfer hover:bg-transfer/90 text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
+                className="px-3 py-2 bg-transfer hover:bg-transfer/90 text-primary-fg"
               >
                 {verb} cuota {next.number} · {formatMoney(next.payment)}
-              </button>
+              </Button>
             )}
             {canCancel && (
-              <button
+              <Button
                 id={`loan-cancel-open-${loan.id}`}
+                variant="outline"
                 onClick={() => openBlock(loan.id, "cancel")}
                 disabled={busyId !== null}
-                className="rounded-md border border-line-strong px-3 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                className="px-3 py-2"
               >
                 {loan.kind === "LOAN" ? "Cancelar el préstamo" : "Cobrar todo"}
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -1010,27 +1014,29 @@ export default function LoansPage() {
 
             <div className="mt-2 flex gap-2">
               {payOrigins.length > 0 && (
-                <button
+                <Button
                   id={`loan-pay-go-${loan.id}`}
+                  variant="secondary"
                   onClick={() => pay(loan)}
                   disabled={busyId !== null || !cashId}
-                  className="flex-1 rounded-md bg-transfer hover:bg-transfer/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
+                  className="flex-1 py-2 bg-transfer hover:bg-transfer/90 text-primary-fg"
                 >
                   {busyId === `pay-${loan.id}`
                     ? "Registrando…"
                     : loan.kind === "LOAN"
                       ? "Confirmar pago"
                       : "Confirmar cobro"}
-                </button>
+                </Button>
               )}
-              <button
+              <Button
                 id={`loan-pay-cancel-${loan.id}`}
+                variant="outline"
                 onClick={closeBlock}
                 disabled={busyId !== null}
-                className="flex-1 rounded-md border border-transfer/40 py-2 text-sm font-medium hover:bg-transfer/10 disabled:opacity-50"
+                className="flex-1 py-2 border-transfer/40 hover:bg-transfer/10"
               >
                 Cancelar
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -1114,26 +1120,28 @@ export default function LoansPage() {
             )}
 
             <div className="mt-2 flex gap-2">
-              <button
+              <Button
                 id={`loan-cancel-go-${loan.id}`}
+                variant="destructive"
                 onClick={() => cancelLoan(loan)}
                 disabled={busyId !== null || !cashId}
-                className="flex-1 rounded-md bg-danger hover:bg-danger/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
+                className="flex-1 py-2"
               >
                 {busyId === `cancel-${loan.id}`
                   ? "Cancelando…"
                   : loan.kind === "LOAN"
                     ? "Sí, cancelar el préstamo"
                     : "Sí, cobrar todo"}
-              </button>
-              <button
+              </Button>
+              <Button
                 id={`loan-cancel-close-${loan.id}`}
+                variant="outline"
                 onClick={closeBlock}
                 disabled={busyId !== null}
-                className="flex-1 rounded-md border border-danger/40 py-2 text-sm font-medium hover:bg-danger/10 disabled:opacity-50"
+                className="flex-1 py-2 border-danger/40 hover:bg-danger/10"
               >
                 Mejor no
-              </button>
+              </Button>
             </div>
           </div>
         )}

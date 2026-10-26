@@ -648,14 +648,16 @@ export default function CardsPage() {
                     Compras en cuotas
                   </p>
                   {card.closingDay !== null && (
-                    <button
+                    <Button
                       id={`card-new-plan-${card.id}`}
+                      variant="default"
+                      size="sm"
                       onClick={() => setModal({ type: "plan", cardId: card.id })}
                       disabled={busyId !== null}
-                      className="rounded-lg bg-primary text-primary-fg px-3 py-2 text-sm font-bold disabled:opacity-50"
+                      className="px-3 py-2"
                     >
                       ＋ Compra en cuotas
-                    </button>
+                    </Button>
                   )}
                 </div>
 
@@ -741,35 +743,41 @@ export default function CardsPage() {
                                 <span className="text-sm text-fg-muted py-1.5">
                                   ¿Borrar la compra y su gasto?
                                 </span>
-                                <button
+                                <Button
                                   id={`plan-delete-confirm-${plan.id}`}
+                                  variant="destructive"
+                                  size="sm"
                                   onClick={() => removePlan(plan)}
                                   disabled={busyId !== null}
-                                  className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1.5 text-sm font-bold disabled:opacity-50"
+                                  className="px-3 py-1.5"
                                 >
                                   {busy ? "Borrando…" : "Sí, borrar"}
-                                </button>
-                                <button
+                                </Button>
+                                <Button
                                   id={`plan-delete-cancel-${plan.id}`}
+                                  variant="outline"
+                                  size="sm"
                                   onClick={() => setConfirmPlanId(null)}
                                   disabled={busyId !== null}
-                                  className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                                  className="px-3 py-1.5"
                                 >
                                   Mejor no
-                                </button>
+                                </Button>
                               </>
                             ) : (
-                              <button
+                              <Button
                                 id={`plan-delete-${plan.id}`}
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => {
                                   setConfirmPlanId(plan.id);
                                   setPlanNotice(null);
                                 }}
                                 disabled={busyId !== null}
-                                className="rounded-lg px-3 py-1.5 text-sm font-medium text-fg-muted hover:bg-surface-3 hover:text-danger disabled:opacity-50"
+                                className="text-fg-muted hover:text-danger px-3 py-1.5"
                               >
                                 Borrar
-                              </button>
+                              </Button>
                             )}
                           </div>
                         </div>

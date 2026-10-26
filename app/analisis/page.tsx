@@ -688,15 +688,17 @@ export default function AnalisisPage() {
             <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8 text-center text-fg-muted">
               <p className="mb-2"><Search className="size-8 inline-block" aria-hidden /></p>
               <p className="font-medium">No hay gastos con esos filtros</p>
-              <button
+              <Button
+                variant="link"
+                size="sm"
                 onClick={() => {
                   setCategoryId("");
                   setSearch("");
                 }}
-                className="text-sm mt-2 underline text-success"
+                className="text-sm mt-2 text-success underline"
               >
                 Limpiar filtros
-              </button>
+              </Button>
             </div>
           ) : (
             <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8 text-center text-fg-muted">
