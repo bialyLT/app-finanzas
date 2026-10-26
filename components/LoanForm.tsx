@@ -7,6 +7,10 @@ import type { AccountBalanceDTO, LoanPreviewDTO } from "@/lib/finance";
 import { AMORTIZATION_SYSTEM_LABEL } from "@/lib/finance";
 import { formatAmountInput, formatMoney, formatPercent } from "@/lib/format";
 import { Handshake, ArrowUpRight, ArrowDownLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface Props {
   /** Cuentas de dinero (no archivadas, CASH o BANK) para el desembolso. */
@@ -473,14 +477,16 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold flex items-center gap-2"><Handshake className="size-5" aria-hidden />Nuevo préstamo</h2>
-          <button
+          <Button
             id="loanalta-close"
+            variant="ghost"
+            size="icon"
             onClick={closeOrSkip}
-            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2 h-auto w-auto"
             aria-label="Cerrar"
           >
             ×
-          </button>
+          </Button>
         </div>
         </div>
 
@@ -731,18 +737,21 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       poder registrar el desembolso.
                     </p>
                   ) : (
-                    <select
-                      id="loanalta-cash"
+                    <Select
                       value={cashId}
-                      onChange={(e) => setCashId(e.target.value)}
-                      className="mt-1 w-full rounded-md border border-line-strong bg-surface-2 px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                      onValueChange={setCashId}
                     >
-                      {cashAccounts.map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger id="loanalta-cash" className="mt-1 w-full">
+                        <SelectValue placeholder="Cuenta de dinero" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cashAccounts.map((account) => (
+                          <SelectItem key={account.id} value={account.id}>
+                            {account.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   )}
                 </div>
 
@@ -889,40 +898,24 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
               )}
 
               <div className="flex gap-3">
-                <button
+                <Button
                   id="loanalta-cancel"
-                  type="button"
+                  variant="outline"
                   onClick={() => setDiscardWarning(true)}
-                  className="flex-1 rounded-md border border-line-strong py-3 font-medium"
+                  className="flex-1 py-3"
                 >
                   Cancelar
-                </button>
-                <button
+                </Button>
+                <Button
                   id="loanalta-submit"
                   type="submit"
                   form="loan-form"
-                  // ─────────────────────────────────────────────────────────────
-                  // POR QUÉ NO SE APAGA EL BOTÓN SIN CUENTAS DE DINERO
-                  // ─────────────────────────────────────────────────────────────
-                  // Antes el botón quedaba DESHABILITADO cuando no había
-                  // cuentas de banco o efectivo, y la única explicación («No
-                  // hay cuentas de banco o efectivo: creá una primero…») vive
-                  // en la columna de la derecha: a 320 px esa columna está
-                  // DEBAJO del pliegue. El resultado era un botón muerto sin
-                  // motivo a la vista.
-                  //
-                  // Ahora el botón valida y EXPLICA: el mensaje ya existe
-                  // («Necesitás una cuenta de banco o efectivo…») y se muestra
-                  // en el PIE, que está siempre a la vista (es el mismo
-                  // criterio con el que el error de la vista previa vive en el
-                  // pie y no en la columna). La regla NO cambia: sin cuentas de
-                  // dinero no se crea el préstamo.
-                  // ─────────────────────────────────────────────────────────────
+                  variant="secondary"
                   disabled={saving}
-                  className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
+                  className="flex-1 py-3 bg-transfer hover:bg-transfer/90 text-primary-fg"
                 >
                   {saving ? "Creando…" : "Crear préstamo"}
-                </button>
+                </Button>
               </div>
             </div>
           </>

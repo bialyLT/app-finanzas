@@ -12,6 +12,10 @@ import {
 import { formatPercent } from "@/lib/format";
 import { formatAmountInput, formatMoney } from "@/lib/format";
 import { CreditCard, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface Props {
   onClose: () => void;
@@ -213,24 +217,26 @@ export default function AccountForm({ onClose, onSaved }: Props) {
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">Nueva cuenta</h2>
-          <button
+          <Button
             id="acc-close"
+            variant="ghost"
+            size="icon"
             onClick={onClose}
-            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2"
+            className="text-xl leading-none text-fg-subtle hover:text-fg-muted px-2 h-auto w-auto"
             aria-label="Cerrar"
           >
             ×
-          </button>
+          </Button>
         </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-8">
         <form id="acc-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div>
-            <label htmlFor="acc-name" className="text-sm font-medium">
+            <Label htmlFor="acc-name" className="text-sm font-medium">
               Nombre *
-            </label>
-            <input
+            </Label>
+            <Input
               id="acc-name"
               autoFocus
               autoComplete="off"
@@ -238,26 +244,26 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               onChange={(e) => setName(e.target.value)}
               placeholder="Ej: Banco Galicia, Efectivo, Visa Santander"
               maxLength={60}
-              className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+              className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
             />
           </div>
 
           <div>
-            <label htmlFor="acc-kind" className="text-sm font-medium">
+            <Label htmlFor="acc-kind" className="text-sm font-medium">
               Qué tipo de cuenta es *
-            </label>
-            <select
-              id="acc-kind"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as AccountKindDTO)}
-              className="mt-1 w-full rounded-md border border-line-strong bg-surface bg-surface-3 px-3 py-3 outline-none focus:ring-2 focus:ring-focus"
-            >
-              {KIND_ORDER.map((option) => (
-                <option key={option} value={option}>
-                  {ACCOUNT_KIND_LABEL[option]}
-                </option>
-              ))}
-            </select>
+            </Label>
+            <Select value={kind} onValueChange={(v) => setKind(v as AccountKindDTO)}>
+              <SelectTrigger id="acc-kind" className="mt-1 w-full py-3">
+                <SelectValue placeholder="Tipo de cuenta" />
+              </SelectTrigger>
+              <SelectContent>
+                {KIND_ORDER.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {ACCOUNT_KIND_LABEL[option]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="mt-1 text-xs text-fg-muted">{KIND_HELP[kind]}</p>
           </div>
 
@@ -265,10 +271,10 @@ export default function AccountForm({ onClose, onSaved }: Props) {
           {isLoan ? (
             <>
               <div>
-                <label htmlFor="loan-principal" className="text-sm font-medium">
+                <Label htmlFor="loan-principal" className="text-sm font-medium">
                   Cuánto te prestaron *
-                </label>
-                <input
+                </Label>
+                <Input
                   id="loan-principal"
                   type="text"
                   inputMode="decimal"
@@ -276,16 +282,16 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                   value={principal}
                   onChange={(e) => setPrincipal(e.target.value)}
                   placeholder="500.000"
-                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+                  className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="loan-tna" className="text-sm font-medium">
+                  <Label htmlFor="loan-tna" className="text-sm font-medium">
                     TNA % *
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     id="loan-tna"
                     type="text"
                     inputMode="decimal"
@@ -293,14 +299,14 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                     value={tnaPercent}
                     onChange={(e) => setTnaPercent(e.target.value)}
                     placeholder="60"
-                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                    className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                   />
                 </div>
                 <div>
-                  <label htmlFor="loan-count" className="text-sm font-medium">
+                  <Label htmlFor="loan-count" className="text-sm font-medium">
                     Cuotas *
-                  </label>
-                  <input
+                  </Label>
+                  <Input
                     id="loan-count"
                     type="text"
                     inputMode="numeric"
@@ -308,16 +314,16 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                     value={installmentCount}
                     onChange={(e) => setInstallmentCount(e.target.value)}
                     placeholder="12"
-                    className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                    className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                   />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="loan-first" className="text-sm font-medium">
+                <Label htmlFor="loan-first" className="text-sm font-medium">
                   Primera cuota *
-                </label>
-                <input
+                </Label>
+                <Input
                   id="loan-first"
                   type="date"
                   value={firstInstallmentDate}
@@ -325,7 +331,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                     setFirstInstallmentDate(e.target.value);
                     clearDateInputIfEmptied(e.target);
                   }}
-                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                  className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                 />
               </div>
 
@@ -379,10 +385,10 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label htmlFor="acc-card-closing" className="text-sm font-medium">
+                      <Label htmlFor="acc-card-closing" className="text-sm font-medium">
                         Día de cierre
-                      </label>
-                      <input
+                      </Label>
+                      <Input
                         id="acc-card-closing"
                         type="text"
                         inputMode="numeric"
@@ -390,14 +396,14 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                         value={closingDay}
                         onChange={(e) => setClosingDay(e.target.value)}
                         placeholder="15"
-                        className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                        className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                       />
                     </div>
                     <div>
-                      <label htmlFor="acc-card-due" className="text-sm font-medium">
+                      <Label htmlFor="acc-card-due" className="text-sm font-medium">
                         Día de vencimiento
-                      </label>
-                      <input
+                      </Label>
+                      <Input
                         id="acc-card-due"
                         type="text"
                         inputMode="numeric"
@@ -405,17 +411,17 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                         value={dueDay}
                         onChange={(e) => setDueDay(e.target.value)}
                         placeholder="5"
-                        className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-3 py-2.5 outline-none focus:ring-2 focus:ring-focus"
+                        className="mt-1 w-full rounded-md border-line-strong bg-transparent px-3 py-2.5 text-base"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label htmlFor="acc-card-limit" className="text-sm font-medium">
+                    <Label htmlFor="acc-card-limit" className="text-sm font-medium">
                       Límite de la tarjeta{" "}
                       <span className="font-normal text-fg-muted">(opcional)</span>
-                    </label>
-                    <input
+                    </Label>
+                    <Input
                       id="acc-card-limit"
                       type="text"
                       inputMode="decimal"
@@ -423,7 +429,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                       value={creditLimit}
                       onChange={(e) => setCreditLimit(e.target.value)}
                       placeholder="500.000"
-                      className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+                      className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
                     />
                     {limitPreview && (
                       <p className="mt-1 text-xs text-fg-muted">
@@ -442,11 +448,11 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               )}
 
               <div>
-                <label htmlFor="acc-opening" className="text-sm font-medium">
+                <Label htmlFor="acc-opening" className="text-sm font-medium">
                   {isCard ? "Saldo inicial" : "Cuánta plata tiene hoy"}{" "}
                   <span className="font-normal text-fg-muted">(opcional)</span>
-                </label>
-                <input
+                </Label>
+                <Input
                   id="acc-opening"
                   type="text"
                   inputMode="decimal"
@@ -454,7 +460,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                   value={openingBalance}
                   onChange={(e) => setOpeningBalance(e.target.value)}
                   placeholder="0,00"
-                  className="mt-1 w-full rounded-md border border-line-strong bg-transparent px-4 py-3 outline-none focus:ring-2 focus:ring-focus"
+                  className="mt-1 w-full rounded-md border-line-strong bg-transparent px-4 py-3 text-base"
                 />
                 <p className="mt-1 text-xs text-fg-muted">
                   {openingPreview ? (
@@ -553,23 +559,24 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             )}
 
             <div className="flex gap-3">
-              <button
+              <Button
                 id="acc-cancel"
-                type="button"
+                variant="outline"
                 onClick={onClose}
-                className="flex-1 rounded-md border border-line-strong py-3 font-medium"
+                className="flex-1 py-3"
               >
                 Cancelar
-              </button>
-              <button
+              </Button>
+              <Button
                 id="acc-submit"
                 type="submit"
                 form="acc-form"
+                variant="secondary"
                 disabled={saving}
-                className="flex-1 rounded-md py-3 font-bold text-primary-fg bg-transfer hover:bg-transfer/90 disabled:opacity-50"
+                className="flex-1 py-3 bg-transfer hover:bg-transfer/90 text-primary-fg"
               >
                 {saving ? "Creando…" : "Crear cuenta"}
-              </button>
+              </Button>
             </div>
           </div>
       </div>
