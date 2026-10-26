@@ -20,6 +20,7 @@ import {
 } from "@/lib/finance";
 import { formatMoney } from "@/lib/format";
 import { Banknote, Receipt, ArrowLeftRight, RefreshCw, TriangleAlert, type LucideIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 /** Cómo se ve cada tipo en la bandeja y en la lista de reglas. */
 const KIND_STYLE: Record<MovementKindDTO, { icon: LucideIcon; text: string }> = {
@@ -330,13 +331,14 @@ export default function RecurrencePage() {
             hacer cuando vence.
           </p>
         </div>
-        <button
+        <Button
           id="rec-add-rule"
+          variant="default"
           onClick={() => openForm(null)}
-          className="rounded-lg bg-primary text-primary-fg px-4 py-2.5 font-bold"
+          className="px-4 py-2.5"
         >
           ＋ Nueva regla
-        </button>
+        </Button>
       </div>
 
       {/* ── Aviso de la última acción ────────────────────────────────────── */}
@@ -390,14 +392,15 @@ export default function RecurrencePage() {
               {runSummary}
             </p>
           </div>
-          <button
+          <Button
             id="rec-run-again"
+            variant="outline"
             onClick={() => load({ run: true, archived: includeArchived })}
             disabled={loading}
-            className="shrink-0 rounded-md border border-line-strong px-4 py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+            className="shrink-0 px-4 py-2"
           >
             Generar de nuevo
-          </button>
+          </Button>
         </div>
 
         {runError && (
@@ -525,22 +528,24 @@ export default function RecurrencePage() {
                     </div>
 
                     <div className="mt-2 flex gap-2">
-                      <button
+                      <Button
                         id={`rec-accept-${occurrence.id}`}
+                        variant="secondary"
                         onClick={() => decide(occurrence, "accept")}
                         disabled={busyId !== null}
-                        className="flex-1 rounded-md bg-success hover:bg-success/90 text-primary-fg py-2 text-sm font-bold disabled:opacity-50"
+                        className="flex-1 py-2 bg-success hover:bg-success/90 text-primary-fg"
                       >
                         {busy ? "Aceptando…" : "✓ Aceptar"}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         id={`rec-skip-${occurrence.id}`}
+                        variant="outline"
                         onClick={() => decide(occurrence, "skip")}
                         disabled={busyId !== null}
-                        className="flex-1 rounded-md border border-line-strong py-2 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                        className="flex-1 py-2"
                       >
                         Saltar
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 );
@@ -558,18 +563,15 @@ export default function RecurrencePage() {
                   una proyección: no son movimientos ni suman a ningún total.
                 </p>
               </div>
-              <button
+              <Button
                 id="rec-toggle-archived"
+                variant={includeArchived ? "secondary" : "outline"}
                 onClick={toggleArchived}
                 aria-pressed={includeArchived}
-                className={`shrink-0 rounded-md border px-3 py-2 text-sm font-medium ${
-                  includeArchived
-                    ? "border-transparent bg-primary text-primary-fg "
-                    : "border-line-strong hover:bg-surface-3 "
-                }`}
+                className={`shrink-0 px-3 py-2 ${includeArchived ? "bg-primary text-primary-fg" : ""}`}
               >
                 {includeArchived ? "Ocultar archivadas" : "Ver archivadas"}
-              </button>
+              </Button>
             </div>
 
             <div className="p-4 flex flex-col gap-3">
@@ -655,47 +657,55 @@ export default function RecurrencePage() {
 
                     <div className="mt-2 flex flex-wrap gap-2">
                       {!isArchived && (
-                        <button
+                        <Button
                           id={`rec-edit-${rule.id}`}
+                          variant="outline"
+                          size="sm"
                           onClick={() => openForm(rule)}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                          className="px-3 py-1.5"
                         >
                           Editar
-                        </button>
+                        </Button>
                       )}
 
                       {rule.status === "ACTIVE" && (
-                        <button
+                        <Button
                           id={`rec-pause-${rule.id}`}
+                          variant="outline"
+                          size="sm"
                           onClick={() => patchStatus(rule, "PAUSED")}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                          className="px-3 py-1.5"
                         >
                           {busy ? "Pausando…" : "Pausar"}
-                        </button>
+                        </Button>
                       )}
 
                       {rule.status !== "ACTIVE" && (
-                        <button
+                        <Button
                           id={`rec-resume-${rule.id}`}
+                          variant="outline"
+                          size="sm"
                           onClick={() => patchStatus(rule, "ACTIVE")}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                          className="px-3 py-1.5"
                         >
                           Reactivar
-                        </button>
+                        </Button>
                       )}
 
                       {!isArchived && (
-                        <button
+                        <Button
                           id={`rec-archive-${rule.id}`}
+                          variant="outline"
+                          size="sm"
                           onClick={() => patchStatus(rule, "ARCHIVED")}
                           disabled={busyId !== null}
-                          className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 disabled:opacity-50"
+                          className="px-3 py-1.5"
                         >
                           Archivar
-                        </button>
+                        </Button>
                       )}
 
                       {confirmDeleteId === rule.id ? (
@@ -703,34 +713,40 @@ export default function RecurrencePage() {
                           <span className="text-sm text-fg-muted py-1.5">
                             ¿Borrar la regla?
                           </span>
-                          <button
+                          <Button
                             id={`rec-delete-confirm-${rule.id}`}
+                            variant="destructive"
+                            size="sm"
                             onClick={() => removeRule(rule)}
                             disabled={busyId !== null}
-                            className="rounded-lg bg-danger hover:bg-danger/90 text-primary-fg px-3 py-1.5 text-sm font-bold disabled:opacity-50"
+                            className="px-3 py-1.5"
                           >
                             Sí, borrar
-                          </button>
-                          <button
+                          </Button>
+                          <Button
                             id={`rec-delete-cancel-${rule.id}`}
+                            variant="outline"
+                            size="sm"
                             onClick={() => setConfirmDeleteId(null)}
-                            className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium hover:bg-surface-3 "
+                            className="px-3 py-1.5"
                           >
                             Mejor no
-                          </button>
+                          </Button>
                         </>
                       ) : (
-                        <button
+                        <Button
                           id={`rec-delete-${rule.id}`}
+                          variant="ghost"
+                          size="sm"
                           onClick={() => {
                             setConfirmDeleteId(rule.id);
                             setDeleteNotice(null);
                           }}
                           disabled={busyId !== null}
-                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-fg-muted hover:bg-surface-3 hover:text-danger disabled:opacity-50"
+                          className="text-fg-muted hover:text-danger px-3 py-1.5"
                         >
                           Borrar
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
