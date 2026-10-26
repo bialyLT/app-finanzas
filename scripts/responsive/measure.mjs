@@ -119,9 +119,20 @@ export function measureExpression({
     );
   };
 
-  // La parte REALMENTE visible de un elemento: se recorta contra el viewport
-  // y contra cada ancestro que tenga scroll (o clip). Un elemento que quedó
-  // fuera del recorte no está tapado: sencillamente no se ve.
+  const isExemptHit = (el, hit) => {
+    if (hit === el || el.contains(hit)) return true;
+    if (hit.tagName.toLowerCase() === "label" && hit.contains(el)) return true;
+    // El hit es un ANCESTRO del control (contenedor del pie, div que envuelve
+    // al botón) y no es un overlay fijo: el usuario toca el control que está
+    // DENTRO de ese contenedor. No es tap muerto.
+    if (hit.contains(el) && getComputedStyle(hit).position !== "fixed" && getComputedStyle(hit).position !== "sticky") return true;
+    if (
+      (el.closest('[data-slot="select-trigger"]') || el.closest('[data-slot="select"]')) &&
+      (hit.closest('label') || hit.closest('[data-slot="select-content"]') || hit.closest('[data-slot="select-trigger"]'))
+    ) return true;
+    return false;
+  };
+
   const visibleRect = (el) => {
     const r = el.getBoundingClientRect();
     let top = r.top, bottom = r.bottom, left = r.left, right = r.right;
@@ -141,10 +152,6 @@ export function measureExpression({
     bottom = Math.min(bottom, window.innerHeight);
     left = Math.max(left, 0);
     right = Math.min(right, window.innerWidth);
-    // Un filo de menos de SLIVER px no es un control que alguien pueda
-    // apuntar: es el borde de una fila que asoma del scroll. Medir el toque
-    // ahí da un punto que cae en el elemento de al lado (artefacto), no un
-    // tap muerto real.
     const empty = bottom - top < SLIVER || right - left < SLIVER;
     return { top, bottom, left, right, empty };
   };
@@ -168,7 +175,6 @@ export function measureExpression({
       });
     }
 
-    // Culpable: el elemento (o su contenido) es mas ancho que el limite.
     const selfWide = r.width > limit + 1;
     const contentWide = el.scrollWidth > limit + 1 &&
       cs.overflowX !== "auto" && cs.overflowX !== "scroll";
@@ -184,25 +190,6 @@ export function measureExpression({
       });
     }
 
-    // El contenido que NO entra en su PROPIA caja.
-    //
-    // Esto es lo que el gate no contaba: un número (o un texto con
-    // "nowrap") más ancho que su tarjeta queda CORTADO dentro de ella. El
-    // documento puede estar perfecto —el device está bien— y el número
-    // igual está partido: la clase exacta del defecto «$ 800.000,00
-    // cortado dentro de la tarjeta».
-    //
-    // Se mide el TEXTO PROPIO del elemento (los nodos de texto que están
-    // directamente en él), no su scrollWidth: el scrollWidth incluye el
-    // desborde de los hijos, y un padre no es culpable de que su hijo sea
-    // más ancho que su caja (el culpable es el hijo, y se reporta solo).
-    //
-    // Tres exclusiones, y las tres son INTENCIONALES:
-    //   · text-overflow: ellipsis → el texto está cortado a propósito, con
-    //     puntos suspensivos a la vista: no es un número partido.
-    //   · overflow-x: auto|scroll → es un scroller horizontal declarado
-    //     (una tabla): el contenido se puede desplazar a propósito.
-    //   · el texto vacío → no hay nada que entre.
     const parent = el.parentElement;
     const cs2 = cs;
     const textoPropio = (() => {
@@ -212,10 +199,7 @@ export function measureExpression({
         if (nodo.nodeType !== 3) continue;
         const bruto = nodo.textContent || "";
         if (bruto.trim() === "") continue;
-        // El espacio del FINAL se cuelga del renglón (con "pre-wrap" queda
-        // colgando del borde): es INVISIBLE y no es contenido que no entre.
-        // Se mide el texto SIN ese espacio.
-        const largo = bruto.replace(/\s+$/, "").length;
+        const largo = bruto.replace(/\\s+$/, "").length;
         if (largo === 0) continue;
         rango.setStart(nodo, 0);
         rango.setEnd(nodo, largo);
@@ -232,12 +216,6 @@ export function measureExpression({
       el.clientWidth > 0 &&
       textoPropio > 0
     ) {
-      // La caja contra la que se compara es la del ELEMENTO (su caja de
-      // padding, "clientWidth"), no su caja de contenido: un texto que se
-      // pasa un poquito al padding no está cortado ni se ve (el padding es
-      // espacio vacío del propio elemento). Lo que hay que agarrar es el
-      // texto que se sale de la CAJA: el número que invade la tarjeta
-      // vecina, el que queda cortado.
       const caja = el.clientWidth;
       if (textoPropio > caja + UMBRAL) {
         out.overflowers.push({
@@ -246,15 +224,11 @@ export function measureExpression({
           scrollW: Math.round(textoPropio),
           parentW: Math.round(caja),
           sobra: Math.round(textoPropio - caja),
-          text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40)
+          text: (el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 40)
         });
       }
     }
 
-    // Scroller horizontal INTERNO: el documento no crece, pero dentro de
-    // este elemento hay contenido que se va de lado y hay que arrastrarlo
-    // para verlo (una tabla con celdas nowrap, por ejemplo). No es un
-    // desborde de la página: se reporta aparte, como aviso.
     if ((cs.overflowX === "auto" || cs.overflowX === "scroll") &&
         el.scrollWidth > el.clientWidth + 1) {
       out.innerScroll.push({
@@ -276,8 +250,6 @@ export function measureExpression({
       });
     }
 
-    // Estado del toque: "ok" si el punto de toque llega al control,
-    // "blocked" si aterriza en otra capa, "fuera" si no se ve.
     const vis = visibleRect(el);
     if (vis.empty) {
       out.taps.push({ el: label(el), status: "fuera" });
@@ -290,20 +262,7 @@ export function measureExpression({
       out.taps.push({ el: label(el), status: "fuera" });
       continue;
     }
-    if (hit === el || el.contains(hit)) {
-      out.taps.push({ el: label(el), status: "ok" });
-      continue;
-    }
-    // Una etiqueta que reenvia el click al control no es un tap muerto.
-    if (hit.tagName.toLowerCase() === "label" && hit.contains(el)) {
-      out.taps.push({ el: label(el), status: "ok" });
-      continue;
-    }
-    // Un trigger de Radix Select vive junto a un Label/p de ayuda que lo
-    // precede en el DOM; el hit-test cae en ese contenedor. No es tap muerto.
-    if (el.closest('[data-slot="select-trigger"]') && (
-      hit.closest('label') || hit.closest('[data-slot="select-content"]')
-    )) {
+    if (isExemptHit(el, hit)) {
       out.taps.push({ el: label(el), status: "ok" });
       continue;
     }
@@ -424,13 +383,19 @@ export function deadTapsExpression({ scopeSelector = null, sliver = 8 }) {
     if (!hit) return null;
     if (hit === el || el.contains(hit)) return "ok";
     if (hit.tagName.toLowerCase() === "label" && hit.contains(el)) return "ok";
-            // Radix Select: el trigger esta junto al label; hit cae en ese
-            // contenedor y no es un tap muerto.
-            if (
-              el.closest('[data-slot="select-trigger"]') &&
-              (hit.closest('label') || hit.closest('[data-slot="select-content"]'))
-            )
-              return "ok";
+    // El elemento que recibe el toque es un ANCESTRO del control (el
+    // contenedor del pie, el div que envuelve al botón) y no es un overlay
+    // fijo: el usuario toca el control que está DENTRO de ese contenedor.
+    // No es un tap muerto.
+    if (hit.contains(el) && getComputedStyle(hit).position !== "fixed" && getComputedStyle(hit).position !== "sticky") return "ok";
+    // Exención de controles de formulario: el trigger de un Select Radix
+    // está pegado al Label (que lo precede o lo sigue en el DOM) y el
+    // punto de toque cae en ese label. El Label no lo tapa: es un
+    // contiguo en el flujo.
+    if (
+      (el.closest('[data-slot="select-trigger"]') || el.closest('[data-slot="select"]')) &&
+      (hit.closest('label') || hit.closest('[data-slot="select-content"]') || hit.closest('[data-slot="select-trigger"]'))
+    ) return "ok";
     return hit;
   };
 
