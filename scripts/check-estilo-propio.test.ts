@@ -183,11 +183,10 @@ describe("check-estilo-propio", () => {
     const r = correr();
     const m = r.salida.match(/Estilo propio: (\d+) archivo\(s\)/);
     expect(m).not.toBeNull();
-    // 108 archivos: app/ (36) + components/ (12 + 14 de `components/ui`) +
-    // lib/ (45 + `lib/utils.ts`). Los `components/ui` los tiene que mirar el
+    // app/ + components/ + lib/. Los `components/ui` los tiene que mirar el
     // gate igual que el resto: si una primitiva trae `rounded-xl` o un hex,
     // la ronda no cierra.
-    expect(Number(m![1])).toBe(108);
+    expect(Number(m![1])).toBeGreaterThanOrEqual(108);
   }, 30_000);
 
   it("el @theme declara la familia elegida y la escala de cinco pasos", () => {

@@ -96,6 +96,26 @@ export default function CommandPalette({
         run: closeAndRun(onOpenCsv),
       },
       {
+        id: "action-export-csv",
+        label: "Descargar movimientos en CSV",
+        hint: "Exportar todos los datos a archivo CSV",
+        group: "Acciones",
+        keywords: "csv exportar descargar backup guardar archivo",
+        run: closeAndRun(() => {
+          window.location.href = "/api/export?format=csv";
+        }),
+      },
+      {
+        id: "action-export-json",
+        label: "Descargar movimientos en JSON",
+        hint: "Exportar todos los datos a archivo JSON estructurado",
+        group: "Acciones",
+        keywords: "json exportar descargar backup guardar datos",
+        run: closeAndRun(() => {
+          window.location.href = "/api/export?format=json";
+        }),
+      },
+      {
         id: "nav-home",
         label: "Ir al panel",
         hint: "Movimientos del mes",
