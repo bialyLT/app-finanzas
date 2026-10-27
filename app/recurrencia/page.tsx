@@ -458,7 +458,7 @@ export default function RecurrencePage() {
       {!loadError && !loading && (
         <>
           {/* ── Bandeja de pendientes ────────────────────────────────────── */}
-          <section className="rounded-lg border bg-card text-card-foreground shadow-sm shadow-sm">
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm">
             <div className="px-4 pt-4">
               <h2 className="text-lg font-bold">
                 Pendientes{" "}
@@ -554,7 +554,7 @@ export default function RecurrencePage() {
           </section>
 
           {/* ── Reglas ───────────────────────────────────────────────────── */}
-          <section className="rounded-lg border bg-card text-card-foreground shadow-sm shadow-sm">
+          <section className="rounded-lg border bg-card text-card-foreground shadow-sm">
             <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="text-lg font-bold">Reglas</h2>

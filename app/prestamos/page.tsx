@@ -590,9 +590,12 @@ export default function LoansPage() {
             </div>
 
             {loanDebts.length === 0 && (
-              <p className="bg-surface-2 rounded-md px-4 py-6 text-center text-fg-muted shadow-sm text-sm">
-                No hay préstamos que debas cargados.
-              </p>
+              <div className="bg-surface-2 rounded-md px-4 py-8 text-center text-fg-muted shadow-sm">
+                <p className="font-medium text-fg">No tenés préstamos que debas cargados</p>
+                <p className="text-sm text-fg-muted mt-1">
+                  Podés registrar uno nuevo usando el botón <b>＋ Nuevo préstamo</b> arriba.
+                </p>
+              </div>
             )}
 
             {loanDebts.map(renderLoan)}
@@ -611,9 +614,12 @@ export default function LoansPage() {
             </div>
 
             {receivables.length === 0 && (
-              <p className="bg-surface-2 rounded-md px-4 py-6 text-center text-fg-muted shadow-sm text-sm">
-                No hay plata que te deban cargada.
-              </p>
+              <div className="bg-surface-2 rounded-md px-4 py-8 text-center text-fg-muted shadow-sm">
+                <p className="font-medium text-fg">No tenés préstamos que te deban cargados</p>
+                <p className="text-sm text-fg-muted mt-1">
+                  Si prestaste plata a alguien, podés registrarlo desde <b>＋ Nuevo préstamo</b> seleccionando que te deben.
+                </p>
+              </div>
             )}
 
             {receivables.map(renderLoan)}

@@ -432,7 +432,7 @@ export default function CardsPage() {
             <section
               key={card.id}
               id={`card-${card.id}`}
-              className="rounded-lg border bg-card text-card-foreground shadow-sm shadow-sm"
+              className="rounded-lg border bg-card text-card-foreground shadow-sm"
             >
               {/* ── Encabezado de la tarjeta ─────────────────────────────── */}
               <div className="px-4 pt-4 flex items-start justify-between gap-3 flex-wrap">
