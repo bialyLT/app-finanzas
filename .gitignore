@@ -64,3 +64,6 @@ next-env.d.ts
 
 # local planning docs (not versioned)
 ROADMAP.md
+
+# backups de base de datos
+/backups/

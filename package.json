@@ -26,6 +26,7 @@
     "db:local:stop": "powershell -ExecutionPolicy Bypass -File scripts/db-local.ps1 stop",
     "db:local:status": "powershell -ExecutionPolicy Bypass -File scripts/db-local.ps1 status",
     "db:local:reset": "powershell -ExecutionPolicy Bypass -File scripts/db-local.ps1 reset",
+    "db:backup": "powershell -ExecutionPolicy Bypass -File scripts/db-backup.ps1",
     "auth:hash": "node scripts/hash-password.mjs",
     "auth:secret": "node scripts/generate-secret.mjs"
   },
