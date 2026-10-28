@@ -2115,6 +2115,14 @@ export default function Home() {
           batch={voiceParsedBatch}
           accounts={accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind }))}
           categories={categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
+          existingMovements={movements.map((m) => ({
+            id: m.id,
+            kind: m.kind,
+            amount: m.amount,
+            date: m.date,
+            description: m.description,
+            accountId: m.accountId,
+          }))}
           onSaved={() => {
             setVoiceParsedBatch(null);
             load();

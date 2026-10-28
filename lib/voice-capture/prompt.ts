@@ -69,6 +69,14 @@ ${categoriesList}
    - Si falta información crítica (por ejemplo, "pagué 2000" pero hay varias cuentas y no dijo cuál, o no queda claro el monto), preferí dejar el campo en null y agregar un objeto en "clarifications" explicando qué falta.
    - Si una cuenta o categoría mencionada no coincide con las disponibles, poné null en el campo y agregá una aclaración sugiriendo opciones si las hay.
 
+### INSTRUCCIONES ESPECIALES PARA COMPROBANTES / IMÁGENES
+- Si se adjunta una imagen o comprobante (ticket, factura, transferencia, ticket de posnet):
+  - Extraé el monto total final efectivamente cobrado o pagado.
+  - Extraé la fecha que figure en el comprobante. Si no es legible o no figura, usá ${input.today}.
+  - Extraé el nombre del comercio o concepto en "description".
+  - Si el comprobante indica pago con tarjeta y cuotas, asigná el número de cuotas en "installments".
+  - En "sourceText" indicá "Comprobante: [nombre del comercio o concepto]".
+
 ### FORMATO DE SALIDA (JSON ÚNICAMENTE)
 Respondé ÚNICAMENTE un objeto JSON válido con esta estructura exacta, sin texto introductorio ni bloques markdown:
 

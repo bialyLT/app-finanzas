@@ -46,15 +46,58 @@ export async function POST(req: Request) {
 
   const record = body as Record<string, unknown>;
   const rawText = record.text;
+  const rawImage = record.image as
+    | { base64?: string; mimeType?: string }
+    | undefined;
 
-  if (typeof rawText !== "string" || rawText.trim().length === 0) {
+  let image: { base64: string; mimeType: string } | undefined;
+  if (rawImage && typeof rawImage === "object") {
+    if (
+      typeof rawImage.base64 === "string" &&
+      typeof rawImage.mimeType === "string"
+    ) {
+      // Validamos MIME types permitidos (imágenes estándar y pdf)
+      const allowedMimes = [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "image/heic",
+        "application/pdf",
+      ];
+      if (!allowedMimes.includes(rawImage.mimeType.toLowerCase())) {
+        return NextResponse.json(
+          {
+            error:
+              "Tipo de archivo no soportado. Subí una imagen (JPG, PNG, WebP) o PDF.",
+          },
+          { status: 400 },
+        );
+      }
+
+      // Validamos tope de tamaño (ej. 5MB en base64 ~ 7MB string)
+      if (rawImage.base64.length > 7 * 1024 * 1024) {
+        return NextResponse.json(
+          { error: "El comprobante no puede superar los 5 MB." },
+          { status: 400 },
+        );
+      }
+
+      image = {
+        base64: rawImage.base64,
+        mimeType: rawImage.mimeType,
+      };
+    }
+  }
+
+  const hasText = typeof rawText === "string" && rawText.trim().length > 0;
+  if (!hasText && !image) {
     return NextResponse.json(
-      { error: "El texto a interpretar no puede estar vacío." },
+      { error: "Tenés que enviar un texto o adjuntar un comprobante." },
       { status: 400 },
     );
   }
 
-  const text = rawText.trim();
+  const text = hasText ? (rawText as string).trim() : "Comprobante adjunto";
   if (text.length > 4000) {
     return NextResponse.json(
       { error: "El texto a interpretar no puede superar los 4000 caracteres." },
@@ -82,6 +125,7 @@ export async function POST(req: Request) {
       today,
       accounts,
       categories,
+      image,
     });
 
     const resolvedBatch = resolveBatch(rawResult, {

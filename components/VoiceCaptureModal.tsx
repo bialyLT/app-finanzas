@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AlertCircle, Mic, MicOff, Send, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertCircle, FileText, Image as ImageIcon, Mic, MicOff, Send, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,6 +35,12 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
 
   const [parseError, setParseError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<{
+    base64: string;
+    mimeType: string;
+    name: string;
+  } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Reiniciar estado al abrir el diálogo
   useEffect(() => {
@@ -42,6 +48,7 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
       resetTranscript();
       setParseError(null);
       setIsParsing(false);
+      setAttachedFile(null);
     } else {
       stopListening();
     }
@@ -49,9 +56,34 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
 
   const displayedText = transcript + (interimTranscript ? ` ${interimTranscript}` : "");
 
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setParseError("El archivo supera el máximo permitido de 5 MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const [header, base64] = result.split(",");
+      const mimeType = header.match(/:(.*?);/)?.[1] || file.type;
+
+      setAttachedFile({
+        base64,
+        mimeType,
+        name: file.name,
+      });
+      setParseError(null);
+    };
+    reader.readAsDataURL(file);
+  }
+
   async function handleParse() {
     const textToParse = transcript.trim();
-    if (!textToParse) return;
+    if (!textToParse && !attachedFile) return;
 
     stopListening();
     setIsParsing(true);
@@ -61,7 +93,12 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
       const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: textToParse }),
+        body: JSON.stringify({
+          text: textToParse || "Interpretar comprobante adjunto",
+          image: attachedFile
+            ? { base64: attachedFile.base64, mimeType: attachedFile.mimeType }
+            : undefined,
+        }),
       });
 
       const data = await res.json();
@@ -130,6 +167,47 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
               />
             </div>
 
+            {/* Archivo adjunto */}
+            {attachedFile ? (
+              <div className="flex items-center justify-between rounded-md border border-border bg-surface-3 px-3 py-2 text-xs">
+                <div className="flex items-center gap-2 text-fg truncate">
+                  <FileText className="h-4 w-4 shrink-0 text-accent" />
+                  <span className="truncate">{attachedFile.name}</span>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setAttachedFile(null)}
+                  className="h-6 w-6 text-fg-muted hover:text-danger"
+                  title="Quitar archivo"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="default"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isParsing}
+                  className="gap-2 text-xs min-h-[44px]"
+                >
+                  <ImageIcon className="h-4 w-4" />
+                  <span>Adjuntar foto de ticket o PDF</span>
+                </Button>
+              </div>
+            )}
+
             {speechError && (
               <div className="flex items-start gap-2 rounded-md bg-warning/10 p-2 text-xs text-warning">
                 <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -188,7 +266,7 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
               variant="default"
               size="default"
               onClick={handleParse}
-              disabled={isParsing || !transcript.trim()}
+              disabled={isParsing || (!transcript.trim() && !attachedFile)}
               className="gap-2 min-h-[44px]"
             >
               {isParsing ? (

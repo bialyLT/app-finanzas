@@ -50,7 +50,7 @@ describe("POST /api/parse", () => {
     expect(res.status).toBe(401);
   });
 
-  it("devuelve 400 si el texto está vacío", async () => {
+  it("devuelve 400 si no hay ni texto ni comprobante", async () => {
     vi.mocked(dalModule.requireApiSession).mockResolvedValue({ id: "user" } as any);
 
     const req = new Request("http://localhost:3000/api/parse", {
@@ -62,7 +62,7 @@ describe("POST /api/parse", () => {
     const res = await POST(req);
     expect(res.status).toBe(400);
     const data = await res.json();
-    expect(data.error).toContain("no puede estar vacío");
+    expect(data.error).toContain("Tenés que enviar un texto o adjuntar un comprobante");
   });
 
   it("devuelve 200 con el lote resuelto usando MockProvider", async () => {

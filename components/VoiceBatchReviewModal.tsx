@@ -20,12 +20,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type {
+import {
   AccountLookup,
   CategoryLookup,
   ResolvedBatch,
   ResolvedMovement,
 } from "@/lib/voice-capture/resolve";
+import { findPossibleDuplicates, type ExistingMovementRecord } from "@/lib/voice-capture/duplicates";
 import { formatMoney } from "@/lib/format";
 
 interface Props {
@@ -34,6 +35,7 @@ interface Props {
   batch: ResolvedBatch | null;
   accounts: AccountLookup[];
   categories: CategoryLookup[];
+  existingMovements?: ExistingMovementRecord[];
   onSaved: () => void;
 }
 
@@ -43,6 +45,7 @@ export function VoiceBatchReviewModal({
   batch,
   accounts,
   categories,
+  existingMovements = [],
   onSaved,
 }: Props) {
   const [items, setItems] = useState<ResolvedMovement[]>(
@@ -204,6 +207,18 @@ export function VoiceBatchReviewModal({
                     <div className="text-xs text-fg-muted italic">
                       &quot;{item.sourceText}&quot;
                     </div>
+
+                    {/* Alerta de posible duplicado */}
+                    {(() => {
+                      const dup = findPossibleDuplicates(item, existingMovements);
+                      if (!dup) return null;
+                      return (
+                        <div className="flex items-start gap-1.5 text-xs text-warning bg-warning/10 p-2 rounded-md">
+                          <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                          <span><strong>Posible duplicado:</strong> {dup.reason}</span>
+                        </div>
+                      );
+                    })()}
 
                     {/* Aclaraciones / Advertencias */}
                     {item.clarifications.length > 0 && (
