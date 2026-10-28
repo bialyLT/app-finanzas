@@ -7,6 +7,10 @@ import AccountForm from "@/components/AccountForm";
 import CommandPalette from "@/components/CommandPalette";
 import CsvImportModal from "@/components/CsvImportModal";
 import TransactionForm from "@/components/TransactionForm";
+import { VoiceCaptureButton } from "@/components/VoiceCaptureButton";
+import { VoiceCaptureModal } from "@/components/VoiceCaptureModal";
+import { VoiceBatchReviewModal } from "@/components/VoiceBatchReviewModal";
+import type { ResolvedBatch } from "@/lib/voice-capture/resolve";
 import {
   formatCalendar,
   formatPeriodLabel,
@@ -168,6 +172,9 @@ export default function Home() {
   /** Paleta `Ctrl+K` e importación CSV: dos overlays que no conviven con el form. */
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
+  const [voiceModalOpen, setVoiceModalOpen] = useState(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [voiceParsedBatch, setVoiceParsedBatch] = useState<ResolvedBatch | null>(null);
 
   /**
    * Borrado de plantillas en DOS pasos inline, como el resto de la app: el
@@ -1579,6 +1586,10 @@ export default function Home() {
             </p>
           </div>
           <div className="flex gap-2">
+            <VoiceCaptureButton
+              onClick={() => setVoiceModalOpen(true)}
+              className="py-1.5"
+            />
             <button
               id="btn-import-csv"
               type="button"
@@ -2082,6 +2093,30 @@ export default function Home() {
         <CsvImportModal
           onClose={() => setCsvOpen(false)}
           onImported={() => {
+            load();
+            refreshFavorites();
+          }}
+        />
+      )}
+
+      <VoiceCaptureModal
+        open={voiceModalOpen}
+        onOpenChange={setVoiceModalOpen}
+        onParsed={(batch) => {
+          setVoiceParsedBatch(batch);
+          setReviewModalOpen(true);
+        }}
+      />
+
+      {voiceParsedBatch && (
+        <VoiceBatchReviewModal
+          open={reviewModalOpen}
+          onOpenChange={setReviewModalOpen}
+          batch={voiceParsedBatch}
+          accounts={accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind }))}
+          categories={categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
+          onSaved={() => {
+            setVoiceParsedBatch(null);
             load();
             refreshFavorites();
           }}
