@@ -109,7 +109,7 @@ apaga cuando querés.
 | Comando | Hace |
 |---|---|
 | `npm run dev` | Servidor de desarrollo |
-| `npm run build` / `npm start` | Build de producción (antes aplica las migraciones pendientes) y servidor |
+| `npm run build` / `npm start` | Build de producción y servidor |
 | `npm run test` | Tests unitarios y de integración (vitest) |
 | `npm run typecheck` | TypeScript sin emitir |
 | `npm run lint` | ESLint |
