@@ -35,6 +35,7 @@ import { TriangleAlert, Search, ChartColumn, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { BudgetsSection } from "@/components/BudgetsSection";
 
 /**
  * Análisis del período: tarjetas, torta por categoría y evolución por día.
@@ -821,6 +822,9 @@ export default function AnalisisPage() {
               )}
             </div>
           )}
+
+          {/* Presupuestos mensuales (Fase 8) */}
+          <BudgetsSection month={range.from.slice(0, 7)} />
         </>
       )}
     </main>

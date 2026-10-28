@@ -388,6 +388,9 @@ model Category {
   /// Plantillas/favoritos que precargan esta categoría.
   favoriteTemplates FavoriteTemplate[]
 
+  /// Presupuestos mensuales fijados sobre esta categoría.
+  budgets Budget[]
+
   @@unique([normalizedName])
   @@index([kind])
 }
@@ -990,3 +993,33 @@ model FavoriteTemplate {
   @@index([lastUsedAt])
   @@index([kind])
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PRESUPUESTOS MENSUALES — FASE 8
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Un presupuesto fija un tope objetivo de gasto para un mes calendario
+// ("YYYY-MM-01" anclado en @db.Date) sobre una categoría de gasto (EXPENSE).
+// No modifica saldos ni restringe la creación de movimientos: su propósito
+// es medir la ejecución, proyectar desvíos y alertar sobreconsumo.
+model Budget {
+  id String @id @default(cuid())
+
+  /// Mes presupuestado: primer día del mes como @db.Date (ej. 2026-10-01).
+  month DateTime @db.Date
+
+  /// Límite asignado: estrictamente positivo.
+  amount Decimal @db.Decimal(18, 2)
+
+  /// Categoría que se presupuesta (sólo EXPENSE).
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Un presupuesto por categoría por mes.
+  @@unique([categoryId, month])
+  @@index([month])
+}
+
