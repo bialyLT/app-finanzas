@@ -214,4 +214,12 @@ Para dar por cerrada cualquier tarea o PR:
 | Agotamiento de cuota de IA gratuita | Rate limit en `/api/parse`, error legible y arquitectura con `AiProvider` intercambiable |
 | Datos financieros sensibles expuestos | Sólo se envían nombres de cuentas y categorías; nunca saldos, números de cuenta ni transacciones previas |
 | Inconsistencias en guardado | Todo el lote se guarda dentro de un `prisma.$transaction` atómico |
-| Ruptura del diseño propio de la app | Validado en cada paso con `npm run check:estilo` y `check:css` |
+## 9. Estado de Implementación
+
+- [x] **Fase 0**: Reconocimiento y resolución de incógnitas (`docs/voice-capture-recon.md`).
+- [x] **Fase 1**: Contrato y motor de interpretación (`schema.ts`, `provider.ts`, `prompt.ts`, `resolve.ts`, `rate-limit.ts`, `POST /api/parse`).
+- [x] **Fase 2**: Captura de voz y texto (`speech.ts`, `use-speech-capture.ts`, `VoiceCaptureModal.tsx`, `VoiceCaptureButton.tsx`).
+- [x] **Fase 3**: Previsualización, aclaraciones y guardado atómico (`batch-service.ts`, `POST /api/transactions/batch`, `VoiceBatchReviewModal.tsx`, integración en `app/page.tsx`).
+- [x] **Fase 4**: Comprobantes e imágenes y detección de duplicados (`duplicates.ts`, soporte multimodal en modal y API).
+- [x] **Fase 5**: Evaluación y dataset rioplatense (`dataset.json`, `dataset.test.ts`, `scripts/eval-parse.mjs`).
+

@@ -1,0 +1,207 @@
+[
+  {
+    "id": "exp-01",
+    "input": "gasté 20 lucas en el súper con Galicia",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 20000,
+      "accountName": "Galicia",
+      "categoryName": "Supermercado"
+    }
+  },
+  {
+    "id": "exp-02",
+    "input": "15 luquitas en la verdulería en efectivo",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 15000,
+      "accountName": "Efectivo"
+    }
+  },
+  {
+    "id": "exp-03",
+    "input": "medio palo en el arreglo del auto con Santander",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 500000,
+      "accountName": "Santander"
+    }
+  },
+  {
+    "id": "exp-04",
+    "input": "1 palo en materiales para la casa",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 1000000
+    }
+  },
+  {
+    "id": "exp-05",
+    "input": "gasté 500 mangos en caramelos",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 500
+    }
+  },
+  {
+    "id": "exp-06",
+    "input": "120k en indumentaria con Visa",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 120000,
+      "accountName": "Visa"
+    }
+  },
+  {
+    "id": "inc-01",
+    "input": "cobré el sueldo de 850 lucas en BBVA",
+    "expected": {
+      "kind": "INCOME",
+      "amount": 850000,
+      "accountName": "BBVA",
+      "categoryName": "Sueldo"
+    }
+  },
+  {
+    "id": "inc-02",
+    "input": "me entraron 45000 de una changa en efectivo",
+    "expected": {
+      "kind": "INCOME",
+      "amount": 45000,
+      "accountName": "Efectivo"
+    }
+  },
+  {
+    "id": "inc-03",
+    "input": "ingreso de 300k por freelance en Mercado Pago",
+    "expected": {
+      "kind": "INCOME",
+      "amount": 300000,
+      "accountName": "Mercado Pago"
+    }
+  },
+  {
+    "id": "trf-01",
+    "input": "me pasé 50 lucas de Galicia a Mercado Pago",
+    "expected": {
+      "kind": "TRANSFER",
+      "amount": 50000,
+      "fromAccountName": "Galicia",
+      "toAccountName": "Mercado Pago"
+    }
+  },
+  {
+    "id": "trf-02",
+    "input": "transferí 20000 de Efectivo al Banco",
+    "expected": {
+      "kind": "TRANSFER",
+      "amount": 20000,
+      "fromAccountName": "Efectivo",
+      "toAccountName": "Banco"
+    }
+  },
+  {
+    "id": "card-rule-01",
+    "input": "pagué la tarjeta de crédito Visa 120 lucas desde Galicia",
+    "expected": {
+      "kind": "TRANSFER",
+      "amount": 120000,
+      "fromAccountName": "Galicia",
+      "toAccountName": "Visa",
+      "neverKind": "EXPENSE"
+    }
+  },
+  {
+    "id": "card-rule-02",
+    "input": "pago del resumen de la tarjeta Santander 85000",
+    "expected": {
+      "kind": "TRANSFER",
+      "amount": 85000,
+      "toAccountName": "Santander",
+      "neverKind": "EXPENSE"
+    }
+  },
+  {
+    "id": "card-plan-01",
+    "input": "compré una tele de 300 lucas en 6 cuotas con la tarjeta Galicia",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 300000,
+      "installments": 6,
+      "accountName": "tarjeta Galicia"
+    }
+  },
+  {
+    "id": "card-plan-02",
+    "input": "zapatillas por 90000 en 3 pagos con Visa",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 90000,
+      "installments": 3,
+      "accountName": "Visa"
+    }
+  },
+  {
+    "id": "multi-01",
+    "input": "gasté 12 lucas en la carnicería con Galicia y 5 lucas en la panadería en efectivo",
+    "expectedBatch": [
+      {
+        "kind": "EXPENSE",
+        "amount": 12000,
+        "accountName": "Galicia"
+      },
+      {
+        "kind": "EXPENSE",
+        "amount": 5000,
+        "accountName": "Efectivo"
+      }
+    ]
+  },
+  {
+    "id": "multi-02",
+    "input": "cobré 100k de alquiler y pagué las expensas 40k con Macro",
+    "expectedBatch": [
+      {
+        "kind": "INCOME",
+        "amount": 100000
+      },
+      {
+        "kind": "EXPENSE",
+        "amount": 40000,
+        "accountName": "Macro"
+      }
+    ]
+  },
+  {
+    "id": "clarif-01",
+    "input": "gasté 100 dólares en un curso online",
+    "expectedClarification": {
+      "field": "currency"
+    }
+  },
+  {
+    "id": "clarif-02",
+    "input": "pagué la cuota del préstamo 70 mil pesos",
+    "expectedClarification": {
+      "field": "loanSplit"
+    }
+  },
+  {
+    "id": "date-rel-01",
+    "input": "ayer gasté 8 lucas en farmacia",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 8000,
+      "relativeDayOffset": -1
+    }
+  },
+  {
+    "id": "date-rel-02",
+    "input": "anteayer cargué 25 lucas de nafta en YPF",
+    "expected": {
+      "kind": "EXPENSE",
+      "amount": 25000,
+      "relativeDayOffset": -2
+    }
+  }
+]
