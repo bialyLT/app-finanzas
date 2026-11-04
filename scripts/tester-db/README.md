@@ -1,4 +1,4 @@
-# Batería del tester de base de datos — Fase 4.2 (monedas)
+# Batería del tester de base de datos — Fases 4.2 y 4.3 (monedas)
 
 Verifica con datos reales que **ninguna consulta sume pesos con dólares**, que la
 base haga cumplir los invariantes de la migración `20261104120000_fase4_monedas`
@@ -45,6 +45,17 @@ node scripts/tester-db/01-transferencias-moneda.mjs
 | 05 | `05-deudas-cross-currency.mjs` | Préstamo USD pagado con pesos: `/api/debts` y `/api/loans` tienen que dar el MISMO capital pagado (`toAmount`), y el préstamo/ingreso USD no entra en `totalDebt` ni en el DTI en ARS. |
 | 06 | `06-plata-declarada.mjs` | La banderita suma sólo en la moneda de su cuenta; la reconciliación ajusta `Δ = Ahorro − Declarada` en las dos monedas. |
 | 07 | `07-volumen-explain.mjs` | 20.200 movimientos: el tope de 500 filas no recorta los totales ni los conteos; latencias y `EXPLAIN` de las consultas críticas. |
+| 08 | `08-escritura-monedas.mjs` | **F4.3 · escritura**: alta con `currency`, bicondicional de `toAmount` en las 4 combinaciones, atomicidad del lote (incluido un fallo DESPUÉS de escribir), PATCH de moneda, saldos/reconciliación al centavo, CSV sólo-ARS, invariantes de la base por escritura directa y la recurrencia entre monedas (crear 400 + corrida que no se cae). |
+| 09 | `09-concurrencia-escritura.mjs` | **F4.3 · concurrencia HTTP**: dos altas iguales (una 201 / una 409), transferencias y lotes cross en paralelo, carrera PATCH-moneda vs transferencia, doble submit (medido, no deduplicado por diseño), dos direcciones a la vez y dos CSV simultáneos. |
+
+> **F4.3 · estado:** la batería 09 falla **a propósito** en su sección 4b. La
+> carrera `PATCH /api/accounts` (moneda) vs un INSERT de movimiento deja un
+> estado final que viola la bicondicional de `toAmount` (USD→USD **con**
+> `toAmount`, o USD→ARS **sin** él), porque el trigger lee la moneda con el
+> snapshot de la sentencia y el UPDATE de moneda no serializa contra el INSERT.
+> Requiere una migración de serialización (locking reads en los triggers); el
+> repro determinista y el impacto en saldos están en
+> `09-concurrencia-escritura.mjs` §4b.
 
 ## Reglas del arnés
 
@@ -58,3 +69,4 @@ node scripts/tester-db/01-transferencias-moneda.mjs
   depende de eso.
 - Los meses de prueba son lejanos a "hoy" (2031/2032) para que el período no
   tenga datos de otras corridas.
+

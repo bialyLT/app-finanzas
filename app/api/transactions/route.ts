@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import type { Prisma } from "@prisma/client";
+import type { Currency, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
@@ -9,8 +9,8 @@ import {
   categoryKindMessage,
 } from "@/lib/category-kind";
 import { calendarToDb, isCalendarDate, todayCalendar } from "@/lib/dates";
-import { parseCurrencyParam } from "@/lib/currency";
-import { parseMoneyInput } from "@/lib/money";
+import { currencyNoun, parseCurrencyParam } from "@/lib/currency";
+import { parseMoneyInput, type Money } from "@/lib/money";
 import type { MovementsResponse } from "@/lib/finance";
 import {
   MOVEMENTS_MAX_ROWS,
@@ -156,6 +156,9 @@ export async function GET(req: Request) {
  *   {
  *     kind: "INCOME" | "EXPENSE" | "TRANSFER",
  *     amount: "1234,56",              // string, se interpreta en formato local
+ *     toAmount: "100",                // SÓLO TRANSFER entre monedas distintas:
+ *                                     //   cuánto LLEGA a la cuenta de destino,
+ *                                     //   en la moneda de destino
  *     date: "2026-10-15",             // fecha de calendario
  *     accountId: "...",               // origen (o destino, si es un ingreso)
  *     toAccountId: "...",             // SÓLO TRANSFER
@@ -250,6 +253,9 @@ export async function POST(req: Request) {
   // ── Validación por tipo ────────────────────────────────────────────────────
   let toAccountId: string | null = null;
   let categoryName: string | null = null;
+  // Lo que LLEGA a la cuenta de destino, en la moneda de destino. Sólo existe
+  // en una transferencia entre cuentas de distinta moneda (Fase 4.3).
+  let toAmount: Money | null = null;
 
   if (kind === "TRANSFER") {
     toAccountId =
@@ -271,12 +277,119 @@ export async function POST(req: Request) {
         "Una transferencia entre cuentas propias no lleva categoría: no es un gasto ni un ingreso.",
       );
     }
+
+    // ── El monto de destino (Fase 4.3) ────────────────────────────────────────
+    //
+    // El monto de destino es el ÚNICO número que se expresa en la moneda de la
+    // cuenta de destino: sin él, una transferencia ARS → USD no se puede
+    // reconstruir (los 100 dólares que entraron no se derivan de los 120.000
+    // pesos que salieron sin una cotización). Por eso:
+    //   · monedas distintas → obligatorio, > 0;
+    //   · misma moneda      → prohibido (sería un segundo número sin
+    //     significado);
+    //   · INCOME/EXPENSE    → prohibido (no hay destino).
+    // La base hace cumplir la bicondicional con un trigger; acá se rechaza
+    // antes para dar un 400 con el motivo en vez del texto de Postgres.
+    const rawToAmount = body.toAmount;
+    const hasToAmount =
+      rawToAmount !== undefined && rawToAmount !== null && rawToAmount !== "";
+
+    let parsedToAmount: Money | null = null;
+
+    if (hasToAmount) {
+      // `typeof` estricto (no `String(x)` suelto): un array de un número se
+      // convierte en "100" y pasaría como monto real.
+      if (typeof rawToAmount !== "string" && typeof rawToAmount !== "number") {
+        return badRequest(
+          "El monto de destino no se entiende. Escribilo como 1234,56 o 1.234,56.",
+        );
+      }
+      parsedToAmount = parseMoneyInput(
+        typeof rawToAmount === "number"
+          ? rawToAmount.toFixed(2)
+          : rawToAmount,
+      );
+      if (parsedToAmount === null) {
+        return badRequest(
+          "El monto de destino no se entiende. Escribilo como 1234,56 o 1.234,56.",
+        );
+      }
+      if (parsedToAmount.lessThanOrEqualTo(0)) {
+        return badRequest("El monto de destino tiene que ser mayor a cero.");
+      }
+    }
+
+    // Las cuentas se resuelven ANTES de decidir: la regla depende de la moneda
+    // de cada una y no se puede adivinar. Y de paso, una cuenta que no existe
+    // es un 400 que lo dice, no el 409 de FK que habla de archivar cuentas.
+    //
+    // La lectura va con su propio try: un id con un byte NUL o el pool agotado
+    // son errores de la PETICIÓN o de la infraestructura, y tienen que salir
+    // como 4xx/503 con mensaje, no como el 500 de una excepción suelta.
+    let accounts: { id: string; currency: Currency }[];
+    try {
+      accounts = await prisma.account.findMany({
+        where: { id: { in: [accountId, toAccountId] } },
+        select: { id: true, currency: true },
+      });
+    } catch (error) {
+      console.error(error);
+
+      const described = describeDatabaseError(error);
+      if (described) {
+        return NextResponse.json(
+          { error: described.message },
+          { status: described.status },
+        );
+      }
+      return NextResponse.json(
+        {
+          error:
+            "No se pudieron verificar las cuentas de la transferencia. No se guardó nada; volvé a intentar en unos segundos.",
+        },
+        { status: 503 },
+      );
+    }
+
+    const fromAccount = accounts.find((account) => account.id === accountId);
+    const destination = accounts.find((account) => account.id === toAccountId);
+
+    if (!fromAccount) return badRequest("La cuenta de origen no existe.");
+    if (!destination) return badRequest("La cuenta de destino no existe.");
+
+    const crossCurrency = fromAccount.currency !== destination.currency;
+
+    if (crossCurrency && parsedToAmount === null) {
+      return badRequest(
+        `La cuenta de origen está en ${currencyNoun(fromAccount.currency)} y la de destino en ${currencyNoun(destination.currency)}: indicá cuánto llega a la cuenta de destino.`,
+      );
+    }
+    if (!crossCurrency && parsedToAmount !== null) {
+      return badRequest(
+        `Las dos cuentas están en ${currencyNoun(fromAccount.currency)}: el monto de destino no corresponde.`,
+      );
+    }
+
+    toAmount = parsedToAmount;
   } else {
     if (body.toAccountId) {
       return badRequest(
         kind === "INCOME"
           ? "Un ingreso no lleva cuenta de destino: la plata entra a la cuenta que indicaste."
           : "Un gasto no lleva cuenta de destino: la plata sale de la cuenta que indicaste.",
+      );
+    }
+
+    // `toAmount` en un ingreso o un gasto: no hay segunda punta. Se rechaza
+    // cualquier valor, incluso uno válido, porque aceptarlo en silencio sería
+    // guardar un número que nadie va a leer.
+    if (
+      body.toAmount !== undefined &&
+      body.toAmount !== null &&
+      body.toAmount !== ""
+    ) {
+      return badRequest(
+        "El monto de destino sólo existe en una transferencia entre cuentas.",
       );
     }
 
@@ -352,6 +465,7 @@ export async function POST(req: Request) {
         data: {
           kind,
           amount: amount.toFixed(2),
+          toAmount: toAmount ? toAmount.toFixed(2) : null,
           date: calendarToDb(rawDate),
           description,
           accountId,

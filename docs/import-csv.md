@@ -65,6 +65,10 @@ acentos, mayúsculas, espacios, guiones ni guiones bajos, así que
   nunca como float.
 - **Cuenta**: tiene que existir (comparación sin mayúsculas ni acentos).
   - Cuenta archivada → fila inválida (“desarchivala o cambiá la fila”).
+  - Cuenta en otra moneda (por ejemplo, dólares) → fila inválida: la
+    importación v1 sólo sabe importar **pesos**, y decir “la cuenta no existe”
+    sería falso. Si “Efectivo” existe en pesos y en dólares, la fila resuelve la
+    de **pesos**.
   - Si hay **dos cuentas que solo difieren en mayúsculas/acentos** y el CSV no
     las distingue, la fila es inválida: no hay forma honesta de elegir una.
   - `INCOME` solo puede entrar a cuentas que reciben plata (misma regla que el
@@ -115,6 +119,11 @@ El resumen trae cantidad de filas por estado, `totals` por tipo
 (`income`/`expenses`/`transfers`, dos decimales) y `categoriesToCreate`
 (solo las que alguna fila válida va a usar).
 
+`totals` incluye además `currency`: la moneda en la que están esos tres montos
+(`"ARS"`, o `null` si no hay filas importables). Existe para que el total no sea
+un número sin unidad; la v1 sólo importa cuentas en pesos, así que en la
+práctica se lee `"ARS"`.
+
 ### Duplicados
 
 Se considera duplicada una fila con la **misma clave completa**: tipo, fecha,
@@ -161,7 +170,7 @@ Respuesta `201`:
 {
   "imported": 3,
   "skippedDuplicates": 1,
-  "totals": { "income": "100000.00", "expenses": "1500.00", "transfers": "2000.00", "count": 3 },
+  "totals": { "income": "100000.00", "expenses": "1500.00", "transfers": "2000.00", "count": 3, "currency": "ARS" },
   "categoriesCreated": [{ "name": "Comida", "kind": "EXPENSE" }]
 }
 ```

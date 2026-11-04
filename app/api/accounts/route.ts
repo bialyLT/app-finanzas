@@ -1,10 +1,15 @@
-import type { Prisma } from "@prisma/client";
+import type { Currency, Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { getAccountBalances, getNetWorth } from "@/lib/balance";
-import { parseCurrencyParam } from "@/lib/currency";
+import {
+  DEFAULT_CURRENCY,
+  currencyNoun,
+  parseCurrencyBody,
+  parseCurrencyParam,
+} from "@/lib/currency";
 import { calendarToDb, isCalendarDate, todayCalendar } from "@/lib/dates";
 import { cleanName } from "@/lib/finance";
 import {
@@ -52,6 +57,38 @@ function isAccountKind(value: unknown): value is AccountKind {
   return (
     typeof value === "string" &&
     (ACCOUNT_KINDS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * `true` sólo para la violación de un índice único de Prisma.
+ *
+ * Se usa para responder el conflicto de nombre POR MONEDA con la moneda
+ * nombrada en vez del mensaje genérico de `describeDatabaseError`, que no sabe
+ * de qué cuenta se trata.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "P2002"
+  );
+}
+
+/**
+ * El conflicto de nombre de cuenta, dicho por moneda.
+ *
+ * Desde la Fase 4 el único es `(name, currency)`: "Efectivo" en pesos y
+ * "Efectivo" en dólares conviven, y la tercera "Efectivo" en pesos choca. El
+ * mensaje tiene que decir eso —"ese nombre ya existe" sería falso para la mitad
+ * de los casos— y nombrar la unidad en la que chocó.
+ */
+function accountNameConflict(name: string, currency: Currency) {
+  return NextResponse.json(
+    {
+      error: `Ya tenés una cuenta llamada «${name}» en ${currencyNoun(currency)}. El nombre tiene que ser distinto dentro de la misma moneda; en otra moneda podés repetirlo.`,
+    },
+    { status: 409 },
   );
 }
 
@@ -327,6 +364,18 @@ export async function POST(req: Request) {
     );
   }
   const kind: AccountKind = body.kind;
+
+  // ── La moneda (Fase 4) ─────────────────────────────────────────────────────
+  //
+  // `currency` es OPCIONAL: sin el campo, ARS, que es lo que eran todas las
+  // cuentas antes de esta fase. Mandar un valor que no es una moneda conocida
+  // NO cae al default: guardar el número en una unidad que nadie eligió es
+  // exactamente la mentira que la Fase 4 vino a evitar.
+  const parsedCurrency = parseCurrencyBody(body.currency);
+  if (parsedCurrency === "invalid") {
+    return badRequest("La moneda tiene que ser ARS o USD.");
+  }
+  const currency: Currency = parsedCurrency ?? DEFAULT_CURRENCY;
 
   const openingBalance = parseMoneyInput(String(body.openingBalance ?? "0"));
   if (openingBalance === null) {
@@ -653,6 +702,7 @@ export async function POST(req: Request) {
       account = await createLoanAccount(prisma, {
         name,
         kind,
+        currency,
         openingBalance: openingBalance.toFixed(2),
         system,
         principal: money(loanInput.principal),
@@ -666,6 +716,7 @@ export async function POST(req: Request) {
         data: {
           name,
           kind,
+          currency,
           openingBalance: openingBalance.toFixed(2),
           closingDay,
           dueDay,
@@ -692,6 +743,12 @@ export async function POST(req: Request) {
     );
   } catch (error) {
     console.error(error);
+
+    // El choque de nombre es POR MONEDA: se responde acá, con la moneda
+    // nombrada, antes de caer al mensaje genérico de la base.
+    if (isUniqueViolation(error)) {
+      return accountNameConflict(name, currency);
+    }
 
     const described = describeLoanError(error) ?? describeDatabaseError(error);
     if (described) {
@@ -778,6 +835,7 @@ export async function PATCH(req: Request) {
 
   const data: {
     name?: string;
+    currency?: Currency;
     archived?: boolean;
     closingDay?: number | null;
     dueDay?: number | null;
@@ -835,6 +893,26 @@ export async function PATCH(req: Request) {
       return badRequest("`archived` tiene que ser verdadero o falso.");
     }
     data.archived = body.archived;
+  }
+
+  // ── La moneda se puede CORREGIR, pero no siempre (Fase 4) ─────────────────
+  //
+  // Acá sólo se valida la FORMA: que sea una moneda conocida. La regla de
+  // negocio —una cuenta con historia no cambia de moneda, porque los mismos
+  // movimientos pasarían a significar otra cosa— la hace cumplir un trigger de
+  // la base (`cuenta_en_uso_no_cambia_moneda`) y `describeDatabaseError` la
+  // traduce a 409. Duplicarla en la API sería una segunda definición de la
+  // regla que puede desincronizarse de la primera.
+  //
+  // En la edición, `null`/`""` NO cuentan como "no vino": un PATCH que borra un
+  // campo no tiene sentido, y tratarlo como ausente dejaría un cuerpo que se
+  // ignora en silencio.
+  if (body.currency !== undefined) {
+    const parsed = parseCurrencyBody(body.currency);
+    if (parsed === null || parsed === "invalid") {
+      return badRequest("La moneda tiene que ser ARS o USD.");
+    }
+    data.currency = parsed;
   }
 
   if (body.closingDay !== undefined || body.dueDay !== undefined) {
@@ -901,6 +979,26 @@ export async function PATCH(req: Request) {
     return badRequest("No hay nada que actualizar.");
   }
 
+  // ── El conflicto de nombre es por (name, currency) ────────────────────────
+  //
+  // Para poder responder "ya tenés «Efectivo» en dólares" hace falta el nombre
+  // Y la moneda con los que la cuenta va a QUEDAR: uno puede venir en el cuerpo
+  // y el otro ya estar en la fila. Se lee una sola vez y sólo cuando alguno de
+  // los dos campos se toca.
+  let conflictName = "";
+  let conflictCurrency: Currency = DEFAULT_CURRENCY;
+  if (data.name !== undefined || data.currency !== undefined) {
+    const actual = await prisma.account.findUnique({
+      where: { id },
+      select: { name: true, currency: true },
+    });
+    if (!actual) {
+      return NextResponse.json({ error: "Esa cuenta no existe." }, { status: 404 });
+    }
+    conflictName = data.name ?? actual.name;
+    conflictCurrency = data.currency ?? actual.currency;
+  }
+
   try {
     const account = await prisma.account.update({ where: { id }, data });
     return NextResponse.json(toAccountDTO(account));
@@ -914,6 +1012,13 @@ export async function PATCH(req: Request) {
         { error: "Esa cuenta no existe." },
         { status: 404 },
       );
+    }
+
+    // El nombre repetido dentro de la misma moneda: 409 con la moneda nombrada,
+    // no el genérico. La cuenta que se está editando no cuenta como conflicto
+    // consigo misma (el índice mira la fila nueva).
+    if (isUniqueViolation(error)) {
+      return accountNameConflict(conflictName, conflictCurrency);
     }
 
     console.error(error);

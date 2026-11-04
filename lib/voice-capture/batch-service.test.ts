@@ -96,4 +96,62 @@ describe("voice-capture / batch-service - validateBatchSaveInput", () => {
     expect(result.valid).toBe(false);
     expect(result.errors[0]).toContain("cuotas");
   });
+
+  it("acepta el monto de destino en una transferencia cuando es un monto positivo", () => {
+    const result = validateBatchSaveInput([
+      {
+        kind: "TRANSFER",
+        amount: 120000,
+        toAmount: 100,
+        date: "2026-10-22",
+        fromAccountId: "acc-ars",
+        toAccountId: "acc-usd",
+      },
+      {
+        kind: "TRANSFER",
+        amount: 120000,
+        toAmount: "100,50",
+        date: "2026-10-22",
+        fromAccountId: "acc-ars",
+        toAccountId: "acc-usd",
+      },
+    ]);
+
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  it("rechaza un monto de destino que no es un monto positivo", () => {
+    for (const toAmount of [0, -1, "abc", NaN, Infinity]) {
+      const result = validateBatchSaveInput([
+        {
+          kind: "TRANSFER",
+          amount: 120000,
+          toAmount,
+          date: "2026-10-22",
+          fromAccountId: "acc-ars",
+          toAccountId: "acc-usd",
+        },
+      ]);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.join(" ")).toMatch(/monto de destino/i);
+    }
+  });
+
+  it("rechaza el monto de destino en un ingreso o un gasto", () => {
+    for (const kind of ["INCOME", "EXPENSE"] as const) {
+      const result = validateBatchSaveInput([
+        {
+          kind,
+          amount: 1000,
+          toAmount: 5,
+          date: "2026-10-22",
+          accountId: "acc-1",
+        },
+      ]);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toMatch(/sólo existe en una transferencia/i);
+    }
+  });
 });

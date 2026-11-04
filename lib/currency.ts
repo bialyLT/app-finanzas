@@ -29,6 +29,24 @@ export const CURRENCIES = ["ARS", "USD"] as const satisfies readonly Currency[];
 /** La moneda que se usa cuando el cliente no manda `?currency=`. */
 export const DEFAULT_CURRENCY: Currency = "ARS";
 
+/**
+ * Cómo se nombra una moneda en un mensaje para la persona.
+ *
+ * Existe para que "ya tenés una cuenta con ese nombre **en esa moneda**" diga
+ * cuál, en vez de repetir el código del enum. Un `Record<Currency, string>` y no
+ * un `switch` con `default`: cuando se sume una moneda nueva, el compilador
+ * obliga a nombrarla acá en vez de dejarla hablando en siglas.
+ */
+const CURRENCY_NOUNS: Record<Currency, string> = {
+  ARS: "pesos",
+  USD: "dólares",
+};
+
+/** El nombre de la moneda para un mensaje: "pesos" / "dólares". */
+export function currencyNoun(currency: Currency): string {
+  return CURRENCY_NOUNS[currency];
+}
+
 /** `true` sólo para un string que sea exactamente una moneda conocida. */
 export function isCurrency(value: unknown): value is Currency {
   return (
@@ -71,4 +89,20 @@ export function parseCurrencyParam(value: string | null): ParsedCurrencyParam {
   }
 
   return { ok: true, currency: value };
+}
+
+/**
+ * Interpreta el campo `currency` de un cuerpo JSON (alta o edición de cuenta).
+ *
+ * Tres estados, igual que `parseDayOfMonth` en las cuentas: "no vino" (`null`)
+ * y "vino mal" (`"invalid"`) no son lo mismo. El primero se resuelve con el
+ * default (alta) o se ignora (edición); el segundo es un 400 con mensaje,
+ * porque adivinar la moneda sería guardar el número en la unidad equivocada.
+ *
+ * Un `null` o `""` explícitos cuentan como "no vino": los formularios mandan
+ * todos los campos y un campo vacío no es una moneda.
+ */
+export function parseCurrencyBody(value: unknown): Currency | null | "invalid" {
+  if (value === undefined || value === null || value === "") return null;
+  return isCurrency(value) ? value : "invalid";
 }

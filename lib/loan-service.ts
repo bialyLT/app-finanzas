@@ -133,6 +133,8 @@ function toInstallment(row: InstallmentRow): Installment {
 export interface CreateLoanAccountInput {
   name: string;
   kind: LoanKind;
+  /** La moneda de la cuenta: todo su cronograma está expresado en ella. */
+  currency: Currency;
   openingBalance: string;
   system: AmortizationSystem;
   principal: Money;
@@ -261,6 +263,7 @@ export async function createLoanAccount(
       data: {
         name: input.name,
         kind: input.kind,
+        currency: input.currency,
         openingBalance: input.openingBalance,
         principal: input.principal.toFixed(2),
         tnaPercent: input.tnaPercent ? input.tnaPercent.toFixed(4) : null,

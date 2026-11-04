@@ -46,8 +46,9 @@
  * ya materializado se saltea por el `dueDate` máximo.
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Currency, Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
+import { currencyNoun } from "./currency";
 import {
   CATEGORY_KIND_LABEL,
   MOVEMENT_KIND_LABEL,
@@ -264,9 +265,26 @@ function autoPostBlocker(rule: {
   kind: "INCOME" | "EXPENSE" | "TRANSFER";
   categoryId: string | null;
   category?: { kind: "INCOME" | "EXPENSE"; name: string } | null;
+  account: { currency: Currency };
+  toAccount?: { currency: Currency } | null;
 }): string | null {
-  // Una transferencia no lleva categoría: siempre puede postear sola.
-  if (rule.kind === "TRANSFER") return null;
+  // Una transferencia no lleva categoría. Pero desde la Fase 4.3 puede unir
+  // cuentas de distinta moneda, y `RecurrenceRule` todavía no tiene `toAmount`
+  // (F4.6): el trigger de la base rechaza ese movimiento. Antes esa regla no era
+  // alcanzable (la API sólo creaba cuentas en pesos); ahora sí. Si se dejara
+  // postear sola, la corrida ENTERA fallaría y ninguna otra regla se
+  // materializaría — el bug que este bloqueo evita.
+  if (rule.kind === "TRANSFER") {
+    if (rule.toAccount && rule.account.currency !== rule.toAccount.currency) {
+      return (
+        `La transferencia une una cuenta en ${currencyNoun(rule.account.currency)} ` +
+        `con una en ${currencyNoun(rule.toAccount.currency)}: todavía no se puede ` +
+        `indicar cuánto llega a la cuenta de destino. Sus ocurrencias esperan en la ` +
+        `bandeja; programala entre cuentas de la misma moneda o cargá la transferencia a mano.`
+      );
+    }
+    return null;
+  }
 
   if (!rule.categoryId) {
     return "La regla quedó sin categoría y no puede postear sola: sus ocurrencias esperan en la bandeja.";
@@ -319,7 +337,14 @@ export async function runDueOccurrences(
         // con el tipo de la regla ANTES de postear (ver `autoPostBlocker`): una
         // regla de Ingreso con una categoría de Gasto postearía un movimiento
         // imposible.
-        include: { category: true },
+        include: {
+          category: true,
+          // La moneda de las dos puntas decide si una transferencia puede
+          // postear sola (ver `autoPostBlocker`). Sin esto, una regla entre
+          // monedas distintas reventaba la corrida entera contra el trigger.
+          account: { select: { currency: true } },
+          toAccount: { select: { currency: true } },
+        },
         // Orden estable: la respuesta (y el orden de las filas creadas) no
         // cambia entre corridas idénticas.
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],

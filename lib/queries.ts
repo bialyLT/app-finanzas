@@ -1675,6 +1675,11 @@ export function toMovementDTO(movement: MovementRow): MovementDTO {
     id: movement.id,
     kind: movement.kind,
     amount: movement.amount.toFixed(2),
+    // `null` explícito y no `undefined`: el DTO promete el campo siempre, y un
+    // `undefined` que JSON omite hace que la UI tenga que distinguir "campo
+    // ausente" de "sin monto de destino", que son lo mismo.
+    toAmount:
+      movement.toAmount === null ? null : movement.toAmount.toFixed(2),
     // `dbToCalendar` y NO `toISOString().slice(0, 10)`: el segundo convierte a
     // UTC y con offset negativo devuelve el día anterior.
     date: dbToCalendar(movement.date),
@@ -1965,7 +1970,16 @@ export function describeDatabaseError(error: unknown): {
         return { status: 409, message: "Ya existe una categoría con ese nombre." };
       }
       if (text.includes("name")) {
-        return { status: 409, message: "Ya existe una cuenta con ese nombre." };
+        // Desde la Fase 4 el nombre de la cuenta es único POR MONEDA: dos
+        // "Efectivo", uno en pesos y otro en dólares, conviven. El mensaje
+        // genérico ya no puede decir "ese nombre ya existe" a secas, porque
+        // sería falso en la mitad de los casos. La ruta de cuentas responde
+        // este mismo conflicto con la moneda nombrada (ver su P2002); esta es
+        // la red para cualquier otro camino.
+        return {
+          status: 409,
+          message: "Ya tenés una cuenta con ese nombre en esa moneda.",
+        };
       }
       return { status: 409, message: "Ese dato ya existe." };
     }

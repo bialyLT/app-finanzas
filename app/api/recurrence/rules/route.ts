@@ -419,12 +419,22 @@ function parseRuleFields(input: {
   };
 }
 
-/** Las dos cuentas de una regla tienen que existir; se avisa antes del FK. */
-async function accountsExist(fields: RuleFields): Promise<string | null> {
+/**
+ * Los problemas de las cuentas de una regla, avisados antes del FK y antes de
+ * guardar una promesa que la base no va a poder cumplir.
+ *
+ * Desde la Fase 4.3 las cuentas tienen moneda. `RecurrenceRule` todavía no tiene
+ * `toAmount` (F4.6), así que una transferencia entre monedas distintas es una
+ * regla que no puede postear NUNCA: la base la rechaza con el trigger
+ * `movement_currency_shape_check` y, como la corrida es una sola transacción,
+ * además tumba la materialización de todas las demás reglas. Se rechaza en el
+ * alta/edición con un 400 que lo explica, en vez de aceptar una promesa rota.
+ */
+async function accountsProblem(fields: RuleFields): Promise<string | null> {
   const ids = [fields.accountId, ...(fields.toAccountId ? [fields.toAccountId] : [])];
   const found = await prisma.account.findMany({
     where: { id: { in: ids } },
-    select: { id: true },
+    select: { id: true, currency: true },
   });
   if (!found.some((account) => account.id === fields.accountId)) {
     return "La cuenta indicada no existe.";
@@ -432,6 +442,19 @@ async function accountsExist(fields: RuleFields): Promise<string | null> {
   if (fields.toAccountId && !found.some((account) => account.id === fields.toAccountId)) {
     return "La cuenta de destino no existe.";
   }
+
+  const from = found.find((account) => account.id === fields.accountId);
+  const to = fields.toAccountId
+    ? found.find((account) => account.id === fields.toAccountId)
+    : null;
+  if (from && to && from.currency !== to.currency) {
+    return (
+      "Una regla de transferencia no puede unir cuentas en monedas distintas: " +
+      "todavía no se puede indicar cuánto llega a la cuenta de destino. Programala " +
+      "entre cuentas de la misma moneda o cargá la transferencia a mano."
+    );
+  }
+
   return null;
 }
 
@@ -486,7 +509,7 @@ export async function POST(req: Request) {
   const parsed = parseRuleFields({ body, existing: null });
   if (!parsed.ok) return badRequest(parsed.message);
 
-  const missing = await accountsExist(parsed.fields);
+  const missing = await accountsProblem(parsed.fields);
   if (missing) return badRequest(missing);
 
   try {
@@ -562,7 +585,7 @@ export async function PATCH(req: Request) {
   const parsed = parseRuleFields({ body, existing });
   if (!parsed.ok) return badRequest(parsed.message);
 
-  const missing = await accountsExist(parsed.fields);
+  const missing = await accountsProblem(parsed.fields);
   if (missing) return badRequest(missing);
 
   try {

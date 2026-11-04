@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { prisma } from "@/lib/prisma";
+import { describeDatabaseError } from "@/lib/queries";
 import {
   saveMovementBatch,
   type BatchSaveMovementInput,
@@ -45,6 +46,20 @@ export async function POST(req: Request) {
     );
     return NextResponse.json(result, { status: 201 });
   } catch (error: unknown) {
+    // Primero los errores de la BASE (trigger de monedas, monto que no entra en
+    // NUMERIC, pool agotado): tienen mensaje y status propios. Sin este mapeo,
+    // el lote devolvía 400 con el texto crudo del motor incluso cuando el
+    // problema era la infraestructura.
+    const described = describeDatabaseError(error);
+    if (described) {
+      return NextResponse.json(
+        { error: described.message },
+        { status: described.status },
+      );
+    }
+
+    // Lo que queda son los rechazos de DOMINIO del lote (validación de forma y
+    // de moneda): la petición, no el servidor.
     const message =
       error instanceof Error
         ? error.message

@@ -18,6 +18,7 @@ describe("exportMovementsToCsv", () => {
         date: "2026-10-01",
         kind: "EXPENSE",
         amount: "1500.50",
+        toAmount: null,
         description: "Supermercado, pan y leche",
         account: {
           id: "acc-1",
@@ -41,6 +42,7 @@ describe("exportMovementsToCsv", () => {
         date: "2026-10-02",
         kind: "TRANSFER",
         amount: "5000.00",
+        toAmount: null,
         description: "",
         account: {
           id: "acc-1",

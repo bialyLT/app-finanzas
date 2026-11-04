@@ -26,8 +26,66 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TRANSACTION_OPTIONS } from "./prisma";
+
+/* ═════════════════════════════════════════════════════════════════════════════
+ * LAS RUTAS HTTP, CON LA BASE DE TEST
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * Desde la Fase 4.3 este archivo también ejerce los handlers de verdad
+ * (`POST /api/transactions`, etc.), no sólo los servicios. Para eso hay que
+ * reemplazar tres cosas:
+ *
+ *   · la sesión y el CSRF (no son el objeto de la prueba);
+ *   · el `prisma` singleton de la app, que apunta a `DATABASE_URL` —la base de
+ *     la persona— y acá TIENE que apuntar a `finanzas_test`. Se toma la
+ *     configuración de transacciones del módulo real para no probar una
+ *     configuración distinta de la que la app despliega.
+ *
+ * El cliente real (`actual.prisma`) se construye pero no se consulta nunca: el
+ * mock devuelve uno propio, con el mismo `TRANSACTION_OPTIONS`.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+vi.mock("@/lib/prisma", async () => {
+  const actual = await vi.importActual<typeof import("./prisma")>("./prisma");
+  const { PrismaClient: PrismaClientDeTest } = await import("@prisma/client");
+
+  const prisma = new PrismaClientDeTest({
+    // Sin base de test, una URL imposible: los tests que la usan ya están
+    // salteados y así nunca se cae a `DATABASE_URL`.
+    datasourceUrl:
+      process.env.DATABASE_URL_TEST ?? "postgresql://nadie@127.0.0.1:1/nunca",
+    transactionOptions: actual.TRANSACTION_OPTIONS,
+  });
+
+  return { ...actual, prisma };
+});
+
+vi.mock("@/lib/auth/dal", () => ({
+  requireApiSession: vi.fn(),
+  unauthorized: vi.fn(
+    () =>
+      new Response(JSON.stringify({ error: "No autorizado" }), { status: 401 }),
+  ),
+}));
+
+vi.mock("@/lib/auth/csrf", () => ({
+  assertSameOrigin: vi.fn(() => null),
+}));
+
+import * as dalModule from "@/lib/auth/dal";
+import * as csrfModule from "@/lib/auth/csrf";
+import { prisma as apiPrisma } from "@/lib/prisma";
+import {
+  PATCH as patchAccount,
+  POST as postAccount,
+} from "@/app/api/accounts/route";
+import {
+  GET as getTransactions,
+  POST as postTransaction,
+} from "@/app/api/transactions/route";
+import { POST as postBatch } from "@/app/api/transactions/batch/route";
+import { POST as postRecurrenceRule } from "@/app/api/recurrence/rules/route";
 import { addDays, calendarToDb, dbToCalendar } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule, money } from "./money";
@@ -161,6 +219,7 @@ async function seedScenario() {
     data: {
       name: "Préstamo",
       kind: "LOAN",
+      currency: "ARS",
       principal: "500000",
       tnaPercent: "60",
       installmentCount: 12,
@@ -724,6 +783,7 @@ describeDb("Invariantes del modelo en la base de datos", () => {
         data: {
           name: "Préstamo",
           kind: "LOAN",
+          currency: "ARS",
           principal: "500000",
           tnaPercent: "60",
           installmentCount: 12,
@@ -775,6 +835,7 @@ describeDb("Invariantes del modelo en la base de datos", () => {
           data: {
             name: "Préstamo",
             kind: "LOAN",
+            currency: "ARS",
             principal: "500000",
             tnaPercent: "60",
             installmentCount: 12,
@@ -1046,6 +1107,7 @@ describeDb("Invariantes del modelo en la base de datos", () => {
           data: {
             name: "Préstamo",
             kind: "LOAN",
+            currency: "ARS",
             principal: "500000",
             installmentCount: 12,
           },
@@ -1059,6 +1121,7 @@ describeDb("Invariantes del modelo en la base de datos", () => {
           data: {
             name: "Préstamo",
             kind: "LOAN",
+            currency: "ARS",
             principal: "500000",
             tnaPercent: "60",
           },
@@ -1305,6 +1368,7 @@ describeDb("EL ESCENARIO COMPLETO · sueldo, gastos, préstamo y tarjeta", () =>
       data: {
         name: "Préstamo",
         kind: "LOAN",
+        currency: "ARS",
         principal: "500000",
         tnaPercent: "60",
         installmentCount: 12,
@@ -1442,6 +1506,7 @@ describeDb("EL ESCENARIO COMPLETO · sueldo, gastos, préstamo y tarjeta", () =>
       data: {
         name: "Préstamo",
         kind: "LOAN",
+        currency: "ARS",
         principal: "500000",
         tnaPercent: "60",
         installmentCount: 12,
@@ -1851,6 +1916,7 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
         data: {
           name: "Préstamo",
           kind: "LOAN",
+          currency: "ARS",
           principal: "500000",
           tnaPercent: "60",
           installmentCount: 12,
@@ -1991,6 +2057,7 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
       data: {
         name: "Préstamo",
         kind: "LOAN",
+        currency: "ARS",
         principal: "500000",
         tnaPercent: "60",
         installmentCount: 12,
@@ -2145,6 +2212,7 @@ describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
       data: {
         name: "Préstamo",
         kind: "LOAN",
+        currency: "ARS",
         principal: "500000",
         tnaPercent: "60",
         installmentCount: 12,
@@ -3949,6 +4017,7 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
       data: {
         name: "Préstamo",
         kind: "LOAN",
+        currency: "ARS",
         principal: "500000",
         tnaPercent: "60",
         installmentCount: 12,
@@ -4546,6 +4615,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     const loan = await createLoanAccount(db, {
       name: "Préstamo",
       kind: "LOAN",
+      currency: "ARS",
       openingBalance: "0",
       system: "FRENCH",
       principal: money("500000"),
@@ -4573,6 +4643,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     const loan = await createLoanAccount(db, {
       name: "Préstamo",
       kind: "LOAN",
+      currency: "ARS",
       openingBalance: "0",
       system: "FRENCH",
       principal: money("500000"),
@@ -4656,6 +4727,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       const loan = await createLoanAccount(db, {
         name: "Préstamo bajo pico",
         kind: "LOAN",
+        currency: "ARS",
         openingBalance: "0",
         system: "FRENCH",
         principal: money("500000"),
@@ -4716,6 +4788,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     const loan = await createLoanAccount(db, {
       name: "Préstamo importado",
       kind: "LOAN",
+      currency: "ARS",
       openingBalance: "0",
       system: "IMPORTED",
       principal: money("47500"),
@@ -4770,6 +4843,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       createLoanAccount(db, {
         name: "Importado roto",
         kind: "LOAN",
+        currency: "ARS",
         openingBalance: "0",
         system: "IMPORTED",
         principal: money("100000"),
@@ -4787,6 +4861,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       createLoanAccount(db, {
         name: "Importado desordenado",
         kind: "LOAN",
+        currency: "ARS",
         openingBalance: "0",
         system: "IMPORTED",
         principal: money("47500"),
@@ -4883,6 +4958,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     const loan = await createLoanAccount(db, {
       name: "Préstamo",
       kind: "LOAN",
+      currency: "ARS",
       openingBalance: "0",
       system: "FRENCH",
       principal: money("500000"),
@@ -4952,6 +5028,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     const receivable = await createLoanAccount(db, {
       name: "Préstamo a Marce",
       kind: "RECEIVABLE",
+      currency: "ARS",
       openingBalance: "0",
       system: "FRENCH",
       principal: money("100000"),
@@ -5000,6 +5077,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     await createLoanAccount(db, {
       name: "Préstamo viejo",
       kind: "LOAN",
+      currency: "ARS",
       openingBalance: "-400000",
       system: "FRENCH",
       principal: money("400000"),
@@ -5013,6 +5091,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     await createLoanAccount(db, {
       name: "Plata de Marce",
       kind: "RECEIVABLE",
+      currency: "ARS",
       openingBalance: "150000",
       system: "FRENCH",
       principal: money("150000"),
@@ -5281,6 +5360,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     const receivable = await createLoanAccount(db, {
       name: "Préstamo a Marce",
       kind: "RECEIVABLE",
+      currency: "ARS",
       openingBalance: "0",
       system: "FRENCH",
       principal: money("100000"),
@@ -5414,6 +5494,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     const revolving = await createLoanAccount(db, {
       name: "Línea rotativa",
       kind: "LOAN",
+      currency: "ARS",
       openingBalance: "0",
       system: "INTEREST_ONLY",
       principal: money("100000"),
@@ -5496,6 +5577,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       data: {
         name: "Préstamo viejo",
         kind: "LOAN",
+        currency: "ARS",
         principal: "500000",
         tnaPercent: "60",
         installmentCount: 12,
@@ -5527,6 +5609,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       data: {
         name: "Préstamo legado",
         kind: "LOAN",
+        currency: "ARS",
         principal: "500000",
         tnaPercent: "60",
         installmentCount: 12,
@@ -5568,6 +5651,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       data: {
         name: "Préstamo",
         kind: "LOAN",
+        currency: "ARS",
         principal: "1000",
         tnaPercent: "60",
         installmentCount: 1,
@@ -5655,6 +5739,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       data: {
         name: "Importado",
         kind: "LOAN",
+        currency: "ARS",
         principal: "1000",
         installmentCount: 1,
         amortizationSystem: "IMPORTED",
@@ -5675,6 +5760,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
       data: {
         name: "Préstamo dado",
         kind: "RECEIVABLE",
+        currency: "ARS",
         principal: "1000",
         tnaPercent: "60",
         installmentCount: 1,
@@ -5997,6 +6083,9 @@ describeDb("Importación CSV · Fase 7 r2", () => {
       expenses: "1234.56",
       transfers: "500.00",
       count: 3,
+      // El total declara su unidad: no es un número suelto que podría sumar
+      // pesos con dólares (Fase 4.3).
+      currency: "ARS",
     });
     expect(preview.categoriesToCreate).toEqual([
       { name: "Comida", kind: "EXPENSE" },
@@ -6021,6 +6110,7 @@ describeDb("Importación CSV · Fase 7 r2", () => {
       expenses: "1234.56",
       transfers: "500.00",
       count: 3,
+      currency: "ARS",
     });
     expect(result.categoriesCreated).toHaveLength(1);
     expect(await db.movement.count()).toBe(3);
@@ -6312,6 +6402,7 @@ describeDb("La banderita del ingreso declarado", () => {
         data: {
           name: "Prestamo",
           kind: "LOAN",
+          currency: "ARS",
           openingBalance: "500000",
           openingIncomeMonth: calendarToDb("2026-10-01"),
         },
@@ -7156,5 +7247,782 @@ describeDb("Fase 4.2 · consultas por moneda", () => {
 
     expect(dolares.currency).toBe("USD");
     expect(dto.currency).toBe("USD");
+  });
+});
+
+/* ═════════════════════════════════════════════════════════════════════════════
+ * FASE 4.3 · ESCRITURA CON MONEDAS
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * La Fase 4.1 probó que la BASE se niega a guardar estados imposibles. Acá se
+ * prueba el otro lado del mismo contrato: que la API deje ESCRIBIR dólares y el
+ * monto de destino, y que rechace con un 4xx legible —nunca un 500— las
+ * combinaciones que la base prohíbe.
+ *
+ * Los handlers de verdad se ejercen con `Request` reales y la base es
+ * `finanzas_test` (ver el mock de `@/lib/prisma` arriba): un test que sólo
+ * llamara al servicio no probaría el borde que la persona usa.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+describeDb("Fase 4.3 · escritura con monedas", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+    // `restoreMocks` del config de vitest limpia las implementaciones entre
+    // tests: la sesión y el CSRF se reponen en cada uno.
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({
+      v: 1,
+      iat: 0,
+      exp: 0,
+    });
+    vi.mocked(csrfModule.assertSameOrigin).mockReturnValue(null);
+  });
+
+  afterAll(async () => {
+    // La suite del dev no limpiaba al final de este bloque; los tests de
+    // recurrencia de F4.3 dejan movimientos y ocurrencias. Se cierra igual que
+    // los demás bloques para que `finanzas_test` quede sin residuos.
+    await resetDatabase();
+    await apiPrisma.$disconnect();
+    await db.$disconnect();
+  });
+
+  /** Un `Request` con JSON, como el que manda la app. */
+  function request(method: string, path: string, body?: unknown) {
+    return new Request(`http://localhost:3000${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  async function createAccount(
+    name: string,
+    currency: "ARS" | "USD",
+    kind: "CASH" | "BANK" = "CASH",
+  ) {
+    return db.account.create({ data: { name, kind, currency } });
+  }
+
+  describe("POST /api/accounts", () => {
+    it("crea la cuenta en la moneda pedida y en pesos cuando no se manda", async () => {
+      const enDolares = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Caja dólares",
+          kind: "CASH",
+          currency: "USD",
+        }),
+      );
+      expect(enDolares.status).toBe(201);
+      expect((await enDolares.json()).currency).toBe("USD");
+
+      const sinCampo = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Caja pesos",
+          kind: "CASH",
+        }),
+      );
+      expect(sinCampo.status).toBe(201);
+      expect((await sinCampo.json()).currency).toBe("ARS");
+
+      const filas = await db.account.findMany({ orderBy: { name: "asc" } });
+      expect(filas.map((fila) => [fila.name, fila.currency])).toEqual([
+        ["Caja dólares", "USD"],
+        ["Caja pesos", "ARS"],
+      ]);
+    });
+
+    it("un `currency` vacío es el default; uno inválido es 400 y no crea nada", async () => {
+      const vacio = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Caja",
+          kind: "CASH",
+          currency: "",
+        }),
+      );
+      expect(vacio.status).toBe(201);
+      expect((await vacio.json()).currency).toBe("ARS");
+      await db.account.deleteMany();
+
+      // Cuerpos hostiles: la comparación es exacta y estricta de tipo.
+      const hostiles: unknown[] = ["EUR", "usd", "USD ", 3, true, ["USD"], {}];
+      for (const currency of hostiles) {
+        const res = await postAccount(
+          request("POST", "/api/accounts", {
+            name: "Caja",
+            kind: "CASH",
+            currency,
+          }),
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/ARS o USD/);
+      }
+
+      expect(await db.account.count()).toBe(0);
+    });
+
+    it("un préstamo también nace en la moneda pedida, con su cronograma", async () => {
+      const res = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Préstamo dólares",
+          kind: "LOAN",
+          currency: "USD",
+          principal: "1000",
+          tnaPercent: "0",
+          installmentCount: 3,
+          firstInstallmentDate: "2026-12-15",
+        }),
+      );
+
+      expect(res.status).toBe(201);
+      const creado = await res.json();
+      expect(creado.currency).toBe("USD");
+      expect(
+        await db.installment.count({ where: { accountId: creado.id } }),
+      ).toBe(3);
+    });
+
+    it("dos «Efectivo» conviven si son de distinta moneda; la tercera choca con un 409 que dice en cuál", async () => {      const primera = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Efectivo",
+          kind: "CASH",
+          currency: "ARS",
+        }),
+      );
+      const segunda = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Efectivo",
+          kind: "CASH",
+          currency: "USD",
+        }),
+      );
+      expect(primera.status).toBe(201);
+      expect(segunda.status).toBe(201);
+
+      const repetidaEnPesos = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Efectivo",
+          kind: "CASH",
+          currency: "ARS",
+        }),
+      );
+      expect(repetidaEnPesos.status).toBe(409);
+      expect((await repetidaEnPesos.json()).error).toMatch(/en pesos/);
+
+      const repetidaEnDolares = await postAccount(
+        request("POST", "/api/accounts", {
+          name: "Efectivo",
+          kind: "CASH",
+          currency: "USD",
+        }),
+      );
+      expect(repetidaEnDolares.status).toBe(409);
+      expect((await repetidaEnDolares.json()).error).toMatch(/en dólares/);
+
+      // Nada de 500 y ninguna fila de más: siguen siendo DOS cuentas.
+      expect(await db.account.count()).toBe(2);
+    });
+  });
+
+  describe("PATCH /api/accounts", () => {
+    it("corrige la moneda mientras la cuenta no tiene historia", async () => {
+      const cuenta = await createAccount("Caja nueva", "ARS");
+
+      const res = await patchAccount(
+        request("PATCH", "/api/accounts", { id: cuenta.id, currency: "USD" }),
+      );
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).currency).toBe("USD");
+      const fila = await db.account.findUnique({ where: { id: cuenta.id } });
+      expect(fila?.currency).toBe("USD");
+    });
+
+    it("con historia responde 409 con el motivo y NO cambia la moneda", async () => {
+      const cuenta = await createAccount("Caja usada", "ARS");
+      await db.movement.create({
+        data: {
+          kind: "INCOME",
+          amount: "1000",
+          date: calendarToDb("2026-11-01"),
+          accountId: cuenta.id,
+        },
+      });
+
+      const res = await patchAccount(
+        request("PATCH", "/api/accounts", { id: cuenta.id, currency: "USD" }),
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toMatch(/no se puede cambiar su moneda/i);
+      const fila = await db.account.findUnique({ where: { id: cuenta.id } });
+      expect(fila?.currency).toBe("ARS");
+    });
+
+    it("una moneda inválida en la edición es 400 (no se ignora en silencio)", async () => {
+      const cuenta = await createAccount("Caja", "ARS");
+
+      for (const currency of ["EUR", null, ""]) {
+        const res = await patchAccount(
+          request("PATCH", "/api/accounts", { id: cuenta.id, currency }),
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/ARS o USD/);
+      }
+
+      const fila = await db.account.findUnique({ where: { id: cuenta.id } });
+      expect(fila?.currency).toBe("ARS");
+    });
+
+    it("renombrar respeta la moneda: «Efectivo» en dólares es libre si sólo existe en pesos", async () => {
+      await createAccount("Efectivo", "ARS");
+      const otra = await createAccount("Otra", "USD");
+
+      const libre = await patchAccount(
+        request("PATCH", "/api/accounts", { id: otra.id, name: "Efectivo" }),
+      );
+      expect(libre.status).toBe(200);
+      expect((await libre.json()).currency).toBe("USD");
+
+      // Ahora sí hay «Efectivo» en dólares: la segunda choca, y el mensaje dice
+      // en qué moneda.
+      const tercera = await createAccount("Tercera", "USD");
+      const choque = await patchAccount(
+        request("PATCH", "/api/accounts", { id: tercera.id, name: "Efectivo" }),
+      );
+      expect(choque.status).toBe(409);
+      expect((await choque.json()).error).toMatch(/en dólares/);
+    });
+  });
+
+  describe("POST /api/transactions · transferencias entre monedas", () => {
+    it("ARS → USD sin `toAmount` es 400 y no guarda nada", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const res = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "120000",
+          date: "2026-11-01",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      // El mensaje es el de la API (nombra las dos monedas), no el genérico del
+      // trigger: la base es la red, pero el borde tiene que explicar antes.
+      expect((await res.json()).error).toMatch(
+        /está en pesos y la de destino en dólares/,
+      );
+      expect(await db.movement.count()).toBe(0);
+    });
+
+    it("ARS → USD con `toAmount` es 201 y acredita EXACTAMENTE el monto de destino", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const res = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          date: "2026-11-01",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        }),
+      );
+
+      expect(res.status).toBe(201);
+      const creado = await res.json();
+      expect(creado.amount).toBe("120000.00");
+      expect(creado.toAmount).toBe("100.00");
+
+      const fila = await db.movement.findUnique({ where: { id: creado.id } });
+      expect(fila?.toAmount?.toFixed(2)).toBe("100.00");
+
+      // El saldo de la cuenta de destino sube 100 dólares, no 120.000.
+      const balances = await getAccountBalances(db, { asOf: "2026-11-01" });
+      const destino = balances.find((balance) => balance.id === dolares.id);
+      const origen = balances.find((balance) => balance.id === pesos.id);
+      expect(destino?.balance.toFixed(2)).toBe("100.00");
+      expect(origen?.balance.toFixed(2)).toBe("-120000.00");
+    });
+
+    it("la lectura devuelve `toAmount` (string) y `null` donde no corresponde", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+      const { gastos } = await seedCategories();
+
+      await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          date: "2026-11-02",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        }),
+      );
+      await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "EXPENSE",
+          amount: "5000",
+          date: "2026-11-02",
+          accountId: pesos.id,
+          categoryName: gastos.name,
+        }),
+      );
+
+      const res = await getTransactions(
+        new Request(
+          "http://localhost:3000/api/transactions?currency=ARS&from=2026-11-02&to=2026-11-02",
+        ),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      const porTipo = new Map(
+        (body.movements as { kind: string; toAmount: string | null }[]).map(
+          (movement) => [movement.kind, movement.toAmount],
+        ),
+      );
+      expect(porTipo.get("TRANSFER")).toBe("100.00");
+      expect(porTipo.get("EXPENSE")).toBeNull();
+    });
+
+    it("misma moneda con `toAmount` es 400; sin él es 201 con `toAmount: null`", async () => {
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+      const caja = await createAccount("Caja pesos", "ARS");
+
+      const conMontoDeDestino = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "10000",
+          toAmount: "10000",
+          date: "2026-11-01",
+          accountId: banco.id,
+          toAccountId: caja.id,
+        }),
+      );
+      expect(conMontoDeDestino.status).toBe(400);
+      expect((await conMontoDeDestino.json()).error).toMatch(
+        /el monto de destino no corresponde/,
+      );
+
+      const sinMontoDeDestino = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "10000",
+          date: "2026-11-01",
+          accountId: banco.id,
+          toAccountId: caja.id,
+        }),
+      );
+      expect(sinMontoDeDestino.status).toBe(201);
+      expect((await sinMontoDeDestino.json()).toAmount).toBeNull();
+      expect(await db.movement.count()).toBe(1);
+    });
+
+    it("`toAmount` en un gasto o un ingreso es 400, aunque el valor sea válido", async () => {
+      const caja = await createAccount("Caja pesos", "ARS");
+      const { gastos, sueldo } = await seedCategories();
+
+      const gasto = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "EXPENSE",
+          amount: "5000",
+          toAmount: "5",
+          date: "2026-11-01",
+          accountId: caja.id,
+          categoryName: gastos.name,
+        }),
+      );
+      expect(gasto.status).toBe(400);
+      expect((await gasto.json()).error).toMatch(
+        /sólo existe en una transferencia/,
+      );
+
+      const ingreso = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "INCOME",
+          amount: "5000",
+          toAmount: "5",
+          date: "2026-11-01",
+          accountId: caja.id,
+          categoryName: sueldo.name,
+        }),
+      );
+      expect(ingreso.status).toBe(400);
+      expect(await db.movement.count()).toBe(0);
+    });
+
+    it("un monto de destino hostil es 400 con mensaje, nunca 500", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const hostiles: unknown[] = [
+        0,
+        -100,
+        "0",
+        "abc",
+        [100],
+        {},
+        true,
+        // 20 dígitos: no entra en NUMERIC(18,2). La base lo rechaza y el borde
+        // lo traduce a 400 ("el monto es demasiado grande"), no a un 500.
+        "12345678901234567890",
+      ];
+
+      for (const toAmount of hostiles) {
+        const res = await postTransaction(
+          request("POST", "/api/transactions", {
+            kind: "TRANSFER",
+            amount: "120000",
+            toAmount,
+            date: "2026-11-01",
+            accountId: pesos.id,
+            toAccountId: dolares.id,
+          }),
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBeTruthy();
+      }
+
+      expect(await db.movement.count()).toBe(0);
+    });
+
+    it("una cuenta inexistente es 400 con el nombre de la punta que falta", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+
+      const sinDestino = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "1000",
+          date: "2026-11-01",
+          accountId: pesos.id,
+          toAccountId: "no-existe",
+        }),
+      );
+      expect(sinDestino.status).toBe(400);
+      expect((await sinDestino.json()).error).toMatch(/destino no existe/);
+
+      const sinOrigen = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "1000",
+          date: "2026-11-01",
+          accountId: "no-existe",
+          toAccountId: pesos.id,
+        }),
+      );
+      expect(sinOrigen.status).toBe(400);
+      expect((await sinOrigen.json()).error).toMatch(/origen no existe/);
+    });
+  });
+
+  describe("POST /api/transactions/batch · el lote entero o nada", () => {
+    it("un ítem entre monedas sin `toAmount` rechaza el lote completo", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const res = await postBatch(
+        request("POST", "/api/transactions/batch", {
+          movements: [
+            {
+              kind: "EXPENSE",
+              amount: 2500,
+              date: "2026-11-01",
+              description: "Farmacia",
+              accountId: pesos.id,
+            },
+            {
+              kind: "TRANSFER",
+              amount: 120000,
+              date: "2026-11-01",
+              description: "Compra de dólares",
+              fromAccountId: pesos.id,
+              toAccountId: dolares.id,
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toMatch(/movimiento #2/i);
+      expect(body.error).toMatch(/cuánto llega/);
+      // Atomicidad: el gasto válido del ítem #1 tampoco se guardó.
+      expect(await db.movement.count()).toBe(0);
+    });
+
+    it("con `toAmount` guarda el lote y el monto de destino llega a la fila", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const res = await postBatch(
+        request("POST", "/api/transactions/batch", {
+          movements: [
+            {
+              kind: "TRANSFER",
+              amount: 120000,
+              toAmount: 100,
+              date: "2026-11-01",
+              description: "Compra de dólares",
+              fromAccountId: pesos.id,
+              toAccountId: dolares.id,
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(201);
+      expect((await res.json()).count).toBe(1);
+
+      const fila = await db.movement.findFirst();
+      expect(fila?.kind).toBe("TRANSFER");
+      expect(fila?.toAmount?.toFixed(2)).toBe("100.00");
+    });
+
+    it("`toAmount` en la misma moneda o en un gasto rechaza el lote sin escribir", async () => {
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+      const caja = await createAccount("Caja pesos", "ARS");
+
+      const mismaMoneda = await postBatch(
+        request("POST", "/api/transactions/batch", {
+          movements: [
+            {
+              kind: "TRANSFER",
+              amount: 10000,
+              toAmount: 10000,
+              date: "2026-11-01",
+              fromAccountId: banco.id,
+              toAccountId: caja.id,
+            },
+          ],
+        }),
+      );
+      expect(mismaMoneda.status).toBe(400);
+      expect((await mismaMoneda.json()).error).toMatch(/no corresponde/);
+
+      const enGasto = await postBatch(
+        request("POST", "/api/transactions/batch", {
+          movements: [
+            {
+              kind: "EXPENSE",
+              amount: 1000,
+              toAmount: 5,
+              date: "2026-11-01",
+              accountId: caja.id,
+            },
+          ],
+        }),
+      );
+      expect(enGasto.status).toBe(400);
+      expect((await enGasto.json()).error).toMatch(
+        /sólo existe en una transferencia/,
+      );
+
+      expect(await db.movement.count()).toBe(0);
+    });
+
+    it("un ítem que no es un objeto es 400 con su número, no un 500", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+
+      const res = await postBatch(
+        request("POST", "/api/transactions/batch", {
+          movements: [
+            null,
+            {
+              kind: "EXPENSE",
+              amount: 1000,
+              date: "2026-11-01",
+              accountId: pesos.id,
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/movimiento #1/i);
+      expect(await db.movement.count()).toBe(0);
+    });
+
+    it("un destino inexistente en el lote es 400 con el número de ítem", async () => {      const pesos = await createAccount("Caja pesos", "ARS");
+
+      const res = await postBatch(
+        request("POST", "/api/transactions/batch", {
+          movements: [
+            {
+              kind: "TRANSFER",
+              amount: 1000,
+              toAmount: 1,
+              date: "2026-11-01",
+              fromAccountId: pesos.id,
+              toAccountId: "no-existe",
+            },
+          ],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/movimiento #1/i);
+      expect(await db.movement.count()).toBe(0);
+    });
+  });
+
+  describe("importación de CSV", () => {
+    function csv(rows: string[]) {
+      return [
+        "fecha,tipo,monto,cuenta,cuenta_destino,categoria,descripcion",
+        ...rows,
+      ].join("\n");
+    }
+
+    it("rechaza las filas de una cuenta en dólares con un mensaje claro y no importa nada", async () => {
+      await createAccount("Caja pesos", "ARS");
+      await createAccount("Caja dólares", "USD");
+      await seedCategories();
+
+      const text = csv([
+        "2026-08-01,gasto,100,Caja dólares,,Comida,Súper",
+        "2026-08-02,gasto,200,Caja pesos,,Comida,Almacén",
+      ]);
+
+      const { preview } = await analyzeCsv(db, text);
+
+      const filaUsd = preview.rows[0]!;
+      expect(filaUsd.status).toBe("INVALID");
+      expect(filaUsd.errors[0]).toMatch(/dólares/);
+      // La de pesos sí es importable: el rechazo es por fila, no por archivo.
+      expect(preview.rows[1]!.status).toBe("VALID");
+      // Y el total sólo cuenta filas de pesos, con su unidad explícita.
+      expect(preview.totals.currency).toBe("ARS");
+      expect(preview.totals.expenses).toBe("200.00");
+
+      // Con una fila inválida el commit entero se rechaza: no quedan filas a medias.
+      await expect(
+        importCsv(db, text, parseCsvExpected(preview.totals)),
+      ).rejects.toMatchObject({ status: 422 });
+      expect(await db.movement.count()).toBe(0);
+    });
+
+    it("una transferencia hacia una cuenta en dólares también se rechaza", async () => {
+      await createAccount("Caja pesos", "ARS");
+      await createAccount("Caja dólares", "USD");
+
+      const text = csv([
+        "2026-08-01,transferencia,1000,Caja pesos,Caja dólares,,Cambio",
+      ]);
+
+      const { preview } = await analyzeCsv(db, text);
+      expect(preview.rows[0]!.status).toBe("INVALID");
+      expect(preview.rows[0]!.errors.join(" ")).toMatch(/dólares/);
+      expect(preview.totals.currency).toBeNull();
+    });
+
+    it("si «Efectivo» existe en pesos y en dólares, la fila resuelve la de pesos", async () => {
+      await createAccount("Efectivo", "ARS");
+      await createAccount("Efectivo", "USD");
+      await seedCategories();
+
+      const text = csv(["2026-08-01,gasto,100,Efectivo,,Comida,Súper"]);
+
+      const { preview } = await analyzeCsv(db, text);
+      expect(preview.rows[0]!.status).toBe("VALID");
+      expect(preview.totals).toEqual({
+        income: "0.00",
+        expenses: "100.00",
+        transfers: "0.00",
+        count: 1,
+        currency: "ARS",
+      });
+
+      const result = await importCsv(db, text, parseCsvExpected(preview.totals));
+      expect(result.imported).toBe(1);
+      expect(result.totals.currency).toBe("ARS");
+
+      const movimiento = await db.movement.findFirst({
+        include: { account: true },
+      });
+      expect(movimiento?.account.currency).toBe("ARS");
+    });
+  });
+
+  describe("Recurrencia entre monedas (F4.3 abrió cuentas en USD)", () => {
+    it("no deja CREAR una regla de transferencia entre monedas distintas", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dA3lares", "USD");
+
+      const res = await postRecurrenceRule(
+        request("POST", "/api/recurrence/rules", {
+          title: "Compra de dA3lares",
+          kind: "TRANSFER",
+          amount: "100000",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          freq: "MONTHLY",
+          startDate: "2026-01-01",
+          postingMode: "AUTO",
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/monedas distintas/);
+      expect(await db.recurrenceRule.count()).toBe(0);
+    });
+
+    it("una regla cruzada sembrada por fuera no tumba la corrida: se bloquea y las demás postean", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dA3lares", "USD", "BANK");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+      const gastos = await db.category.create({
+        data: { name: "Gastos rec", normalizedName: "gastos rec", kind: "EXPENSE" },
+      });
+
+      const cruzada = await db.recurrenceRule.create({
+        data: {
+          title: "Cruzada",
+          kind: "TRANSFER",
+          amount: "1000",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb("2026-01-01"),
+          postingMode: "AUTO",
+        },
+      });
+      const valida = await db.recurrenceRule.create({
+        data: {
+          title: "Valida",
+          kind: "EXPENSE",
+          amount: "500",
+          accountId: banco.id,
+          categoryId: gastos.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb("2026-01-01"),
+          postingMode: "AUTO",
+        },
+      });
+
+      const run = await runDueOccurrences(db, { today: "2026-03-01" });
+
+      // La cruzada va a la bandeja con el motivo; NO aborta la transacción.
+      expect(run.blocked.map((item) => item.ruleId)).toContain(cruzada.id);
+      expect(run.blocked.find((item) => item.ruleId === cruzada.id)?.reason).toMatch(
+        /monedas distintas|cuenta en pesos/i,
+      );
+      expect(
+        await db.movement.count({ where: { recurrenceRuleId: cruzada.id } }),
+      ).toBe(0);
+      expect(
+        await db.recurrenceOccurrence.count({
+          where: { ruleId: cruzada.id, status: "PENDING" },
+        }),
+      ).toBe(3);
+
+      // La regla válida de la MISMA corrida sí postea sus tres ocurrencias.
+      expect(
+        await db.movement.count({ where: { recurrenceRuleId: valida.id } }),
+      ).toBe(3);
+    });
   });
 });

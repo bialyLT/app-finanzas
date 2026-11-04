@@ -132,6 +132,17 @@ export interface MovementDTO {
   kind: MovementKindDTO;
   /** Monto SIEMPRE positivo. El signo lo da `kind`. */
   amount: string;
+  /**
+   * Sólo en una TRANSFER entre cuentas de DISTINTA moneda: cuánto LLEGA a la
+   * cuenta de destino, en la moneda de destino. `null` en todos los demás
+   * casos (misma moneda, ingreso, gasto).
+   *
+   * Sin este campo la UI no puede mostrar la segunda punta de un cambio de
+   * moneda: con `amount` solo, los 100 dólares que entraron se verían como
+   * 120.000. El tipo de cambio no viaja como campo: se deriva
+   * (`toAmount / amount`) en quien lo necesite.
+   */
+  toAmount: string | null;
   /** Fecha de calendario `YYYY-MM-DD`. */
   date: string;
   description: string;
@@ -938,6 +949,17 @@ export interface CsvPreviewDTO {
     expenses: string;
     transfers: string;
     count: number;
+    /**
+     * La moneda en la que están esos tres montos, o `null` si no hay filas
+     * importables (nada que totalizar).
+     *
+     * Existe para que el total no sea un número sin unidad: sumar filas de
+     * cuentas en monedas distintas daría un monto que no es plata de nada. La
+     * v1 de la importación sólo admite cuentas en pesos, así que acá se lee
+     * `"ARS"`; el día que importe otras monedas, el total sigue diciendo en
+     * cuál está.
+     */
+    currency: CurrencyDTO | null;
   };
   rows: CsvRowPreviewDTO[];
   categoriesToCreate: { name: string; kind: "INCOME" | "EXPENSE" }[];
@@ -952,6 +974,8 @@ export interface CsvImportResultDTO {
     expenses: string;
     transfers: string;
     count: number;
+    /** La misma moneda que declaró el preview conciliado. Ver `CsvPreviewDTO`. */
+    currency: CurrencyDTO | null;
   };
   categoriesCreated: { name: string; kind: "INCOME" | "EXPENSE" }[];
 }

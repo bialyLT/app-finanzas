@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { CSV_MAX_BYTES, CsvError } from "@/lib/csv";
-import { buildCsvPreview } from "@/lib/csv-import";
+import { CsvImportError, buildCsvPreview } from "@/lib/csv-import";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -67,6 +67,12 @@ export async function POST(req: Request) {
     return NextResponse.json(preview);
   } catch (error) {
     if (error instanceof CsvError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    // El preview puede negarse a mostrar un total: hoy sólo si el archivo
+    // mezclara monedas (la v1 admite una sola). Es un 422 con el motivo, no un
+    // 503 genérico.
+    if (error instanceof CsvImportError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
 

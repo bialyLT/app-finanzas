@@ -17,7 +17,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CURRENCIES,
   DEFAULT_CURRENCY,
+  currencyNoun,
   isCurrency,
+  parseCurrencyBody,
   parseCurrencyParam,
 } from "./currency";
 import { money } from "./money";
@@ -82,8 +84,29 @@ describe("parseCurrencyParam", () => {
   });
 });
 
-describe("errores de la base que hablan de monedas (Fase 4)", () => {
-  // Los marcadores son los que RAISE el trigger / nombran los CHECK de la
+describe("parseCurrencyBody · la moneda en el cuerpo de una cuenta (Fase 4.3)", () => {
+  it("ausente, null o vacío es «no vino»: el default lo decide la ruta", () => {
+    expect(parseCurrencyBody(undefined)).toBeNull();
+    expect(parseCurrencyBody(null)).toBeNull();
+    expect(parseCurrencyBody("")).toBeNull();
+  });
+
+  it("acepta sólo las monedas conocidas, sin tolerancias", () => {
+    for (const currency of CURRENCIES) {
+      expect(parseCurrencyBody(currency)).toBe(currency);
+    }
+    for (const hostile of ["EUR", "usd", "USD ", " usd", 3, true, ["USD"], {}]) {
+      expect(parseCurrencyBody(hostile)).toBe("invalid");
+    }
+  });
+
+  it("nombra la moneda para un mensaje: pesos y dólares", () => {
+    expect(currencyNoun("ARS")).toBe("pesos");
+    expect(currencyNoun("USD")).toBe("dólares");
+  });
+});
+
+describe("errores de la base que hablan de monedas (Fase 4)", () => {  // Los marcadores son los que RAISE el trigger / nombran los CHECK de la
   // migración `20261104120000_fase4_monedas`. Sin este mapeo, el rechazo de la
   // base llega como un 500 genérico: la persona no sabe que el problema es la
   // moneda ni qué hacer.

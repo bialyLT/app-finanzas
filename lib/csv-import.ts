@@ -33,7 +33,7 @@
  * distinguirlos. La regla está documentada en docs/import-csv.md.
  */
 
-import type { PrismaClient } from "@prisma/client";
+import type { Currency, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
 import { categoryKindMessage } from "./category-kind";
 import {
@@ -42,6 +42,7 @@ import {
   parseCsvRow,
   type CsvKind,
 } from "./csv";
+import { currencyNoun } from "./currency";
 import { calendarToDb, dbToCalendar } from "./dates";
 import { normalizeDescription } from "./description-suggestions";
 import {
@@ -78,6 +79,7 @@ interface AccountLike {
   name: string;
   kind: AccountKindDTO;
   archived: boolean;
+  currency: Currency;
 }
 
 interface CategoryLike {
@@ -88,27 +90,53 @@ interface CategoryLike {
 }
 
 interface AccountIndex {
+  /**
+   * Cuentas en PESOS, que son las únicas que la importación v1 sabe importar.
+   *
+   * El índice deja afuera las demás monedas a propósito: si "Efectivo" existe
+   * en pesos y en dólares, la fila que dice "Efectivo" tiene que resolver a la
+   * de pesos, no volverse ambigua. Importar en dólares está fuera del alcance
+   * de la v1 (ver docs/fase4-monedas.md, §8).
+   */
   byNormalized: Map<string, AccountLike>;
+  /**
+   * Nombres que NO existen en pesos, con la moneda en la que sí existen. Sirve
+   * para explicar el rechazo ("está en dólares") en vez de decir que la cuenta
+   * no existe, que sería falso.
+   */
+  otherCurrencies: Map<string, Currency[]>;
   ambiguous: Set<string>;
 }
 
 function indexAccounts(accounts: readonly AccountLike[]): AccountIndex {
   const byNormalized = new Map<string, AccountLike>();
+  const otherCurrencies = new Map<string, Currency[]>();
   const ambiguous = new Set<string>();
 
   for (const account of accounts) {
     const key = normalizeCategoryName(account.name);
+
+    if (account.currency !== "ARS") {
+      const currencies = otherCurrencies.get(key) ?? [];
+      if (!currencies.includes(account.currency)) {
+        currencies.push(account.currency);
+      }
+      otherCurrencies.set(key, currencies);
+      continue;
+    }
+
     if (byNormalized.has(key)) {
-      // `Account.name` es único en la base, pero único SENSIBLE A MAYÚSCULAS:
-      // "Banco" y "banco" pueden coexistir. Si el CSV dice "BANCO", no hay
-      // forma honesta de elegir una: la fila se invalida.
+      // `Account.name` es único POR MONEDA desde la Fase 4, pero único
+      // SENSIBLE A MAYÚSCULAS: "Banco" y "banco" en pesos pueden coexistir. Si
+      // el CSV dice "BANCO", no hay forma honesta de elegir una: la fila se
+      // invalida.
       ambiguous.add(key);
     } else {
       byNormalized.set(key, account);
     }
   }
 
-  return { byNormalized, ambiguous };
+  return { byNormalized, otherCurrencies, ambiguous };
 }
 
 function resolveAccount(
@@ -125,6 +153,16 @@ function resolveAccount(
 
   const account = index.byNormalized.get(key);
   if (!account) {
+    // La cuenta existe, pero en otra moneda: se dice cuál. "No existe" sería
+    // una mentira y mandaría a crear una cuenta que ya está creada.
+    const currencies = index.otherCurrencies.get(key);
+    if (currencies && currencies.length > 0) {
+      const noun = currencies.map((currency) => currencyNoun(currency)).join(" y ");
+      return {
+        account: null,
+        error: `La cuenta “${rawName}” está en ${noun}: la importación de CSV sólo admite cuentas en pesos.`,
+      };
+    }
     return { account: null, error: `La cuenta “${rawName}” no existe.` };
   }
   if (account.archived) {
@@ -144,6 +182,12 @@ interface ValidRow {
   date: string;
   amount: string;
   accountId: string;
+  /**
+   * La moneda de la cuenta de origen. Hoy siempre ARS (`resolveAccount` sólo
+   * resuelve cuentas en pesos); viaja por fila para que el total del preview
+   * pueda declarar su unidad y negarse a mezclar si algún día deja de ser así.
+   */
+  currency: Currency;
   toAccountId: string | null;
   categoryId: string | null;
   categoryName: string | null;
@@ -215,7 +259,13 @@ export async function analyzeCsv(db: Db, text: string): Promise<CsvAnalysis> {
 
   const [accounts, categories] = await Promise.all([
     db.account.findMany({
-      select: { id: true, name: true, kind: true, archived: true },
+      select: {
+        id: true,
+        name: true,
+        kind: true,
+        archived: true,
+        currency: true,
+      },
     }),
     db.category.findMany({
       select: { id: true, name: true, kind: true, normalizedName: true },
@@ -259,12 +309,14 @@ export async function analyzeCsv(db: Db, text: string): Promise<CsvAnalysis> {
 
     // ── Cuentas ────────────────────────────────────────────────────────────
     let accountId: string | null = null;
+    let accountCurrency: Currency | null = null;
     if (parsed.accountName) {
       const resolved = resolveAccount(parsed.accountName, accountIndex);
       if (resolved.error) {
         errors.push(resolved.error);
       } else if (resolved.account) {
         accountId = resolved.account.id;
+        accountCurrency = resolved.account.currency;
         if (parsed.kind === "INCOME" && !canReceiveIncome(resolved.account.kind)) {
           errors.push(
             `Un ingreso no puede entrar a la cuenta “${parsed.accountName}”. Elegí una cuenta de dinero.`,
@@ -345,7 +397,8 @@ export async function analyzeCsv(db: Db, text: string): Promise<CsvAnalysis> {
       !kind ||
       !date ||
       !amount ||
-      !accountId
+      !accountId ||
+      !accountCurrency
     ) {
       entries.push({
         dto: {
@@ -376,6 +429,7 @@ export async function analyzeCsv(db: Db, text: string): Promise<CsvAnalysis> {
       date,
       amount,
       accountId,
+      currency: accountCurrency,
       toAccountId: kind === "TRANSFER" ? toAccountId : null,
       categoryId,
       categoryName: categoryId ? null : parsed.categoryName || null,
@@ -470,6 +524,23 @@ export async function analyzeCsv(db: Db, text: string): Promise<CsvAnalysis> {
 
   const rows = entries.map((entry) => entry.dto);
 
+  // ── La unidad del total ──────────────────────────────────────────────────
+  //
+  // El total de abajo suma `amount` de cada fila. Sumar pesos con dólares da un
+  // número que no es plata de nada, así que el total declara su moneda. Si las
+  // filas importables mezclaran monedas, no hay un total único que mostrar: se
+  // rechaza el archivo entero en vez de publicar una suma que miente. Hoy es
+  // inalcanzable (`resolveAccount` sólo acepta cuentas en pesos); queda como
+  // candado para el día que la importación soporte otra moneda.
+  const rowCurrencies = new Set(valid.map((row) => row.currency));
+  if (rowCurrencies.size > 1) {
+    throw new CsvImportError(
+      "El archivo mezcla cuentas en monedas distintas: la importación de CSV admite una sola moneda. No se importó nada.",
+      422,
+    );
+  }
+  const totalsCurrency: Currency | null = [...rowCurrencies][0] ?? null;
+
   const totals = {
     income: money("0"),
     expenses: money("0"),
@@ -494,6 +565,9 @@ export async function analyzeCsv(db: Db, text: string): Promise<CsvAnalysis> {
       expenses: totals.expenses.toFixed(2),
       transfers: totals.transfers.toFixed(2),
       count: valid.length,
+      // `null` sólo si no queda ninguna fila importable: sin filas no hay
+      // moneda que declarar (y el total es cero por definición, no por suma).
+      currency: totalsCurrency,
     },
     rows,
     categoriesToCreate: plannedCategories.map((category) => ({
@@ -552,7 +626,21 @@ export function parseCsvExpected(value: unknown): CsvExpected {
   };
 }
 
-function sameTotals(a: CsvPreviewDTO["totals"], b: CsvPreviewDTO["totals"]): boolean {
+/**
+ * Lo que comparten el preview y el resultado: los cuatro números conciliables.
+ *
+ * Se declara aparte de `CsvPreviewDTO["totals"]` porque la moneda es del
+ * preview (declara la unidad del total, no se concilia: es la misma por
+ * construcción) y el resultado de la importación la hereda.
+ */
+interface CsvTotalsShape {
+  income: string;
+  expenses: string;
+  transfers: string;
+  count: number;
+}
+
+function sameTotals(a: CsvTotalsShape, b: CsvTotalsShape): boolean {
   return (
     a.count === b.count &&
     money(a.income).equals(b.income) &&
@@ -781,6 +869,9 @@ export async function importCsv(
         expenses: insertedTotals.expenses.toFixed(2),
         transfers: insertedTotals.transfers.toFixed(2),
         count: insertedTotals.count,
+        // La moneda del resultado es la del preview conciliado: se importó
+        // exactamente ese conjunto de filas.
+        currency: current.preview.totals.currency,
       },
       categoriesCreated: current.preview.categoriesToCreate,
     } satisfies CsvImportResultDTO;

@@ -1,4 +1,4 @@
-# Batería del tester de base de datos — Fase 4.2
+# Batería del tester de base de datos — Fases 4.2 y 4.3
 #
 # Levanta la app contra `finanzas_test`, corre todas las baterías y baja el
 # server. No toca `finanzas_dev` ni Neon: el DSN sale de `DATABASE_URL_TEST` y
@@ -74,8 +74,8 @@ Write-Host ""
 node scripts/tester-db/00-limpieza.mjs
 if ($LASTEXITCODE -ne 0) { Write-Host "  La limpieza previa falló. Abortado." -ForegroundColor Red; exit 2 }
 
-$serverOut = Join-Path $env:TEMP "tester-db-f42-server.out.log"
-$serverErr = Join-Path $env:TEMP "tester-db-f42-server.err.log"
+$serverOut = Join-Path $env:TEMP "tester-db-f43-server.out.log"
+$serverErr = Join-Path $env:TEMP "tester-db-f43-server.err.log"
 $server = Start-Process -FilePath "node" `
   -ArgumentList @("node_modules\next\dist\bin\next", "start", "-p", "$Port") `
   -WorkingDirectory $repo -PassThru -NoNewWindow `
@@ -100,7 +100,9 @@ $batteries = @(
   "04-endpoints-borde.mjs",
   "05-deudas-cross-currency.mjs",
   "06-plata-declarada.mjs",
-  "07-volumen-explain.mjs"
+  "07-volumen-explain.mjs",
+  "08-escritura-monedas.mjs",
+  "09-concurrencia-escritura.mjs"
 )
 if ($Only) { $batteries = $batteries | Where-Object { $_ -like "*$Only*" } }
 
@@ -127,3 +129,4 @@ if ($failed.Count -gt 0) {
 }
 Write-Host "Todas las baterías en verde." -ForegroundColor Green
 exit 0
+
