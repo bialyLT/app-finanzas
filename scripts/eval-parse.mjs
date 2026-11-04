@@ -1,99 +1,64 @@
 #!/usr/bin/env node
 /**
- * Runner de evaluación en vivo para medir la precisión de Gemini contra
- * el dataset en español rioplatense (Fase 5 · T5.2).
+ * Runner de evaluación en vivo (Fase 6 · T6.2 y T6.3).
  *
- * Requiere GEMINI_API_KEY en el entorno o en .env.
+ * Corre el dataset rioplatense contra Gemini usando el pipeline real de la app
+ * (`buildPrompt` → proveedor → `resolveBatch`) y falla si no se cumplen los
+ * umbrales del plan.
  *
  * Uso:
- *   node scripts/eval-parse.mjs
+ *   npm run eval:parse
+ *
+ * Requiere GEMINI_API_KEY en el entorno o en `.env`. Opcional: AI_MODEL para
+ * elegir el modelo (por defecto `gemini-2.5-flash`).
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const DATASET_PATH = resolve(process.cwd(), "lib/voice-capture/dataset.json");
-const dataset = JSON.parse(readFileSync(DATASET_PATH, "utf-8"));
+function loadEnvFile() {
+  try {
+    const content = readFileSync(resolve(process.cwd(), ".env"), "utf-8");
 
-// Leemos .env manualmente si existe
-try {
-  const envContent = readFileSync(resolve(process.cwd(), ".env"), "utf-8");
-  for (const line of envContent.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed && !trimmed.startsWith("#") && trimmed.includes("=")) {
-      const [key, ...vals] = trimmed.split("=");
-      if (!process.env[key.trim()]) {
-        process.env[key.trim()] = vals.join("=").trim().replace(/^["']|["']$/g, "");
-      }
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+
+      if (!trimmed || trimmed.startsWith("#") || !trimmed.includes("=")) continue;
+
+      const separator = trimmed.indexOf("=");
+      const key = trimmed.slice(0, separator).trim();
+      const value = trimmed
+        .slice(separator + 1)
+        .trim()
+        .replace(/^["']|["']$/g, "");
+
+      if (!process.env[key]) process.env[key] = value;
     }
+  } catch {
+    // `.env` es opcional: la key puede venir del entorno.
   }
-} catch {
-  // .env opcional
 }
 
-const apiKey = process.env.GEMINI_API_KEY;
+loadEnvFile();
 
-if (!apiKey) {
-  console.log("ℹ GEMINI_API_KEY no detectada. Para evaluar el modelo en vivo, seteá GEMINI_API_KEY.");
-  console.log("✓ Para verificar los casos contra el pipeline de resolución, ejecutá: npx vitest run lib/voice-capture/dataset.test.ts");
-  process.exit(0);
+if (!process.env.GEMINI_API_KEY?.trim()) {
+  console.error(
+    "✗ Falta GEMINI_API_KEY. Sin key no se puede evaluar el modelo en vivo.\n" +
+      "  Agregala a .env (sólo servidor) o exportala en la terminal.\n" +
+      "  Para verificar el dataset y las reglas sin red: npm test -- lib/voice-capture",
+  );
+  process.exit(1);
 }
 
-const model = process.env.AI_MODEL || "gemini-2.5-flash";
+const result = spawnSync(
+  "npx",
+  ["vitest", "run", "lib/voice-capture/eval.live.test.ts", "--reporter=verbose"],
+  {
+    stdio: "inherit",
+    shell: true,
+    env: { ...process.env, EVAL_LIVE: "1" },
+  },
+);
 
-async function evaluateLive() {
-  console.log(`\n======================================================`);
-  console.log(` EVALUACIÓN EN VIVO CON GEMINI (${model})`);
-  console.log(` Casos a evaluar: ${dataset.length}`);
-  console.log(`======================================================\n`);
-
-  let passed = 0;
-  let failed = 0;
-
-  for (const item of dataset) {
-    process.stdout.write(`Probando [${item.id}] "${item.input}" ... `);
-
-    try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model,
-      )}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-      const promptText = `Sos un motor de extracción financiera para Argentina. Extraé los movimientos en JSON estricto con campos: kind (INCOME | EXPENSE | TRANSFER), amount (número), description, accountName, fromAccountName, toAccountName, installments, clarifications. Si es pago de tarjeta, jamás uses EXPENSE (usá TRANSFER hacia la tarjeta). Texto: "${item.input}"`;
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: promptText }] }],
-          generationConfig: { responseMimeType: "application/json" },
-        }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-      }
-
-      const data = await res.json();
-      const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      const parsed = JSON.parse(rawText);
-
-      // Verificamos regla de oro para tarjetas
-      if (item.expected?.neverKind) {
-        const first = Array.isArray(parsed) ? parsed[0] : parsed?.movements?.[0] ?? parsed;
-        if (first?.kind === item.expected.neverKind) {
-          throw new Error(`Violó regla neverKind: devolvió ${first.kind}`);
-        }
-      }
-
-      passed++;
-      console.log(`OK`);
-    } catch (err) {
-      failed++;
-      console.log(`FALLÓ: ${err.message}`);
-    }
-  }
-
-  console.log(`\nResumen: ${passed} pasaron, ${failed} fallaron.`);
-}
-
-evaluateLive();
+process.exit(result.status ?? 1);

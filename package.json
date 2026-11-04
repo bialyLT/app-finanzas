@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:parse": "node scripts/eval-parse.mjs",
     "db:push": "prisma db push",
     "db:test:setup": "node scripts/db-test-setup.mjs",
     "db:state": "node scripts/db-state.mjs",
