@@ -39,7 +39,7 @@ describe("POST /api/parse", () => {
   });
 
   it("devuelve 401 si no hay sesión activa", async () => {
-    vi.mocked(dalModule.requireApiSession).mockResolvedValue(false as any);
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue(null);
 
     const req = new Request("http://localhost:3000/api/parse", {
       method: "POST",
@@ -51,7 +51,7 @@ describe("POST /api/parse", () => {
   });
 
   it("devuelve 400 si no hay ni texto ni comprobante", async () => {
-    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ id: "user" } as any);
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
 
     const req = new Request("http://localhost:3000/api/parse", {
       method: "POST",
@@ -66,7 +66,7 @@ describe("POST /api/parse", () => {
   });
 
   it("devuelve 200 con el lote resuelto usando MockProvider", async () => {
-    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ id: "user" } as any);
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
 
     const mockAiOutput = {
       movements: [
@@ -105,7 +105,7 @@ describe("POST /api/parse", () => {
   });
 
   it("devuelve 429 si se supera el rate limit", async () => {
-    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ id: "user" } as any);
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
     setAiProvider(new MockProvider({ movements: [], unparsedText: null }));
 
     // Realizamos 20 llamadas permitidas

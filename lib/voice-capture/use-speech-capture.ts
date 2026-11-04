@@ -1,55 +1,55 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { SpeechCaptureEngine, type SpeechCaptureState } from "./speech";
 
+/**
+ * Estado inicial, también usado como snapshot del servidor.
+ *
+ * En SSR no hay `window`, así que el motor se construye igual (reporta
+ * `unsupported`) pero el HTML se renderiza con este estado neutro. Evita
+ * diferencias de hidratación entre servidor y cliente.
+ */
+const INITIAL_STATE: SpeechCaptureState = {
+  status: "idle",
+  transcript: "",
+  interimTranscript: "",
+  error: null,
+};
+
 export function useSpeechCapture() {
-  const engineRef = useRef<SpeechCaptureEngine | null>(null);
+  // `useState` con inicializador perezoso: una sola instancia por componente.
+  const [engine] = useState(() => new SpeechCaptureEngine());
 
-  const [state, setState] = useState<SpeechCaptureState>({
-    status: "idle",
-    transcript: "",
-    interimTranscript: "",
-    error: null,
-  });
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => engine.subscribe(onStoreChange),
+    [engine],
+  );
 
-  const [isSupported, setIsSupported] = useState(false);
+  const getSnapshot = useCallback(() => engine.getState(), [engine]);
+  const getServerSnapshot = useCallback(() => INITIAL_STATE, []);
 
-  useEffect(() => {
-    const engine = new SpeechCaptureEngine();
-    engineRef.current = engine;
-    setIsSupported(engine.isSupported);
-    setState(engine.getState());
+  // Suscripción directa al motor: sin `setState` dentro de un efecto, así que
+  // no hay renders en cascada al montar.
+  const state = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-    const unsubscribe = engine.subscribe((nextState) => {
-      setState(nextState);
-    });
+  // El micrófono queda abierto si no se cierra: se libera al desmontar.
+  useEffect(() => () => engine.stop(), [engine]);
 
-    return () => {
-      unsubscribe();
-      engine.stop();
-    };
-  }, []);
+  const startListening = useCallback(() => engine.start(), [engine]);
 
-  const startListening = useCallback(() => {
-    engineRef.current?.start();
-  }, []);
+  const stopListening = useCallback(() => engine.stop(), [engine]);
 
-  const stopListening = useCallback(() => {
-    engineRef.current?.stop();
-  }, []);
+  const setTranscript = useCallback(
+    (text: string) => engine.setTranscript(text),
+    [engine],
+  );
 
-  const setTranscript = useCallback((text: string) => {
-    engineRef.current?.setTranscript(text);
-  }, []);
-
-  const resetTranscript = useCallback(() => {
-    engineRef.current?.reset();
-  }, []);
+  const resetTranscript = useCallback(() => engine.reset(), [engine]);
 
   return {
     ...state,
-    isSupported,
+    isSupported: engine.isSupported,
     startListening,
     stopListening,
     setTranscript,

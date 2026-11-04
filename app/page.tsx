@@ -2121,7 +2121,7 @@ export default function Home() {
             amount: m.amount,
             date: m.date,
             description: m.description,
-            accountId: m.accountId,
+            accountId: m.account.id,
           }))}
           onSaved={() => {
             setVoiceParsedBatch(null);

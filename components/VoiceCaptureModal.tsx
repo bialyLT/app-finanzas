@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { AlertCircle, FileText, Image as ImageIcon, Mic, MicOff, Send, Sparkles, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +21,30 @@ interface Props {
 }
 
 export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <VoiceCaptureDialogBody
+          onParsed={onParsed}
+          onClose={() => onOpenChange(false)}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface BodyProps {
+  onParsed: (batch: ResolvedBatch) => void;
+  onClose: () => void;
+}
+
+/**
+ * El cuerpo vive DENTRO de `DialogContent`: Radix lo desmonta al cerrar, así
+ * que cada apertura arranca con estado limpio y el micrófono se libera solo
+ * (el hook corta el motor al desmontar). No hace falta reiniciar nada desde un
+ * efecto, que además provocaba renders en cascada.
+ */
+function VoiceCaptureDialogBody({ onParsed, onClose }: BodyProps) {
   const {
     status,
     transcript,
@@ -30,7 +54,6 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
     startListening,
     stopListening,
     setTranscript,
-    resetTranscript,
   } = useSpeechCapture();
 
   const [parseError, setParseError] = useState<string | null>(null);
@@ -41,18 +64,6 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
     name: string;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Reiniciar estado al abrir el diálogo
-  useEffect(() => {
-    if (open) {
-      resetTranscript();
-      setParseError(null);
-      setIsParsing(false);
-      setAttachedFile(null);
-    } else {
-      stopListening();
-    }
-  }, [open, resetTranscript, stopListening]);
 
   const displayedText = transcript + (interimTranscript ? ` ${interimTranscript}` : "");
 
@@ -108,7 +119,7 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
       }
 
       onParsed(data as ResolvedBatch);
-      onOpenChange(false);
+      onClose();
     } catch (err: unknown) {
       const msg =
         err instanceof Error
@@ -130,8 +141,7 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+    <>
         <DialogHeader>
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-md bg-accent/15 text-accent">
@@ -255,7 +265,7 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
               type="button"
               variant="outline"
               size="default"
-              onClick={() => onOpenChange(false)}
+              onClick={onClose}
               disabled={isParsing}
               className="min-h-[44px]"
             >
@@ -280,7 +290,6 @@ export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
             </Button>
           </div>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </>
   );
 }

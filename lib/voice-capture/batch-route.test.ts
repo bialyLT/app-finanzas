@@ -27,7 +27,7 @@ describe("POST /api/transactions/batch", () => {
   });
 
   it("devuelve 401 si no hay sesión activa", async () => {
-    vi.mocked(dalModule.requireApiSession).mockResolvedValue(false as any);
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue(null);
 
     const req = new Request("http://localhost:3000/api/transactions/batch", {
       method: "POST",
@@ -39,7 +39,7 @@ describe("POST /api/transactions/batch", () => {
   });
 
   it("devuelve 400 si movements está vacío", async () => {
-    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ id: "user" } as any);
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
 
     const req = new Request("http://localhost:3000/api/transactions/batch", {
       method: "POST",
@@ -53,7 +53,7 @@ describe("POST /api/transactions/batch", () => {
   });
 
   it("devuelve 201 y delega a saveMovementBatch en caso exitoso", async () => {
-    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ id: "user" } as any);
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
     vi.mocked(batchService.saveMovementBatch).mockResolvedValue({ count: 1 });
 
     const movements = [

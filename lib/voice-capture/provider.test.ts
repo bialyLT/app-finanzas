@@ -40,7 +40,7 @@ describe("voice-capture / AiProvider", () => {
     });
 
     it("permite actualizar o mockear una función dinámica", async () => {
-      const provider = new MockProvider((input) => ({
+      const provider = new MockProvider((input: ParseInput) => ({
         movements: [],
         unparsedText: input.text,
       }));

@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { SpeechCaptureEngine, type SpeechRecognitionLike } from "./speech";
+import {
+  SpeechCaptureEngine,
+  type SpeechRecognitionErrorEvent,
+  type SpeechRecognitionLike,
+  type SpeechRecognitionResultEvent,
+} from "./speech";
 
 class MockSpeechRecognition implements SpeechRecognitionLike {
   continuous = false;
   interimResults = false;
   lang = "";
   onstart: (() => void) | null = null;
-  onresult: ((event: any) => void) | null = null;
-  onerror: ((event: any) => void) | null = null;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null = null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null = null;
   onend: (() => void) | null = null;
 
   start = vi.fn(() => {

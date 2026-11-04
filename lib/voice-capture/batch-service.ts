@@ -101,7 +101,7 @@ export async function saveMovementBatch(
 
   await prisma.$transaction(async (tx) => {
     for (const item of items) {
-      const amountDec = money(item.amount).toFixed(2);
+      const amountDec = money(String(item.amount)).toFixed(2);
       const desc = (item.description ?? "").trim().slice(0, 200);
 
       // Caso A: Compra en cuotas con tarjeta de crédito
@@ -127,12 +127,12 @@ export async function saveMovementBatch(
           {
             cardId: item.accountId,
             label: desc || "Compra en cuotas",
-            totalAmount: item.amount,
+            totalAmount: amountDec,
             installments: item.installments,
-            purchaseDate: item.date as any,
+            purchaseDate: item.date,
             categoryName,
           },
-          { today: item.date as any },
+          { today: item.date },
         );
         continue;
       }
@@ -143,7 +143,7 @@ export async function saveMovementBatch(
           data: {
             kind: "TRANSFER",
             amount: amountDec,
-            date: calendarToDb(item.date as any),
+            date: calendarToDb(item.date),
             description: desc,
             accountId: item.fromAccountId!,
             toAccountId: item.toAccountId!,
@@ -158,7 +158,7 @@ export async function saveMovementBatch(
         data: {
           kind: item.kind,
           amount: amountDec,
-          date: calendarToDb(item.date as any),
+          date: calendarToDb(item.date),
           description: desc,
           accountId: item.accountId!,
           categoryId: item.categoryId ?? null,

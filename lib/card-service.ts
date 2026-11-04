@@ -279,8 +279,12 @@ function emptyCommitments(): CardCommitmentsDTO {
  */
 async function resolveExpenseCategory(
   tx: Prisma.TransactionClient,
-  rawName: string,
-): Promise<string> {
+  rawName: string | null | undefined,
+): Promise<string | null> {
+  // Sin categoría no se inventa una: el movimiento queda sin clasificar, igual
+  // que en la carga manual (Fase 7 hizo opcional la categoría).
+  if (!rawName || rawName.trim() === "") return null;
+
   const name = cleanName(rawName);
   const normalizedName = normalizeCategoryName(name);
 
@@ -318,7 +322,8 @@ export interface CreateCardPlanInput {
   purchaseDate?: CalendarDate;
   /** Precio de contado, si se conoce. */
   cashPrice?: string | null;
-  categoryName: string;
+  /** Sin nombre, el movimiento queda sin categoría. */
+  categoryName?: string | null;
 }
 
 /**

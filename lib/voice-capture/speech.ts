@@ -17,13 +17,37 @@ export interface SpeechCaptureState {
   error: string | null;
 }
 
+export interface SpeechRecognitionAlternative {
+  transcript: string;
+}
+
+export interface SpeechRecognitionResult {
+  readonly isFinal: boolean;
+  readonly length: number;
+  [index: number]: SpeechRecognitionAlternative;
+}
+
+export interface SpeechRecognitionResultList {
+  readonly length: number;
+  [index: number]: SpeechRecognitionResult;
+}
+
+export interface SpeechRecognitionResultEvent {
+  resultIndex?: number;
+  results: SpeechRecognitionResultList;
+}
+
+export interface SpeechRecognitionErrorEvent {
+  error: string;
+}
+
 export interface SpeechRecognitionLike {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
   onstart: (() => void) | null;
-  onresult: ((event: any) => void) | null;
-  onerror: ((event: any) => void) | null;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
   start(): void;
   stop(): void;
@@ -31,6 +55,11 @@ export interface SpeechRecognitionLike {
 }
 
 export type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+interface SpeechRecognitionWindow extends Window {
+  SpeechRecognition?: SpeechRecognitionConstructor;
+  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+}
 
 export class SpeechCaptureEngine {
   private recognition: SpeechRecognitionLike | null = null;
@@ -41,7 +70,7 @@ export class SpeechCaptureEngine {
     error: null,
   };
   private listeners: Set<(state: SpeechCaptureState) => void> = new Set();
-  public readonly isSupported: boolean;
+  public isSupported: boolean;
 
   constructor(
     customFactory?: (() => SpeechRecognitionLike) | null,
@@ -55,9 +84,9 @@ export class SpeechCaptureEngine {
         this.initRecognition(customFactory);
       }
     } else if (typeof window !== "undefined") {
+      const speechWindow = window as SpeechRecognitionWindow;
       const SpeechRecognitionClass =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition;
+        speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
       if (SpeechRecognitionClass) {
         this.isSupported = true;
@@ -83,7 +112,7 @@ export class SpeechCaptureEngine {
         this.updateState({ status: "listening", error: null });
       };
 
-      this.recognition.onresult = (event: any) => {
+      this.recognition.onresult = (event: SpeechRecognitionResultEvent) => {
         let finalChunk = "";
         let currentInterim = "";
 
@@ -108,7 +137,7 @@ export class SpeechCaptureEngine {
         });
       };
 
-      this.recognition.onerror = (event: any) => {
+      this.recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
         const errorKey = event.error;
         let errorMessage = "Ocurrió un error al capturar el audio.";
 

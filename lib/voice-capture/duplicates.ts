@@ -26,7 +26,7 @@ export function findPossibleDuplicates(
 ): PossibleDuplicateMatch | null {
   if (!candidate.amount || !candidate.date) return null;
 
-  const candidateAmountStr = money(candidate.amount).toFixed(2);
+  const candidateAmountStr = money(String(candidate.amount)).toFixed(2);
   const targetAccountId =
     candidate.kind === "TRANSFER"
       ? candidate.fromAccountId
