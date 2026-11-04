@@ -110,6 +110,29 @@ datasource db {
 /// dirección de un préstamo se DERIVA de acá (`loanDirectionOf` en lib/loans.ts):
 /// `LOAN` = I_OWE, `RECEIVABLE` = OWED_TO_ME. No hay un campo aparte que pueda
 /// contradecir al kind.
+/// Moneda de una cuenta.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// POR QUÉ LA MONEDA VIVE EN LA CUENTA Y NO EN EL MOVIMIENTO
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Un movimiento pertenece a una cuenta, y su moneda es la de esa cuenta.
+/// Guardarla también en `Movement` permitiría el estado imposible "movimiento en
+/// USD dentro de una cuenta en ARS" — el mismo error que el esquema ya evita no
+/// guardando el signo en `amount` (el signo lo dice `kind`).
+///
+/// La consecuencia es que toda consulta que sume plata entre cuentas tiene que
+/// declarar la moneda. Es trabajo, pero el número que se muestra pasa a tener
+/// una unidad explícita.
+///
+/// Agregar una moneda nueva es una línea (`ALTER TYPE "Currency" ADD VALUE`),
+/// pero además hay que darle formato y símbolo en la UI: no es gratis.
+enum Currency {
+  /// Peso argentino.
+  ARS
+  /// Dólar estadounidense.
+  USD
+}
+
 enum AccountKind {
   /// Efectivo, billetera, caja de ahorro en pesos.
   CASH
@@ -230,6 +253,14 @@ model Account {
   name String
   kind AccountKind
 
+  /// Moneda de la cuenta. Todos los movimientos de esta cuenta están en esta
+  /// moneda (ver el enum `Currency` para el porqué).
+  ///
+  /// Es INMUTABLE una vez que la cuenta tiene historia: cambiarla reescribiría
+  /// el significado de todos sus movimientos sin tocar una sola fila. Un trigger
+  /// (`account_currency_immutable_check`) lo hace cumplir.
+  currency Currency @default(ARS)
+
   /// Saldo inicial de la cuenta.
   ///
   /// Existe para que puedas empezar a usar la app HOY sin cargar tres años de
@@ -346,9 +377,10 @@ model Account {
   /// Plantillas de transferencia que llegan a esta cuenta.
   incomingFavoriteTemplates FavoriteTemplate[] @relation("FavoriteTemplateToAccount")
 
-  /// El nombre tiene que ser único: dos cuentas llamadas "Efectivo" harían
-  /// que el usuario no sepa cuál está eligiendo.
-  @@unique([name])
+  /// El nombre es único POR MONEDA: "Efectivo" en pesos y "Efectivo" en dólares
+  /// son dos cuentas distintas y legítimas. Repetirlo dentro de la misma moneda
+  /// sí confundiría a la persona al elegir.
+  @@unique([name, currency])
   @@index([archived, kind])
 }
 
@@ -440,6 +472,21 @@ model Movement {
   /// En INCOME y EXPENSE es NULL (hay un CHECK que lo exige).
   toAccountId String?
   toAccount   Account? @relation("MovementToAccount", fields: [toAccountId], references: [id], onDelete: Restrict)
+
+  /// Sólo en TRANSFER entre cuentas de DISTINTA moneda: cuánto LLEGA a la cuenta
+  /// de destino, en la moneda de destino. NULL en todos los demás casos.
+  ///
+  /// `amount` es siempre lo que SALE de la cuenta de origen, en la moneda de
+  /// origen. En una compra de dólares las dos puntas son números distintos y
+  /// ninguno se deriva del otro sin una cotización.
+  ///
+  /// El tipo de cambio NO se guarda: se calcula al mostrar (`toAmount / amount`).
+  /// Persistirlo crearía un tercer número que puede contradecir a los otros dos.
+  ///
+  /// Un trigger (`movement_currency_shape_check`) hace cumplir la
+  /// bicondicional: obligatorio si las monedas difieren, prohibido si son
+  /// iguales. No puede ser un CHECK porque necesita leer `Account`.
+  toAmount Decimal? @db.Decimal(18, 2)
 
   /// La regla de recurrencia que POSTEÓ este movimiento. NULL en los manuales.
   ///
@@ -1011,6 +1058,11 @@ model Budget {
   /// Límite asignado: estrictamente positivo.
   amount Decimal @db.Decimal(18, 2)
 
+  /// Moneda del límite. El mismo presupuesto de la misma categoría y mes en dos
+  /// monedas son dos presupuestos distintos: sumar gastos de las dos contra un
+  /// único límite compararía pesos con dólares.
+  currency Currency @default(ARS)
+
   /// Categoría que se presupuesta (sólo EXPENSE).
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
@@ -1018,8 +1070,38 @@ model Budget {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  /// Un presupuesto por categoría por mes.
-  @@unique([categoryId, month])
+  /// Un presupuesto por categoría, mes y moneda.
+  @@unique([categoryId, month, currency])
   @@index([month])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AppSettings — las preferencias de la instalación
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Preferencias de la instalación. **Una sola fila** (`id = 1`).
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// POR QUÉ ES UNA TABLA Y NO UNA VARIABLE DE ENTORNO
+/// ─────────────────────────────────────────────────────────────────────────────
+/// La persona cambia sus monedas desde la app; una variable de entorno es
+/// configuración de despliegue, no una preferencia. Además el motor de voz
+/// necesita la lista aunque todavía no exista ninguna cuenta en esa moneda: así
+/// puede decir "todavía no habilitaste dólares" en vez de inventar.
+///
+/// ─────────────────────────────────────────────────────────────────────────────
+/// POR QUÉ ES UN SINGLETON
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Hoy hay un solo usuario. Una tabla de preferencias por usuario sería una
+/// mentira con una fila. El CHECK `app_settings_singleton` lo hace explícito:
+/// si algún día hay multiusuario, esa migración tendrá que decidirlo a la vista.
+model AppSettings {
+  id Int @id @default(1)
+
+  /// Monedas que la persona eligió usar. Nunca vacía: un CHECK lo exige
+  /// (`app_settings_at_least_one_currency`).
+  enabledCurrencies Currency[] @default([ARS])
+
+  updatedAt DateTime @updatedAt
 }
 

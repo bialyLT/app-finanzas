@@ -6375,3 +6375,246 @@ describeDb("La banderita del ingreso declarado", () => {
     expect(efectivo?.openingIncomeMonth).toBe("2026-10");
   });
 });
+
+/* ═════════════════════════════════════════════════════════════════════════════
+ * FASE 4 · MONEDAS
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * Los invariantes de `20261104120000_fase4_monedas` están escritos en SQL. Acá
+ * se intenta guardar exactamente lo que la base dice que no se puede guardar.
+ *
+ * Se agregan a ESTE archivo y no a uno nuevo a propósito: dos archivos de
+ * integración corren en workers distintos de vitest y comparten la misma base
+ * de test; el `resetDatabase()` de uno borraría las filas del otro a mitad de
+ * camino. Un archivo, un dueño de la base.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+describeDb("Fase 4 · monedas", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+    await db.appSettings.update({
+      where: { id: 1 },
+      data: { enabledCurrencies: ["ARS"] },
+    });
+  });
+
+  async function createAccount(
+    name: string,
+    currency: "ARS" | "USD",
+    kind: "CASH" | "BANK" = "CASH",
+  ) {
+    return db.account.create({ data: { name, kind, currency } });
+  }
+
+  describe("transferencias entre monedas", () => {
+    it("rechaza una transferencia entre monedas sin monto de destino", async () => {
+      const origen = await createAccount("Caja pesos", "ARS");
+      const destino = await createAccount("Caja dólares", "USD");
+
+      await expect(
+        db.movement.create({
+          data: {
+            kind: "TRANSFER",
+            amount: "120000",
+            date: calendarToDb("2026-11-01"),
+            accountId: origen.id,
+            toAccountId: destino.id,
+          },
+        }),
+      ).rejects.toThrow(/transferencia_entre_monedas_sin_monto_destino/);
+    });
+
+    it("rechaza un monto de destino en una transferencia de la misma moneda", async () => {
+      const origen = await createAccount("Banco pesos", "ARS", "BANK");
+      const destino = await createAccount("Caja pesos", "ARS");
+
+      await expect(
+        db.movement.create({
+          data: {
+            kind: "TRANSFER",
+            amount: "10000",
+            toAmount: "10000",
+            date: calendarToDb("2026-11-01"),
+            accountId: origen.id,
+            toAccountId: destino.id,
+          },
+        }),
+      ).rejects.toThrow(/monto_destino_en_misma_moneda/);
+    });
+
+    it("acepta una transferencia de la misma moneda sin monto de destino", async () => {
+      const origen = await createAccount("Banco pesos", "ARS", "BANK");
+      const destino = await createAccount("Caja pesos", "ARS");
+
+      const movement = await db.movement.create({
+        data: {
+          kind: "TRANSFER",
+          amount: "10000",
+          date: calendarToDb("2026-11-01"),
+          accountId: origen.id,
+          toAccountId: destino.id,
+        },
+      });
+
+      expect(movement.toAmount).toBeNull();
+    });
+
+    it("acepta una transferencia entre monedas con monto de destino", async () => {
+      const origen = await createAccount("Banco pesos", "ARS", "BANK");
+      const destino = await createAccount("Caja dólares", "USD");
+
+      const movement = await db.movement.create({
+        data: {
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          date: calendarToDb("2026-11-01"),
+          accountId: origen.id,
+          toAccountId: destino.id,
+        },
+      });
+
+      expect(movement.toAmount?.toFixed(2)).toBe("100.00");
+    });
+
+    it("rechaza un monto de destino en un gasto", async () => {
+      const cuenta = await createAccount("Caja pesos", "ARS");
+      const { gastos } = await seedCategories();
+
+      await expect(
+        db.movement.create({
+          data: {
+            kind: "EXPENSE",
+            amount: "5000",
+            toAmount: "1",
+            date: calendarToDb("2026-11-01"),
+            accountId: cuenta.id,
+            categoryId: gastos.id,
+          },
+        }),
+      ).rejects.toThrow(/movement_to_amount_only_on_transfer/);
+    });
+
+    it("rechaza un monto de destino que no es positivo", async () => {
+      const origen = await createAccount("Banco pesos", "ARS", "BANK");
+      const destino = await createAccount("Caja dólares", "USD");
+
+      await expect(
+        db.movement.create({
+          data: {
+            kind: "TRANSFER",
+            amount: "120000",
+            toAmount: "0",
+            date: calendarToDb("2026-11-01"),
+            accountId: origen.id,
+            toAccountId: destino.id,
+          },
+        }),
+      ).rejects.toThrow(/movement_to_amount_positive/);
+    });
+  });
+
+  describe("la moneda de una cuenta", () => {
+    it("no se puede cambiar si la cuenta ya tiene historia", async () => {
+      const cuenta = await createAccount("Caja", "ARS");
+      await db.movement.create({
+        data: {
+          kind: "INCOME",
+          amount: "1000",
+          date: calendarToDb("2026-11-01"),
+          accountId: cuenta.id,
+        },
+      });
+
+      await expect(
+        db.account.update({
+          where: { id: cuenta.id },
+          data: { currency: "USD" },
+        }),
+      ).rejects.toThrow(/cuenta_en_uso_no_cambia_moneda/);
+    });
+
+    it("se puede corregir mientras la cuenta no tenga historia", async () => {
+      const cuenta = await createAccount("Caja", "ARS");
+
+      const actualizada = await db.account.update({
+        where: { id: cuenta.id },
+        data: { currency: "USD" },
+      });
+
+      expect(actualizada.currency).toBe("USD");
+    });
+
+    it("permite el mismo nombre en monedas distintas y lo rechaza en la misma", async () => {
+      await createAccount("Efectivo", "ARS");
+      await createAccount("Efectivo", "USD");
+
+      await expect(createAccount("Efectivo", "ARS")).rejects.toThrow();
+    });
+  });
+
+  describe("preferencias de monedas", () => {
+    it("arranca con una sola fila habilitando pesos", async () => {
+      const settings = await db.appSettings.findMany();
+
+      expect(settings).toHaveLength(1);
+      expect(settings[0]?.enabledCurrencies).toEqual(["ARS"]);
+    });
+
+    it("no admite una segunda fila", async () => {
+      await expect(db.appSettings.create({ data: { id: 2 } })).rejects.toThrow(
+        /app_settings_singleton/,
+      );
+    });
+
+    it("no admite quedarse sin ninguna moneda habilitada", async () => {
+      await expect(
+        db.appSettings.update({
+          where: { id: 1 },
+          data: { enabledCurrencies: [] },
+        }),
+      ).rejects.toThrow(/app_settings_at_least_one_currency/);
+    });
+  });
+
+  describe("compatibilidad con los datos que ya existían", () => {
+    it("las cuentas y movimientos del escenario quedan en pesos y sin monto de destino", async () => {
+      await seedScenario();
+
+      const cuentas = await db.account.findMany();
+      const movimientos = await db.movement.findMany();
+
+      expect(cuentas.length).toBeGreaterThan(0);
+      expect(cuentas.every((cuenta) => cuenta.currency === "ARS")).toBe(true);
+      expect(movimientos.length).toBeGreaterThan(0);
+      expect(movimientos.every((movimiento) => movimiento.toAmount === null)).toBe(
+        true,
+      );
+    });
+  });
+
+  describe("presupuestos por moneda", () => {
+    it("admite el mismo mes y categoría en dos monedas y rechaza el duplicado", async () => {
+      const { gastos } = await seedCategories();
+      const mes = calendarToDb("2026-11-01");
+
+      await db.budget.create({
+        data: { month: mes, amount: "1000", categoryId: gastos.id, currency: "ARS" },
+      });
+
+      await db.budget.create({
+        data: { month: mes, amount: "100", categoryId: gastos.id, currency: "USD" },
+      });
+
+      await expect(
+        db.budget.create({
+          data: {
+            month: mes,
+            amount: "2000",
+            categoryId: gastos.id,
+            currency: "ARS",
+          },
+        }),
+      ).rejects.toThrow();
+    });
+  });
+});

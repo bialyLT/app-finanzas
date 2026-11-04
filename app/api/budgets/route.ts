@@ -39,9 +39,14 @@ export async function GET(request: Request) {
   const nextMonthDate = new Date(Date.UTC(year, month + 1, 1));
 
   // Traer presupuestos del mes y los gastos reales por categoría
+  //
+  // MONEDA: mientras el endpoint no ofrezca elegir (F4.4), POST crea el
+  // presupuesto en ARS y acá se filtra a ARS en las DOS consultas. Sin el
+  // filtro en los gastos, un gasto en dólares entraría a compararse contra un
+  // límite en pesos. El scoping completo por moneda es F4.2.
   const [budgets, expensesByCategory] = await Promise.all([
     prisma.budget.findMany({
-      where: { month: monthDate },
+      where: { month: monthDate, currency: "ARS" },
       include: { category: true },
       orderBy: { category: { name: "asc" } },
     }),
@@ -54,6 +59,7 @@ export async function GET(request: Request) {
           lt: nextMonthDate,
         },
         categoryId: { not: null },
+        account: { currency: "ARS" },
       },
       _sum: {
         amount: true,
@@ -150,9 +156,14 @@ export async function POST(request: Request) {
 
   const budget = await prisma.budget.upsert({
     where: {
-      categoryId_month: {
+      // El presupuesto es por categoría, mes Y moneda. Mientras la pantalla no
+      // ofrezca elegir moneda (F4.4), este endpoint opera sobre pesos: el
+      // mismo DEFAULT que tiene la columna, escrito explícito para que el día
+      // que se agregue el selector no haya que adivinar qué hacía antes.
+      categoryId_month_currency: {
         categoryId,
         month: monthDate,
+        currency: "ARS",
       },
     },
     update: {
@@ -162,6 +173,7 @@ export async function POST(request: Request) {
       categoryId,
       month: monthDate,
       amount: decimalAmount,
+      currency: "ARS",
     },
     include: {
       category: true,

@@ -175,8 +175,11 @@ CREATE TABLE "AppSettings" (
 
     CONSTRAINT "AppSettings_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "app_settings_singleton" CHECK ("id" = 1),
+    -- `cardinality` y NO `array_length`: en un array vacío `array_length`
+    -- devuelve NULL, y un CHECK que evalúa a NULL PASA. La restricción habría
+    -- aceptado una lista vacía sin decir nada.
     CONSTRAINT "app_settings_at_least_one_currency"
-      CHECK (array_length("enabledCurrencies", 1) >= 1)
+      CHECK (cardinality("enabledCurrencies") >= 1)
 );
 
 INSERT INTO "AppSettings" ("id", "updatedAt")
@@ -421,10 +424,11 @@ ningún número visible; los reportes empiezan a mentir menos recién en F4.2.
 | El tipo de cambio queda desactualizado | No se guarda: se calcula al mostrar. |
 | `Budget` con moneda duplica la pantalla de presupuestos | En v1 el selector muestra sólo las monedas habilitadas; con una sola, no se ve. |
 
-**Q1 · ¿Hace falta un patrimonio total convertido?** Requiere un tipo de cambio
-manual o una fuente externa. Recomendación: **no** en v1; mostrar el patrimonio
-por moneda es honesto y no inventa un número. Es la decisión de producto que
-falta.
+**Q1 · ¿Hace falta un patrimonio total convertido? — DECIDIDO: no.**
+Se muestra **por moneda**. Un total convertido exigiría una cotización (manual o
+externa) y convertiría un número honesto en uno que depende de cuándo se
+actualizó esa cotización. `getNetWorth` devuelve un bloque por moneda y la UI no
+inventa un total.
 
 **Q2 · ¿ARS + USD alcanza?** El enum se extiende con una línea
 (`ALTER TYPE "Currency" ADD VALUE 'BRL'`), pero cada moneda nueva necesita
