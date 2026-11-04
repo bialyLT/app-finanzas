@@ -100,15 +100,21 @@ describe("el DTO del mes", () => {
 
 describe("el filtro de la consulta", () => {
   it("mira el mes, el tipo de cuenta y que el saldo sea positivo", () => {
-    const where = declaredIncomeWhere({ from: "2026-10-01", to: "2026-10-31" });
+    const where = declaredIncomeWhere(
+      { from: "2026-10-01", to: "2026-10-31" },
+      "ARS",
+    );
 
     expect(where.kind).toEqual({ in: ["CASH", "BANK"] });
     expect(where.openingBalance).toEqual({ gt: 0 });
     expect(where.openingIncomeMonth).toBeDefined();
+    // La moneda es parte del filtro: la plata declarada es el saldo inicial de
+    // UNA cuenta, y ese saldo está en la moneda de esa cuenta.
+    expect(where.currency).toBe("ARS");
   });
 
   it("sin límites de fechas el rango cubre todo (y sigue exigiendo los meses)", () => {
-    const where = declaredIncomeWhere({ from: null, to: null });
+    const where = declaredIncomeWhere({ from: null, to: null }, "ARS");
     expect(where.openingIncomeMonth).toBeDefined();
     expect(where.kind).toEqual({ in: ["CASH", "BANK"] });
   });

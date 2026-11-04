@@ -28,7 +28,7 @@
  * tener, y las fechas son strings de calendario que no se corrompen al viajar.
  */
 
-import type { Prisma } from "@prisma/client";
+import type { Currency, Prisma } from "@prisma/client";
 import { getAccountBalances, getNetWorth, type AccountBalance, type Db } from "./balance";
 import {
   declaredIncomeInPeriod,
@@ -96,6 +96,24 @@ export const movementInclude = {
 } as const satisfies Prisma.MovementInclude;
 
 /**
+ * Acota un `where` de movimientos a las cuentas de UNA moneda.
+ *
+ * `Movement` no tiene columna de moneda a propósito (D1): la moneda es la de su
+ * cuenta de origen. Por eso el filtro va por la relación `account`, y no por un
+ * campo del movimiento que podría contradecir a la cuenta.
+ *
+ * Se compone con `AND` en vez de pisar `where.account`: un llamador puede haber
+ * filtrado por cuenta (`accountId`) y perder ese filtro en silencio sería la
+ * clase de bug que devuelve un número creíble sobre el conjunto equivocado.
+ */
+function scopedToCurrency(
+  where: Prisma.MovementWhereInput,
+  currency: Currency,
+): Prisma.MovementWhereInput {
+  return { AND: [where, { account: { currency } }] };
+}
+
+/**
  * Totales de un conjunto de movimientos, agregados **en la base**.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +139,10 @@ export const movementInclude = {
  * @param db Cliente de Prisma inyectado, igual que en `lib/balance.ts`. Existe
  *           para que los tests de integración puedan apuntarlo a
  *           `finanzas_test` en vez de a la base de desarrollo.
+ * @param currency Moneda de las cuentas cuyos movimientos se suman. Obligatoria:
+ *                 un total sin unidad es exactamente el número que la Fase 4
+ *                 elimina. Se filtra por `account.currency` (el movimiento no
+ *                 tiene moneda propia).
  * @param declared La plata declarada como ingreso del período (la banderita).
  *                 Viaja APARTE de los movimientos porque NO es un movimiento:
  *                 es un saldo inicial que la persona declaró como ingreso de
@@ -134,17 +156,18 @@ export const movementInclude = {
 export async function movementTotals(
   db: Db,
   where: Prisma.MovementWhereInput,
+  currency: Currency,
   declared: Money = zero(),
 ): Promise<PeriodTotalsDTO> {
   // El `groupBy` y el flujo de caja no dependen entre sí: van en paralelo.
   const [grouped, cashFlow] = await Promise.all([
     db.movement.groupBy({
       by: ["kind"],
-      where,
+      where: scopedToCurrency(where, currency),
       _sum: { amount: true },
       _count: { _all: true },
     }),
-    movementCashFlow(db, where),
+    movementCashFlow(db, where, currency),
   ]);
 
   // Se arranca en cero y no en vacío para que un período sin movimientos tenga la
@@ -247,35 +270,73 @@ const moneyAccount: Prisma.AccountWhereInput = { kind: { in: ["CASH", "BANK"] } 
  * período — el flujo de un subconjunto es el flujo de ese subconjunto.
  *
  * @param db Cliente de Prisma inyectado (ver `movementTotals` para el porqué).
+ * @param currency Moneda del flujo. Cada término se expresa en ESTA moneda: los
+ *                 INCOME/EXPENSE por la moneda de su cuenta, las transferencias
+ *                 que salen por `amount` y las que entran por `toAmount` cuando
+ *                 cruzan de moneda (ver la nota de arriba).
  */
 export async function movementCashFlow(
   db: Db,
   where: Prisma.MovementWhereInput,
+  currency: Currency,
 ): Promise<string> {
-  const [income, expense, transferOut, transferIn] = await Promise.all([
-    db.movement.aggregate({
-      where: { ...where, kind: "INCOME", account: moneyAccount },
-      _sum: { amount: true },
-    }),
-    db.movement.aggregate({
-      where: { ...where, kind: "EXPENSE", account: moneyAccount },
-      _sum: { amount: true },
-    }),
-    db.movement.aggregate({
-      where: { ...where, kind: "TRANSFER", account: moneyAccount },
-      _sum: { amount: true },
-    }),
-    db.movement.aggregate({
-      where: { ...where, kind: "TRANSFER", toAccount: moneyAccount },
-      _sum: { amount: true },
-    }),
-  ]);
+  // La cuenta de dinero, acotada a la moneda pedida. El `kind` de cada término
+  // pisa el `kind` externo (es la definición de la métrica); la moneda se agrega
+  // al `account` de la MISMA forma en los cuatro términos.
+  const moneyInCurrency: Prisma.AccountWhereInput = {
+    ...moneyAccount,
+    currency,
+  };
 
-  // `_sum.amount` es `null` cuando no hay filas de ese término: la suma de un
-  // conjunto vacío en SQL es NULL, no 0 — el mismo caso defensivo que en
+  const [income, expense, transferOut, transferInSame, transferInCross] =
+    await Promise.all([
+      db.movement.aggregate({
+        where: { ...where, kind: "INCOME", account: moneyInCurrency },
+        _sum: { amount: true },
+      }),
+      db.movement.aggregate({
+        where: { ...where, kind: "EXPENSE", account: moneyInCurrency },
+        _sum: { amount: true },
+      }),
+      // Sale de una cuenta de dinero en ESTA moneda: `amount` ya está en ella.
+      db.movement.aggregate({
+        where: { ...where, kind: "TRANSFER", account: moneyInCurrency },
+        _sum: { amount: true },
+      }),
+      // Entra a una cuenta de dinero en ESTA moneda desde otra cuenta de la
+      // MISMA moneda: `amount` está en la moneda de las dos.
+      db.movement.aggregate({
+        where: {
+          ...where,
+          kind: "TRANSFER",
+          toAccount: moneyInCurrency,
+          account: { currency },
+        },
+        _sum: { amount: true },
+      }),
+      // Entra desde una cuenta de OTRA moneda: el único número expresado en la
+      // moneda de destino es `toAmount`. El trigger de F4.1 garantiza que no es
+      // NULL cuando las monedas difieren, así que no se pierde ninguna fila.
+      db.movement.aggregate({
+        where: {
+          ...where,
+          kind: "TRANSFER",
+          toAccount: moneyInCurrency,
+          account: { currency: { not: currency } },
+        },
+        _sum: { toAmount: true },
+      }),
+    ]);
+
+  // `_sum` es `null` cuando no hay filas de ese término: la suma de un conjunto
+  // vacío en SQL es NULL, no 0 — el mismo caso defensivo que en
   // `movementTotals`. Acá no se puede devolver "0.00" por término porque el
   // flujo es UNA resta: se resuelve al final, con la aritmética de `lib/money`.
-  const inflow = sum([income._sum.amount ?? zero(), transferIn._sum.amount ?? zero()]);
+  const inflow = sum([
+    income._sum.amount ?? zero(),
+    transferInSame._sum.amount ?? zero(),
+    transferInCross._sum.toAmount ?? zero(),
+  ]);
   const outflow = sum([expense._sum.amount ?? zero(), transferOut._sum.amount ?? zero()]);
 
   return inflow.minus(outflow).toFixed(2);
@@ -302,9 +363,10 @@ export async function periodTotals(
   db: Db,
   where: Prisma.MovementWhereInput,
   period: { from: string | null; to: string | null },
+  currency: Currency,
 ): Promise<PeriodTotalsDTO> {
-  const declared = await declaredIncomeInPeriod(db, period);
-  return movementTotals(db, where, declared);
+  const declared = await declaredIncomeInPeriod(db, period, currency);
+  return movementTotals(db, where, currency, declared);
 }
 
 /**
@@ -357,9 +419,14 @@ function dateRangeWhere(
 export async function movementBurnCandidates(
   db: Db,
   period: { from: string | null; to: string | null },
+  currency: Currency,
 ): Promise<{ candidates: BurnCandidateDTO[]; truncated: boolean }> {
   const rows = await db.movement.findMany({
-    where: { kind: "EXPENSE", ...dateRangeWhere(period.from, period.to) },
+    where: {
+      kind: "EXPENSE",
+      ...dateRangeWhere(period.from, period.to),
+      account: { currency },
+    },
     select: {
       id: true,
       date: true,
@@ -425,13 +492,25 @@ export async function movementBurnCandidates(
 export async function movementBurn(
   db: Db,
   input: { from: string | null; to: string | null; movementId: string },
+  currency: Currency,
 ): Promise<BurnReportDTO | null> {
   const movement = await db.movement.findUnique({
     where: { id: input.movementId },
-    select: { id: true, kind: true, date: true, amount: true },
+    select: {
+      id: true,
+      kind: true,
+      date: true,
+      amount: true,
+      account: { select: { currency: true } },
+    },
   });
 
   if (!movement || movement.kind !== "EXPENSE") return null;
+
+  // Un gasto en OTRA moneda no participa de las vistas de esta: restarlo de un
+  // total en pesos sería restar un número que nunca sumó (y el burn quedaría
+  // expresado en una unidad distinta a la del período que muestra).
+  if (movement.account.currency !== currency) return null;
 
   // El período se compara como fecha de CALENDARIO (strings `YYYY-MM-DD`), el
   // mismo tipo con el que `dateRangeWhere` consulta: un gasto de otro mes no es
@@ -440,14 +519,19 @@ export async function movementBurn(
   if (input.from && date < input.from) return null;
   if (input.to && date > input.to) return null;
 
-  const declared = await declaredIncomeInPeriod(db, {
-    from: input.from,
-    to: input.to,
-  });
+  const declared = await declaredIncomeInPeriod(
+    db,
+    {
+      from: input.from,
+      to: input.to,
+    },
+    currency,
+  );
 
   const totals = await movementTotals(
     db,
     dateRangeWhere(input.from, input.to),
+    currency,
     declared,
   );
   const amount = movement.amount;
@@ -499,13 +583,18 @@ export async function movementBurn(
 export async function movementCategoryBreakdown(
   db: Db,
   where: Prisma.MovementWhereInput,
+  currency: Currency,
 ): Promise<CategoryBreakdownDTO[]> {
   const grouped = await db.movement.groupBy({
     by: ["categoryId"],
     // El `kind: "EXPENSE"` va DESPUÉS del spread a propósito: pisa cualquier
     // `kind` que traiga el `where` externo. Es la definición del gráfico, no un
     // filtro opcional.
-    where: { ...where, kind: "EXPENSE" },
+    //
+    // La moneda va por `account.currency` (D1): una torta de gastos que mezcle
+    // pesos y dólares no tiene unidad, y "la categoría más cara" sería una
+    // comparación entre dos monedas.
+    where: scopedToCurrency({ ...where, kind: "EXPENSE" }, currency),
     _sum: { amount: true },
     // Ordenado por monto descendente —el orden en el que se lee la torta—, y de
     // paso el resultado es determinista entre corridas.
@@ -565,10 +654,14 @@ export async function movementCategoryBreakdown(
 export async function movementDateBreakdown(
   db: Db,
   where: Prisma.MovementWhereInput,
+  currency: Currency,
 ): Promise<DateBreakdownDTO[]> {
   const grouped = await db.movement.groupBy({
     by: ["date", "kind"],
-    where: { ...where, kind: { in: ["INCOME", "EXPENSE"] } },
+    where: scopedToCurrency(
+      { ...where, kind: { in: ["INCOME", "EXPENSE"] } },
+      currency,
+    ),
     _sum: { amount: true },
     orderBy: [{ date: "asc" }, { kind: "asc" }],
   });
@@ -604,14 +697,14 @@ export const NET_WORTH_SERIES_MONTHS = 12;
  * ─────────────────────────────────────────────────────────────────────────────
  * CÓMO SE CALCULA (y por qué no duplica la fórmula)
  * ─────────────────────────────────────────────────────────────────────────────
- * Cada punto es `getNetWorth({ asOf })` — la MISMA función que calcula la foto
- * de hoy, sólo que cortada al fin de cada mes. No hay una segunda fórmula de
- * saldos: si mañana cambia la definición de "cuenta de dinero" o de "deuda", la
- * serie cambia con ella sin que nadie se acuerde de este archivo. El costo es
- * 1 + 4 consultas agregadas por mes (12 meses = 60, todas en paralelo), baratas
- * sobre el índice de `date`; si algún día duelen contra una base remota, la
- * optimización correcta es una sola pasada con `date_trunc` en SQL — nunca una
- * segunda implementación de la fórmula.
+ * Cada punto es `getNetWorth({ asOf, currency })` — la MISMA función que calcula
+ * la foto de hoy, sólo que cortada al fin de cada mes. No hay una segunda
+ * fórmula de saldos: si mañana cambia la definición de "cuenta de dinero" o de
+ * "deuda", la serie cambia con ella sin que nadie se acuerde de este archivo. El
+ * costo es 1 + 8 consultas agregadas por mes (12 meses = 97, todas en paralelo),
+ * baratas sobre el índice de `date`; si algún día duelen contra una base remota,
+ * la optimización correcta es una sola pasada con `date_trunc` en SQL — nunca
+ * una segunda implementación de la fórmula.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * MESES SIN MOVIMIENTOS (y meses previos al primer movimiento)
@@ -647,14 +740,17 @@ export const NET_WORTH_SERIES_MONTHS = 12;
  */
 export async function getNetWorthSeries(
   db: Db,
-  options: { months?: number; anchor?: CalendarDate } = {},
+  options: { months?: number; anchor?: CalendarDate; currency: Currency },
 ): Promise<NetWorthPointDTO[]> {
   const months = options.months ?? NET_WORTH_SERIES_MONTHS;
   const anchor = options.anchor ?? todayCalendar();
+  const currency = options.currency;
 
   // La pregunta "¿hay algo que fotografiar?" se contesta ANTES de calcular:
-  // sin cuentas no hay ni siquiera saldos iniciales que mostrar.
-  const accountCount = await db.account.count();
+  // sin cuentas no hay ni siquiera saldos iniciales que mostrar. Se cuenta sólo
+  // la moneda pedida: una serie de 12 ceros para una moneda sin cuentas
+  // afirmaría una historia que la app no conoce.
+  const accountCount = await db.account.count({ where: { currency } });
   if (accountCount === 0) return [];
 
   const monthStarts = recentMonthStarts(anchor, months);
@@ -664,7 +760,7 @@ export async function getNetWorthSeries(
     monthStarts.map(async (monthStart) => {
       // Mes cerrado → foto a fin de mes. Mes en curso → foto a `anchor`.
       const asOf = monthStart === currentMonth ? anchor : endOfMonth(monthStart);
-      const snapshot = await getNetWorth(db, { asOf });
+      const snapshot = await getNetWorth(db, { asOf, currency });
 
       return {
         month: monthStart.slice(0, 7),
@@ -721,6 +817,75 @@ function monthCut(
   const asOfEnd = closed ? monthEnd : current ? anchor : monthEnd;
 
   return { monthStart, asOfEnd, partial: asOfEnd < monthEnd };
+}
+
+/**
+ * El efecto NETO de las transferencias del período en UNA moneda.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LA RECONCILIACIÓN LO NECESITA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * En una sola moneda, toda transferencia mueve plata de una cuenta a otra y su
+ * efecto neto en el patrimonio es CERO: por eso la identidad del mes no la
+ * menciona. Con dos monedas eso deja de ser cierto: cambiar 120.000 ARS por
+ * 100 USD baja el patrimonio en pesos 120.000 y sube el de dólares 100. No es
+ * un error de la app, es una operación real; si la reconciliación no la
+ * explicita, todos los meses con un cambio de moneda darían «no cuadra» —una
+ * falsa alarma, que es exactamente lo que este control existe para no dar.
+ *
+ * La cuenta, por moneda C:
+ *
+ *     transferNet_C = Σ entradas a C − Σ salidas de C
+ *
+ * donde una entrada desde otra moneda vale `toAmount` (el único número en la
+ * moneda de destino) y una salida vale `amount` (en la moneda de origen). Para
+ * las transferencias dentro de C, los dos términos son iguales y se cancelan.
+ *
+ * El cálculo mira TODAS las cuentas, no sólo las de dinero: una transferencia
+ * desde un préstamo también cambia el patrimonio (sube el banco y la deuda por
+ * igual), y su neto en la moneda tiene que entrar en la identidad.
+ */
+async function transferNetInCurrency(
+  db: Db,
+  window: { from: CalendarDate; to: CalendarDate },
+  currency: Currency,
+): Promise<Money> {
+  const date = {
+    gte: calendarToDb(window.from),
+    lte: calendarToDb(window.to),
+  };
+
+  const [outSame, inSame, inCross] = await Promise.all([
+    // Sale de una cuenta de esta moneda: `amount` ya está en ella.
+    db.movement.aggregate({
+      where: { kind: "TRANSFER", date, account: { currency } },
+      _sum: { amount: true },
+    }),
+    // Entra desde una cuenta de la MISMA moneda: `amount` está en las dos.
+    db.movement.aggregate({
+      where: {
+        kind: "TRANSFER",
+        date,
+        toAccount: { currency },
+        account: { currency },
+      },
+      _sum: { amount: true },
+    }),
+    // Entra desde otra moneda: vale lo que dice `toAmount`.
+    db.movement.aggregate({
+      where: {
+        kind: "TRANSFER",
+        date,
+        toAccount: { currency },
+        account: { currency: { not: currency } },
+      },
+      _sum: { toAmount: true },
+    }),
+  ]);
+
+  const inflow = sum([inSame._sum.amount ?? zero(), inCross._sum.toAmount ?? zero()]);
+  const outflow = outSame._sum.amount ?? zero();
+  return inflow.minus(outflow);
 }
 
 /**
@@ -783,9 +948,10 @@ function monthCut(
  */
 export async function getMonthReconciliation(
   db: Db,
-  options: { month: string; anchor?: CalendarDate },
+  options: { month: string; anchor?: CalendarDate; currency: Currency },
 ): Promise<ReconciliationDTO> {
   const anchor = options.anchor ?? todayCalendar();
+  const currency = options.currency;
   // El corte de la foto del mes (los tres casos) es la convención compartida
   // del módulo: vive en `monthCut`, en un solo lugar.
   const { monthStart, asOfEnd, partial } = monthCut(options.month, anchor);
@@ -793,17 +959,18 @@ export async function getMonthReconciliation(
   // El corte de la foto anterior es siempre el último día del mes anterior.
   const asOfStart = endOfMonth(addMonths(monthStart, -1));
 
-  // Las tres consultas van en paralelo y ninguna depende de las otras. La
+  // Las cuatro consultas van en paralelo y ninguna depende de las otras. La
   // ventana del lado del ahorro es [inicio del mes, corte]: exactamente el mismo
   // conjunto de movimientos que separa a las dos fotos de saldos.
   //
   // La plata DECLARADA del mes se busca aparte (es una cuenta, no un
   // movimiento) y después se le pasa a `movementTotals`: entra en el ingreso del
   // mes, que es lo que pidió la persona.
-  const [before, after, declared] = await Promise.all([
-    getNetWorth(db, { asOf: asOfStart }),
-    getNetWorth(db, { asOf: asOfEnd }),
-    declaredIncomeInPeriod(db, { from: monthStart, to: asOfEnd }),
+  const [before, after, declared, transferNet] = await Promise.all([
+    getNetWorth(db, { asOf: asOfStart, currency }),
+    getNetWorth(db, { asOf: asOfEnd, currency }),
+    declaredIncomeInPeriod(db, { from: monthStart, to: asOfEnd }, currency),
+    transferNetInCurrency(db, { from: monthStart, to: asOfEnd }, currency),
   ]);
 
   const totals = await movementTotals(
@@ -814,6 +981,7 @@ export async function getMonthReconciliation(
         lte: calendarToDb(asOfEnd),
       },
     },
+    currency,
     declared,
   );
 
@@ -836,8 +1004,22 @@ export async function getMonthReconciliation(
   // Sin este ajuste, declarar $ 7.000 que ya tenías haría que la
   // reconciliación gritara "no cuadra" y la persona buscaría un error que no
   // existe: el número que no cuadra es la plata que ella misma declaró.
+  //
   // ─────────────────────────────────────────────────────────────────────────────
-  const difference = netDelta.minus(saving).plus(declared);
+  // LA IDENTIDAD CON TRANSFERENCIAS ENTRE MONEDAS
+  //
+  // En una sola moneda, una transferencia mueve plata entre cuentas y su efecto
+  // neto en el patrimonio es cero: no aparece en la fórmula. Con dos monedas,
+  // cambiar pesos por dólares SÍ cambia el patrimonio de cada moneda por
+  // separado (baja el de pesos, sube el de dólares), y ese cambio no es ahorro.
+  // Por eso se resta `transferNet` —el efecto neto de las transferencias del
+  // mes en ESTA moneda—: sin ese término, cualquier mes con un cambio de moneda
+  // daría «no cuadra» y la alarma sería falsa.
+  //
+  // Con transferencias dentro de la misma moneda el término es exactamente cero
+  // (entradas y salidas se cancelan), así que los números de siempre no cambian.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const difference = netDelta.minus(saving).plus(declared).minus(transferNet);
   const balanced = isZero(difference);
 
   return {
@@ -1002,17 +1184,24 @@ type DebtBalance = AccountBalance & { kind: "LOAN" | "CREDIT_CARD" };
  */
 export async function getDebtReport(
   db: Db,
-  options: { month: string; anchor?: CalendarDate },
+  options: { month: string; anchor?: CalendarDate; currency: Currency },
 ): Promise<DebtReportDTO> {
   const anchor = options.anchor ?? todayCalendar();
+  const currency = options.currency;
   const { monthStart, asOfEnd, partial } = monthCut(options.month, anchor);
 
   // La deuda viva y el ingreso del mes (el denominador del DTI) no dependen
   // entre sí: van en paralelo.
-  const [balances, declared] = await Promise.all([
+  const [allBalances, declared] = await Promise.all([
     getAccountBalances(db, { asOf: asOfEnd }),
-    declaredIncomeInPeriod(db, { from: monthStart, to: asOfEnd }),
+    declaredIncomeInPeriod(db, { from: monthStart, to: asOfEnd }, currency),
   ]);
+
+  // Sólo las cuentas de la moneda pedida. Una deuda en dólares no se resta de
+  // un ingreso en pesos para calcular un DTI: serían dos unidades distintas.
+  const balances = allBalances.filter(
+    (balance) => balance.currency === currency,
+  );
 
   // El ingreso del mes incluye la plata declarada como ingreso (la banderita):
   // es ingreso del mes, y el DTI se mide contra el ingreso del mes.
@@ -1021,6 +1210,7 @@ export async function getDebtReport(
     {
       date: { gte: calendarToDb(monthStart), lte: calendarToDb(asOfEnd) },
     },
+    currency,
     declared,
   );
 
@@ -1036,39 +1226,56 @@ export async function getDebtReport(
   // amortizado no dependen entre sí: los tres van en paralelo. El capital mira
   // TODA la vida de la deuda hasta el corte (no sólo el mes): la amortización
   // es acumulada, igual que este número.
-  const [loanAccounts, installmentRows, capitalRows] = await Promise.all([
-    db.account.findMany({
-      where: { kind: "LOAN" },
-      select: {
-        id: true,
-        principal: true,
-        tnaPercent: true,
-        installmentCount: true,
-        amortizationSystem: true,
-      },
-    }),
-    db.installment.findMany({
-      where: { accountId: { in: loanIds } },
-      orderBy: [{ accountId: "asc" }, { number: "asc" }],
-      select: {
-        accountId: true,
-        number: true,
-        payment: true,
-        interest: true,
-        principal: true,
-        remainingBalance: true,
-      },
-    }),
-    db.movement.groupBy({
-      by: ["toAccountId"],
-      where: {
-        kind: "TRANSFER",
-        toAccountId: { in: loanIds },
-        date: { lte: calendarToDb(asOfEnd) },
-      },
-      _sum: { amount: true },
-    }),
-  ]);
+  const [loanAccounts, installmentRows, capitalSameRows, capitalCrossRows] =
+    await Promise.all([
+      db.account.findMany({
+        where: { kind: "LOAN", currency },
+        select: {
+          id: true,
+          principal: true,
+          tnaPercent: true,
+          installmentCount: true,
+          amortizationSystem: true,
+        },
+      }),
+      db.installment.findMany({
+        where: { accountId: { in: loanIds } },
+        orderBy: [{ accountId: "asc" }, { number: "asc" }],
+        select: {
+          accountId: true,
+          number: true,
+          payment: true,
+          interest: true,
+          principal: true,
+          remainingBalance: true,
+        },
+      }),
+      // Capital pagado con transferencias desde una cuenta de la MISMA moneda:
+      // `amount` ya está en la moneda del préstamo.
+      db.movement.groupBy({
+        by: ["toAccountId"],
+        where: {
+          kind: "TRANSFER",
+          toAccountId: { in: loanIds },
+          date: { lte: calendarToDb(asOfEnd) },
+          account: { currency },
+        },
+        _sum: { amount: true },
+      }),
+      // Capital pagado desde una cuenta de OTRA moneda: el número expresado en
+      // la moneda del préstamo es `toAmount`. Sin este término, un pago en
+      // dólares a un préstamo en pesos se contaría con el monto equivocado.
+      db.movement.groupBy({
+        by: ["toAccountId"],
+        where: {
+          kind: "TRANSFER",
+          toAccountId: { in: loanIds },
+          date: { lte: calendarToDb(asOfEnd) },
+          account: { currency: { not: currency } },
+        },
+        _sum: { toAmount: true },
+      }),
+    ]);
 
   const paramsById = new Map(
     loanAccounts.map((account) => [account.id, account]),
@@ -1082,12 +1289,18 @@ export async function getDebtReport(
   }
 
   const capitalPaidByLoan = new Map<string, Money>();
-  for (const row of capitalRows) {
+  for (const row of capitalSameRows) {
     // El `where` exige destino en un préstamo, así que no hay grupo `null`; el
     // tipo lo admite igual y se descarta, como en `getAccountBalances`.
     if (row.toAccountId === null) continue;
     if (row._sum.amount === null) continue;
     capitalPaidByLoan.set(row.toAccountId, money(row._sum.amount));
+  }
+  for (const row of capitalCrossRows) {
+    if (row.toAccountId === null) continue;
+    if (row._sum.toAmount === null) continue;
+    const previous = capitalPaidByLoan.get(row.toAccountId) ?? zero();
+    capitalPaidByLoan.set(row.toAccountId, previous.plus(money(row._sum.toAmount)));
   }
 
   const rows: DebtReportRowDTO[] = [];
@@ -1291,13 +1504,21 @@ export async function findDuplicateCandidates(
 }
 
 /**
- * Las categorías que tienen al menos un movimiento en el rango de fechas.
+ * Las categorías que tienen al menos un movimiento EN UNA MONEDA dentro del
+ * rango de fechas.
  *
  * Es la lista que puebla el selector de `/analisis`. NO recibe los filtros de
  * categoría ni de texto a propósito (ver `ReportsResponse`): el selector tiene
  * que ofrecer todas las opciones del período, incluso las que no matchean el
  * filtro actual — si no, elegir una categoría dejaría al usuario encerrado en
  * ella.
+ *
+ * La MONEDA sí es parte de la definición y viaja obligatoria: el selector
+ * alimenta una pantalla que ya eligió una unidad. Ofrecer en pesos una
+ * categoría que sólo se gastó en dólares deja elegir una opción que la torta y
+ * las barras —filtradas por `account.currency`— muestran vacía, sin explicar
+ * por qué. Mismo criterio que `movementCategoryBreakdown` y
+ * `movementBurnCandidates`.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * POR QUÉ FILTRA POR RELACIÓN Y NO CON UN `groupBy` DE MOVIMIENTOS
@@ -1322,6 +1543,7 @@ export async function categoriesInPeriod(
   db: Db,
   from: CalendarDate | null,
   to: CalendarDate | null,
+  currency: Currency,
 ): Promise<CategoryDTO[]> {
   const date =
     from || to
@@ -1332,9 +1554,23 @@ export async function categoriesInPeriod(
       : null;
 
   const categories = await db.category.findMany({
-    // Con `date: null`, `some: {}` significa "tiene al menos un movimiento":
-    // sin extremos de rango, todas las categorías usadas alguna vez.
-    where: { movements: { some: date ? { date } : {} } },
+    // Con `date: null`, `some: { account: { currency } }` significa "tiene al
+    // menos un movimiento EN ESA MONEDA": sin extremos de rango, todas las
+    // categorías usadas alguna vez en esa moneda.
+    //
+    // La moneda es parte de la definición del selector y no un filtro opcional:
+    // una pantalla en pesos que ofrece una categoría usada sólo en dólares deja
+    // elegir algo que después no tiene ni una porción en la torta. Es la misma
+    // razón por la que `movementCategoryBreakdown` y `movementBurnCandidates`
+    // filtran por `account.currency`.
+    where: {
+      movements: {
+        some: {
+          ...(date ? { date } : {}),
+          account: { currency },
+        },
+      },
+    },
     orderBy: { normalizedName: "asc" },
   });
 
@@ -1364,6 +1600,12 @@ export interface AccountRowLike {
   name: string;
   kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" | "RECEIVABLE";
   archived: boolean;
+  /**
+   * La moneda de la cuenta. Obligatoria: una cuenta sin moneda no existe desde
+   * la Fase 4, y el DTO que no la lleva obliga a la UI a adivinar en qué unidad
+   * está el saldo que muestra.
+   */
+  currency: Currency;
   openingBalance: { toFixed(dp: number): string } | string;
 
   // Parámetros de tarjeta. Son OPCIONALES en la interfaz estructural porque no
@@ -1392,6 +1634,7 @@ export function toAccountDTO(account: AccountRowLike): AccountDTO {
     name: account.name,
     kind: account.kind,
     archived: account.archived,
+    currency: account.currency,
     // `toFixed(2)` y no `toString()`: si el saldo guardado es "0", `toString()`
     // devuelve "0" y el cliente que espera dos decimales muestra "0" en vez de
     // "0,00". La representación tiene que ser estable.
@@ -1535,6 +1778,42 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     marker: "movement_transfer_to_other_account",
     status: 400,
     message: "Una transferencia tiene que ir a una cuenta distinta.",
+  },
+  // ── Monedas (Fase 4) ───────────────────────────────────────────────────────
+  // Los dos CHECK y los dos triggers de la migración `20261104120000_fase4_monedas`.
+  // La API (F4.3) valida antes con un mensaje más específico; estas reglas son la
+  // red de seguridad para lo que escriba en la base sin pasar por ella — por
+  // ejemplo, pagar un resumen en dólares desde una cuenta en pesos. Sin el mapeo,
+  // el rechazo de la base llegaba a la persona como un 500 genérico.
+  {
+    marker: "movement_to_amount_positive",
+    status: 400,
+    message:
+      "El monto que llega a la cuenta de destino tiene que ser mayor a cero.",
+  },
+  {
+    marker: "movement_to_amount_only_on_transfer",
+    status: 400,
+    message:
+      "El monto de destino sólo existe en una transferencia: un ingreso o un gasto no tienen cuenta de destino.",
+  },
+  {
+    marker: "[finanzas:transferencia_entre_monedas_sin_monto_destino]",
+    status: 400,
+    message:
+      "Las cuentas están en monedas distintas: hace falta indicar cuánto llega a la cuenta de destino.",
+  },
+  {
+    marker: "[finanzas:monto_destino_en_misma_moneda]",
+    status: 400,
+    message:
+      "Las dos cuentas están en la misma moneda: el monto de destino no corresponde.",
+  },
+  {
+    marker: "[finanzas:cuenta_en_uso_no_cambia_moneda]",
+    status: 409,
+    message:
+      "La cuenta ya tiene historia: no se puede cambiar su moneda, porque todos sus movimientos pasarían a significar otra cosa. Creá una cuenta nueva en la moneda que necesitás.",
   },
   {
     marker: "loan_has_parameters",

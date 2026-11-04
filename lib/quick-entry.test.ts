@@ -37,6 +37,7 @@ function account(
     name: `Cuenta ${id}`,
     kind,
     archived: false,
+    currency: "ARS",
     openingBalance: "0.00",
     openingIncomeMonth: null,
     closingDay: null,

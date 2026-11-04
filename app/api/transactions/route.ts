@@ -9,6 +9,7 @@ import {
   categoryKindMessage,
 } from "@/lib/category-kind";
 import { calendarToDb, isCalendarDate, todayCalendar } from "@/lib/dates";
+import { parseCurrencyParam } from "@/lib/currency";
 import { parseMoneyInput } from "@/lib/money";
 import type { MovementsResponse } from "@/lib/finance";
 import {
@@ -45,6 +46,13 @@ export async function GET(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
 
   const { searchParams } = new URL(req.url);
+
+  const parsedCurrency = parseCurrencyParam(searchParams.get("currency"));
+  if (!parsedCurrency.ok) {
+    return badRequest(parsedCurrency.error);
+  }
+  const currency = parsedCurrency.currency;
+
   const from = searchParams.get("from");
   const to = searchParams.get("to");
   const kind = searchParams.get("kind");
@@ -67,6 +75,9 @@ export async function GET(req: Request) {
   // valor que representa esa fecha. `lte` incluye el día entero porque la fecha
   // ES el día entero — no hay hora que pueda quedar afuera.
   const where: Prisma.MovementWhereInput = {
+    // La moneda del movimiento es la de su cuenta de origen (D1): el filtro va
+    // por la relación y se combina con el resto del `where` (AND implícito).
+    account: { currency },
     ...(kind === "INCOME" || kind === "EXPENSE" || kind === "TRANSFER"
       ? { kind }
       : {}),
@@ -110,7 +121,7 @@ export async function GET(req: Request) {
     periodTotals(prisma, where, {
       from: from && isCalendarDate(from) ? from : null,
       to: to && isCalendarDate(to) ? to : null,
-    }),
+    }, currency),
   ]);
 
   const truncated = movements.length > MOVEMENTS_MAX_ROWS;

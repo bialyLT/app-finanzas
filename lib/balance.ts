@@ -26,13 +26,16 @@
  * los cuatro tipos); con 50 cuentas, 200. Y el tiempo crece con la cantidad de
  * cuentas, no con la de datos que realmente necesitás.
  *
- * Acá se usan 5 consultas AGREGADAS en paralelo, sin importar cuántas cuentas
- * haya. La base hace la suma — que es para lo que está — y a la aplicación sólo
- * le llega un número por cuenta.
+ * Acá se usan 8 consultas AGREGADAS en paralelo, sin importar cuántas cuentas
+ * haya: 4 fijas (cuentas, ingresos, gastos, transferencias que salen) y 2 por
+ * moneda para la pata que entra (misma moneda por `amount`, moneda distinta por
+ * `toAmount`). La base hace la suma — que es para lo que está — y a la
+ * aplicación sólo le llega un número por cuenta.
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Currency, Prisma, PrismaClient } from "@prisma/client";
 import { calendarToDb } from "./dates";
+import { CURRENCIES } from "./currency";
 import { incomeMonthToDto } from "./declared-income";
 import type { AmortizationSystem } from "./loans";
 import { money, sum, zero, type Money } from "./money";
@@ -50,6 +53,13 @@ export interface AccountBalance {
   name: string;
   kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" | "RECEIVABLE";
   archived: boolean;
+  /**
+   * La moneda de la cuenta. Cada saldo ya es de UNA cuenta y por lo tanto de
+   * UNA moneda: no hay nada que convertir acá. Viaja en el balance para que
+   * quien agrupa (patrimonio por moneda, DTO de la cuenta) no tenga que volver a
+   * consultar la fila.
+   */
+  currency: Currency;
 
   /** Día de cierre del resumen (sólo tarjetas). `null` si no está cargado. */
   closingDay: number | null;
@@ -129,74 +139,132 @@ export async function getAccountBalances(
 
   const dateFilter = asOf ? { date: { lte: calendarToDb(asOf) } } : {};
 
-  const [accounts, income, expense, transferOut, transferIn] = await Promise.all([
-    db.account.findMany({
-      where: includeArchived ? {} : { archived: false },
-      select: {
-        id: true,
-        name: true,
-        kind: true,
-        archived: true,
-        openingBalance: true,
-        openingIncomeMonth: true,
-        closingDay: true,
-        dueDay: true,
-        creditLimit: true,
-        amortizationSystem: true,
-      },
-      // Desempate por nombre: sin él, dos cuentas creadas en el mismo
-      // milisegundo pueden salir en cualquier orden y el saldo total de la
-      // pantalla cambia entre recargas (los subtotales quedan iguales, pero la
-      // lista se reordena y parece que la app está fallando).
-      orderBy: [{ archived: "asc" }, { createdAt: "asc" }, { name: "asc" }],
-    }),
+  const [accounts, income, expense, transferOut, transferInSame, transferInCross] =
+    await Promise.all([
+      db.account.findMany({
+        where: includeArchived ? {} : { archived: false },
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          archived: true,
+          currency: true,
+          openingBalance: true,
+          openingIncomeMonth: true,
+          closingDay: true,
+          dueDay: true,
+          creditLimit: true,
+          amortizationSystem: true,
+        },
+        // Desempate por nombre: sin él, dos cuentas creadas en el mismo
+        // milisegundo pueden salir en cualquier orden y el saldo total de la
+        // pantalla cambia entre recargas (los subtotales quedan iguales, pero la
+        // lista se reordena y parece que la app está fallando).
+        orderBy: [{ archived: "asc" }, { createdAt: "asc" }, { name: "asc" }],
+      }),
 
-    db.movement.groupBy({
-      by: ["accountId"],
-      where: { kind: "INCOME", ...dateFilter },
-      _sum: { amount: true },
-    }),
+      db.movement.groupBy({
+        by: ["accountId"],
+        where: { kind: "INCOME", ...dateFilter },
+        _sum: { amount: true },
+      }),
 
-    db.movement.groupBy({
-      by: ["accountId"],
-      where: { kind: "EXPENSE", ...dateFilter },
-      _sum: { amount: true },
-    }),
+      db.movement.groupBy({
+        by: ["accountId"],
+        where: { kind: "EXPENSE", ...dateFilter },
+        _sum: { amount: true },
+      }),
 
-    db.movement.groupBy({
-      by: ["accountId"],
-      where: { kind: "TRANSFER", ...dateFilter },
-      _sum: { amount: true },
-    }),
+      db.movement.groupBy({
+        by: ["accountId"],
+        where: { kind: "TRANSFER", ...dateFilter },
+        _sum: { amount: true },
+      }),
 
-    db.movement.groupBy({
-      by: ["toAccountId"],
-      where: { kind: "TRANSFER", ...dateFilter },
-      _sum: { amount: true },
-    }),
-  ]);
+      // ── La pata que ENTRA, en dos agregados por moneda ────────────────────
+      //
+      // Una transferencia entre cuentas de la MISMA moneda entra por `amount`
+      // (que ya está en la moneda de las dos). Una transferencia entre monedas
+      // distintas entra por `toAmount`, que es el único número expresado en la
+      // moneda de DESTINO. Sumar `amount` en el segundo caso acreditaría
+      // 120.000 dólares donde llegaron 100 — el error que esta fase elimina.
+      //
+      // `groupBy` no puede comparar columnas de dos relaciones, así que la
+      // comparación se hace por moneda de destino: son dos monedas hoy y la
+      // lista `CURRENCIES` es la única fuente de verdad.
+      Promise.all(
+        CURRENCIES.map((currency) =>
+          db.movement.groupBy({
+            by: ["toAccountId"],
+            where: {
+              kind: "TRANSFER",
+              ...dateFilter,
+              toAccount: { currency },
+              account: { currency },
+            },
+            _sum: { amount: true },
+          }),
+        ),
+      ),
+
+      Promise.all(
+        CURRENCIES.map((currency) =>
+          db.movement.groupBy({
+            by: ["toAccountId"],
+            where: {
+              kind: "TRANSFER",
+              ...dateFilter,
+              toAccount: { currency },
+              account: { currency: { not: currency } },
+            },
+            _sum: { toAmount: true },
+          }),
+        ),
+      ),
+    ]);
 
   // Índices por id para no recorrer la lista de movimientos por cada cuenta.
   // Sin esto, el cálculo es O(cuentas × movimientos) en memoria y con miles de
   // movimientos se nota.
-  const toMap = (rows: { _sum: { amount: unknown } }[], key: string) => {
+  const toMap = (
+    rows: readonly unknown[],
+    key: string,
+    field: "amount" | "toAmount",
+  ) => {
     const map = new Map<string, Money>();
-    for (const row of rows) {
-      const id = (row as unknown as Record<string, string | null>)[key];
+    for (const raw of rows) {
+      const row = raw as Record<string, unknown> & {
+        _sum?: Record<string, unknown>;
+      };
+      const id = row[key];
       // El groupBy de `toAccountId` incluye un grupo `null` (los movimientos
       // que no son transferencias). Hay que descartarlo: no es una cuenta.
-      if (!id) continue;
-      const amount = row._sum.amount;
+      if (typeof id !== "string" || id === "") continue;
+      const amount = row._sum?.[field];
       if (amount === null || amount === undefined) continue;
       map.set(id, money(amount as string));
     }
     return map;
   };
 
-  const incomeByAccount = toMap(income, "accountId");
-  const expenseByAccount = toMap(expense, "accountId");
-  const transferOutByAccount = toMap(transferOut, "accountId");
-  const transferInByAccount = toMap(transferIn, "toAccountId");
+  const incomeByAccount = toMap(income, "accountId", "amount");
+  const expenseByAccount = toMap(expense, "accountId", "amount");
+  const transferOutByAccount = toMap(transferOut, "accountId", "amount");
+  const transferInByAccount = toMap(
+    transferInSame.flat(),
+    "toAccountId",
+    "amount",
+  );
+  for (const [id, value] of toMap(
+    transferInCross.flat(),
+    "toAccountId",
+    "toAmount",
+  )) {
+    transferInByAccount.set(
+      id,
+      (transferInByAccount.get(id) ?? zero()).plus(value),
+    );
+  }
 
   return accounts.map((account) => {
     const opening = money(account.openingBalance);
@@ -216,6 +284,7 @@ export async function getAccountBalances(
       name: account.name,
       kind: account.kind,
       archived: account.archived,
+      currency: account.currency,
       closingDay: account.closingDay,
       dueDay: account.dueDay,
       // `money(...)` sólo si existe: un límite de 0 guardado no existe (CHECK),
@@ -236,7 +305,7 @@ export async function getAccountBalances(
 }
 
 /**
- * Patrimonio neto: lo que tenés menos lo que debés.
+ * Patrimonio neto de UNA moneda: lo que tenés menos lo que debés.
  *
  * Es el único número de la app que no se puede maquillar. La tasa de ahorro
  * depende de qué contás como ingreso; el patrimonio neto no: o subió o bajó.
@@ -244,16 +313,78 @@ export async function getAccountBalances(
  * Las cuentas de pasivo tienen saldo negativo, así que se suman en valor
  * absoluto para poder mostrarlas como "debés X" sin que el signo se mezcle con
  * el de las cuentas de dinero.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LA MONEDA ES OBLIGATORIA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Un patrimonio que suma cuentas en pesos y en dólares es el número que esta
+ * fase existe para no mostrar: no está en ninguna unidad, y por eso no se puede
+ * comparar con nada. Cada llamada declara la moneda; si la UI quiere un total
+ * convertido, tiene que pedir una cotización, que es otra decisión de producto.
+ *
+ * @param currency Moneda de las cuentas que se suman. Sin default: el
+ *                 compilador obliga a decidir.
  */
 export async function getNetWorth(
   db: Db,
-  options: { asOf?: string } = {},
+  options: { asOf?: string; currency: Currency },
 ): Promise<NetWorth> {
   const balances = await getAccountBalances(db, {
     asOf: options.asOf,
     includeArchived: true,
   });
 
+  return netWorthOf(
+    balances.filter((balance) => balance.currency === options.currency),
+  );
+}
+
+/** El bloque de patrimonio de una moneda, listo para viajar al panel. */
+export interface NetWorthByCurrency extends NetWorth {
+  currency: Currency;
+}
+
+/**
+ * El patrimonio de CADA moneda con cuentas, en el orden del enum.
+ *
+ * Es el contrato que reemplaza al "patrimonio total": el panel muestra un bloque
+ * por moneda en vez de un número que sume unidades distintas. Agrupa
+ * `getAccountBalances` en memoria —una sola consulta para todas las monedas— y
+ * no hace una consulta extra por moneda.
+ *
+ * Incluye las cuentas archivadas (igual que `getNetWorth`): la plata que tenías
+ * en una cuenta archivada sigue siendo tuya. Una moneda sin cuentas no aparece:
+ * devolver un bloque en cero afirmaría un patrimonio que la app no conoce.
+ */
+export async function getNetWorthByCurrency(
+  db: Db,
+  options: { asOf?: string } = {},
+): Promise<NetWorthByCurrency[]> {
+  const balances = await getAccountBalances(db, {
+    asOf: options.asOf,
+    includeArchived: true,
+  });
+
+  const byCurrency = new Map<Currency, AccountBalance[]>();
+  for (const balance of balances) {
+    const list = byCurrency.get(balance.currency) ?? [];
+    list.push(balance);
+    byCurrency.set(balance.currency, list);
+  }
+
+  // `CURRENCIES` y no el orden de llegada: la respuesta tiene que ser estable
+  // entre corridas aunque la base devuelva las cuentas en otro orden.
+  const result: NetWorthByCurrency[] = [];
+  for (const currency of CURRENCIES) {
+    const list = byCurrency.get(currency);
+    if (!list || list.length === 0) continue;
+    result.push({ currency, ...netWorthOf(list) });
+  }
+  return result;
+}
+
+/** La suma de activos/pasivos/neto de un conjunto de cuentas ya filtrado. */
+function netWorthOf(balances: AccountBalance[]): NetWorth {
   const assets = sum(
     balances.filter((b) => !b.isLiability).map((b) => b.balance),
   );

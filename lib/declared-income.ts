@@ -41,7 +41,7 @@
  * proyecto ya Pagó una vez.
  */
 
-import type { Prisma } from "@prisma/client";
+import type { Currency, Prisma } from "@prisma/client";
 import type { Db } from "./balance";
 import { calendarToDb, isCalendarDate } from "./dates";
 import { isNegative, isZero, money, zero, type Money } from "./money";
@@ -144,21 +144,29 @@ export function canDeclareIncome(
 }
 
 /**
- * El filtro de las cuentas que declararon plata en un período.
+ * El filtro de las cuentas que declararon plata en un período, en UNA moneda.
  *
- * El `where` EXPRESA las reglas 1 y 2 y el mes: por eso el cálculo vive en la
- * base y no en la memoria de la aplicación (la suma la hace Postgres, que es
- * exacto).
+ * El `where` EXPRESA las reglas 1 y 2, el mes y la moneda: por eso el cálculo
+ * vive en la base y no en la memoria de la aplicación (la suma la hace Postgres,
+ * que es exacto).
+ *
+ * La moneda es OBLIGATORIA y no tiene default: la plata declarada es el saldo
+ * inicial de UNA cuenta, y ese saldo está en la moneda de esa cuenta. Sumar los
+ * saldos declarados de cuentas en pesos y en dólares daría un ingreso que no es
+ * plata de ninguna de las dos.
  *
  * El rango se arma con `gte`/`lte` y NO con `not: null`: una comparación con
  * NULL en SQL es "desconocida", así que una cuenta con la bandera apagada
  * (`openingIncomeMonth IS NULL`) queda AFUERA del rango sin tener que decirlo
  * aparte.
  */
-export function declaredIncomeWhere(period: {
-  from: string | null;
-  to: string | null;
-}): Prisma.AccountWhereInput {
+export function declaredIncomeWhere(
+  period: {
+    from: string | null;
+    to: string | null;
+  },
+  currency: Currency,
+): Prisma.AccountWhereInput {
   return {
     openingIncomeMonth: {
       // Los extremos son generosos a propósito: una cuenta declarada en un mes
@@ -169,6 +177,7 @@ export function declaredIncomeWhere(period: {
     },
     kind: { in: ["CASH", "BANK"] },
     openingBalance: { gt: 0 },
+    currency,
   };
 }
 
@@ -177,13 +186,17 @@ export function declaredIncomeWhere(period: {
  *
  * La suma la hace la base (`_sum`): el número que llega es el que Postgres
  * calculó, con Decimal(18,2) y sin vueltas.
+ *
+ * @param currency Moneda de las cuentas cuya declaración se suma. Obligatoria:
+ *                 ver `declaredIncomeWhere`.
  */
 export async function declaredIncomeInPeriod(
   db: Db,
   period: { from: string | null; to: string | null },
+  currency: Currency,
 ): Promise<Money> {
   const aggregate = await db.account.aggregate({
-    where: declaredIncomeWhere(period),
+    where: declaredIncomeWhere(period, currency),
     _sum: { openingBalance: true },
   });
 

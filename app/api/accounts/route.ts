@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { getAccountBalances, getNetWorth } from "@/lib/balance";
+import { parseCurrencyParam } from "@/lib/currency";
 import { calendarToDb, isCalendarDate, todayCalendar } from "@/lib/dates";
 import { cleanName } from "@/lib/finance";
 import {
@@ -187,6 +188,15 @@ export async function GET(req: Request) {
   const asOf = searchParams.get("asOf");
   const includeArchived = searchParams.get("includeArchived") !== "false";
 
+  // La moneda del patrimonio y de la serie. Sin parámetro, ARS (el
+  // comportamiento de siempre); un valor que no existe es 400, nunca un default
+  // silencioso.
+  const parsedCurrency = parseCurrencyParam(searchParams.get("currency"));
+  if (!parsedCurrency.ok) {
+    return badRequest(parsedCurrency.error);
+  }
+  const currency = parsedCurrency.currency;
+
   if (asOf && !isCalendarDate(asOf)) {
     return badRequest("`asOf` tiene que ser una fecha AAAA-MM-DD válida.");
   }
@@ -202,8 +212,8 @@ export async function GET(req: Request) {
   try {
     const [balances, netWorth, netWorthSeries] = await Promise.all([
       getAccountBalances(prisma, { asOf: cutoff, includeArchived }),
-      getNetWorth(prisma, { asOf: cutoff }),
-      getNetWorthSeries(prisma, { anchor: cutoff }),
+      getNetWorth(prisma, { asOf: cutoff, currency }),
+      getNetWorthSeries(prisma, { anchor: cutoff, currency }),
     ]);
 
     return NextResponse.json({
@@ -213,6 +223,7 @@ export async function GET(req: Request) {
           name: balance.name,
           kind: balance.kind,
           archived: balance.archived,
+          currency: balance.currency,
           openingBalance: balance.opening,
           closingDay: balance.closingDay,
           dueDay: balance.dueDay,

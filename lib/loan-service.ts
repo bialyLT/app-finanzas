@@ -27,11 +27,12 @@
  *    real). Las patas de monto cero se omiten (la base prohíbe monto ≤ 0).
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Currency, Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
 import { getAccountBalances } from "./balance";
 import { categoryKindMessage } from "./category-kind";
 import { cardPeriodLabel } from "./cards";
+import { CURRENCIES } from "./currency";
 import {
   calendarToDb,
   dbToCalendar,
@@ -379,20 +380,56 @@ async function capitalPaidByLoan(
   ids: { loans: string[]; receivables: string[] },
   asOf: CalendarDate,
 ): Promise<Map<string, Money>> {
-  const [intoLoans, outOfReceivables] = await Promise.all([
-    ids.loans.length > 0
-      ? db.movement.groupBy({
-          by: ["toAccountId"],
-          where: {
-            kind: "TRANSFER",
-            toAccountId: { in: ids.loans },
-            date: { lte: calendarToDb(asOf) },
-          },
-          _sum: { amount: true },
-        })
-      : Promise.resolve([]),
+  // La pata que ENTRA a un préstamo, en dos términos por moneda:
+  //
+  //   · desde una cuenta de la MISMA moneda → vale `amount` (está en las dos);
+  //   · desde una cuenta de OTRA moneda   → vale `toAmount` (el único número
+  //     expresado en la moneda del préstamo).
+  //
+  // Sumar `amount` en el segundo caso acredita el monto de origen como si fuera
+  // deuda amortizada en la moneda del préstamo: un pago de 120.000 ARS a un
+  // préstamo de 1.000 USD aparecería como 120.050 USD (y, clampeado al capital,
+  // como "100 % pagado"). Es el mismo error que `getDebtReport` ya evita con
+  // `capitalCrossRows`; los dos caminos tienen que dar el mismo número.
+  const sameCurrencyIntoLoans = await Promise.all(
+    CURRENCIES.map((currency) =>
+      ids.loans.length > 0
+        ? db.movement.groupBy({
+            by: ["toAccountId"],
+            where: {
+              kind: "TRANSFER",
+              toAccountId: { in: ids.loans },
+              date: { lte: calendarToDb(asOf) },
+              toAccount: { currency },
+              account: { currency },
+            },
+            _sum: { amount: true },
+          })
+        : Promise.resolve([]),
+    ),
+  );
+
+  const crossCurrencyIntoLoans = await Promise.all(
+    CURRENCIES.map((currency) =>
+      ids.loans.length > 0
+        ? db.movement.groupBy({
+            by: ["toAccountId"],
+            where: {
+              kind: "TRANSFER",
+              toAccountId: { in: ids.loans },
+              date: { lte: calendarToDb(asOf) },
+              toAccount: { currency },
+              account: { currency: { not: currency } },
+            },
+            _sum: { toAmount: true },
+          })
+        : Promise.resolve([]),
+    ),
+  );
+
+  const outOfReceivables =
     ids.receivables.length > 0
-      ? db.movement.groupBy({
+      ? await db.movement.groupBy({
           by: ["accountId"],
           where: {
             kind: "TRANSFER",
@@ -401,14 +438,33 @@ async function capitalPaidByLoan(
           },
           _sum: { amount: true },
         })
-      : Promise.resolve([]),
-  ]);
+      : [];
 
   const map = new Map<string, Money>();
-  for (const row of intoLoans) {
-    if (row.toAccountId === null || row._sum.amount === null) continue;
-    map.set(row.toAccountId, money(row._sum.amount));
+  // Las dos patas se SUMAN (nunca se pisan) para que el resultado no dependa del
+  // orden en que se recorran: es el mismo merge que hacen `getAccountBalances` y
+  // `getDebtReport`, y los tres caminos tienen que dar el mismo número.
+  for (const rows of sameCurrencyIntoLoans) {
+    for (const row of rows) {
+      if (row.toAccountId === null || row._sum.amount === null) continue;
+      map.set(
+        row.toAccountId,
+        (map.get(row.toAccountId) ?? zero()).plus(money(row._sum.amount)),
+      );
+    }
   }
+  for (const rows of crossCurrencyIntoLoans) {
+    for (const row of rows) {
+      if (row.toAccountId === null || row._sum.toAmount === null) continue;
+      map.set(
+        row.toAccountId,
+        (map.get(row.toAccountId) ?? zero()).plus(money(row._sum.toAmount)),
+      );
+    }
+  }
+  // Recibir de vuelta un préstamo dado: `amount` ya está en la moneda de la
+  // cuenta por cobrar (es la de ORIGEN), así que el monto es correcto sin mirar
+  // la moneda del destino.
   for (const row of outOfReceivables) {
     if (row._sum.amount === null) continue;
     map.set(row.accountId, money(row._sum.amount));
@@ -497,6 +553,7 @@ function assembleLoanView(args: {
     name: string;
     kind: LoanKind;
     archived: boolean;
+    currency: Currency;
     opening: Money;
     closingDay: number | null;
     dueDay: number | null;
@@ -522,6 +579,7 @@ function assembleLoanView(args: {
     name: balance.name,
     kind: balance.kind,
     archived: balance.archived,
+    currency: balance.currency,
     openingBalance: balance.opening,
     closingDay: balance.closingDay,
     dueDay: balance.dueDay,

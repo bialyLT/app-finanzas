@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { isCalendarDate, todayCalendar } from "@/lib/dates";
+import { parseCurrencyParam } from "@/lib/currency";
 import { getMonthReconciliation } from "@/lib/queries";
 
 /**
@@ -40,6 +41,12 @@ export async function GET(req: Request) {
   const month = searchParams.get("month");
   const asOf = searchParams.get("asOf");
 
+  const parsedCurrency = parseCurrencyParam(searchParams.get("currency"));
+  if (!parsedCurrency.ok) {
+    return NextResponse.json({ error: parsedCurrency.error }, { status: 400 });
+  }
+  const currency = parsedCurrency.currency;
+
   // `month` es "YYYY-MM" y tiene que ser un mes real: el "13" no pasa el regex,
   // y el día 1 siempre existe en un mes existente — `isCalendarDate` cierra la
   // validación reusando el parser del módulo de fechas.
@@ -60,6 +67,7 @@ export async function GET(req: Request) {
   const reconciliation = await getMonthReconciliation(prisma, {
     month,
     anchor: asOf ?? todayCalendar(),
+    currency,
   });
 
   return NextResponse.json({ reconciliation });

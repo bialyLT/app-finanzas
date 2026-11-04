@@ -247,6 +247,7 @@ function balanceToAccountDTO(balance: AccountBalance): AccountDTO {
     name: balance.name,
     kind: balance.kind,
     archived: balance.archived,
+    currency: balance.currency,
     openingBalance: balance.opening,
     closingDay: balance.closingDay,
     dueDay: balance.dueDay,

@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { calendarToDb, isCalendarDate } from "@/lib/dates";
+import { parseCurrencyParam } from "@/lib/currency";
 import { declaredIncomeInPeriod } from "@/lib/declared-income";
 import { zero } from "@/lib/money";
 import type { ReportsResponse } from "@/lib/finance";
@@ -67,6 +68,12 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
 
+  const parsedCurrency = parseCurrencyParam(searchParams.get("currency"));
+  if (!parsedCurrency.ok) {
+    return NextResponse.json({ error: parsedCurrency.error }, { status: 400 });
+  }
+  const currency = parsedCurrency.currency;
+
   const rawFrom = searchParams.get("from");
   const rawTo = searchParams.get("to");
   const categoryId = searchParams.get("categoryId");
@@ -126,7 +133,7 @@ export async function GET(req: Request) {
   const declared =
     categoryId || q
       ? zero()
-      : await declaredIncomeInPeriod(prisma, { from, to });
+      : await declaredIncomeInPeriod(prisma, { from, to }, currency);
 
   // ── Las consultas, en paralelo ─────────────────────────────────────────────
   //
@@ -141,12 +148,12 @@ export async function GET(req: Request) {
   // consulta ni se hace y el campo viaja `null`.
   const [totals, byCategory, byDate, categories, burnCandidates, burn] =
     await Promise.all([
-      movementTotals(prisma, where, declared),
-      movementCategoryBreakdown(prisma, where),
-      movementDateBreakdown(prisma, where),
-      categoriesInPeriod(prisma, from, to),
-      movementBurnCandidates(prisma, { from, to }),
-      burnId ? movementBurn(prisma, { from, to, movementId: burnId }) : null,
+      movementTotals(prisma, where, currency, declared),
+      movementCategoryBreakdown(prisma, where, currency),
+      movementDateBreakdown(prisma, where, currency),
+      categoriesInPeriod(prisma, from, to, currency),
+      movementBurnCandidates(prisma, { from, to }, currency),
+      burnId ? movementBurn(prisma, { from, to, movementId: burnId }, currency) : null,
     ]);
 
   return NextResponse.json({

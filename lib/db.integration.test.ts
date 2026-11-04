@@ -31,7 +31,7 @@ import { TRANSACTION_OPTIONS } from "./prisma";
 import { addDays, calendarToDb, dbToCalendar } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule, money } from "./money";
-import { getAccountBalances, getNetWorth } from "./balance";
+import { getAccountBalances, getNetWorth, getNetWorthByCurrency } from "./balance";
 import { describeDatabaseError } from "./queries";
 import {
   createCardPlan,
@@ -68,6 +68,7 @@ import {
   movementDateBreakdown,
   movementTotals,
   periodTotals,
+  toAccountDTO,
   DUPLICATES_MAX_ROWS,
 } from "./queries";
 import {
@@ -80,6 +81,7 @@ import {
   touchFavorite,
 } from "./favorites";
 import { analyzeCsv, importCsv, parseCsvExpected } from "./csv-import";
+import { declaredIncomeInPeriod } from "./declared-income";
 
 const TEST_DATABASE_URL = process.env.DATABASE_URL_TEST;
 
@@ -548,7 +550,7 @@ describeDb("Invariantes del modelo en la base de datos", () => {
         ],
       });
 
-      const breakdown = await movementCategoryBreakdown(db, {});
+      const breakdown = await movementCategoryBreakdown(db, {}, "ARS");
 
       expect(breakdown).toEqual([
         { categoryId: null, name: "Sin categoría", amount: "300.00" },
@@ -580,11 +582,11 @@ describeDb("Invariantes del modelo en la base de datos", () => {
         ],
       });
 
-      const totals = await movementTotals(db, {});
+      const totals = await movementTotals(db, {}, "ARS");
       expect(totals.expenses).toBe("150.00");
       expect(totals.expenseCount).toBe(2);
 
-      const cashFlow = await movementCashFlow(db, {});
+      const cashFlow = await movementCashFlow(db, {}, "ARS");
       expect(cashFlow).toBe("-150.00");
     });
   });
@@ -1260,7 +1262,7 @@ describeDb("Cálculo de saldos", () => {
       },
     });
 
-    const netWorth = await getNetWorth(db);
+    const netWorth = await getNetWorth(db, { currency: "ARS" });
     expect(netWorth.assets.toFixed(2)).toBe("500.00");
   });
 });
@@ -1406,7 +1408,7 @@ describeDb("EL ESCENARIO COMPLETO · sueldo, gastos, préstamo y tarjeta", () =>
     expect(byName("Visa").debt?.toFixed(2)).toBe("50000.00");
 
     // ── La prueba de fuego ───────────────────────────────────────────────────
-    const netWorth = await getNetWorth(db);
+    const netWorth = await getNetWorth(db, { currency: "ARS" });
 
     // Patrimonio inicial: 100.000 (los ahorros previos) + 0 (efectivo).
     // Cambio del período: 800.000 de sueldo − 600.000 de gastos
@@ -1446,7 +1448,7 @@ describeDb("EL ESCENARIO COMPLETO · sueldo, gastos, préstamo y tarjeta", () =>
       },
     });
 
-    const before = await getNetWorth(db);
+    const before = await getNetWorth(db, { currency: "ARS" });
     expect(before.net.toFixed(2)).toBe("0.00");
 
     await db.movement.create({
@@ -1459,7 +1461,7 @@ describeDb("EL ESCENARIO COMPLETO · sueldo, gastos, préstamo y tarjeta", () =>
       },
     });
 
-    const after = await getNetWorth(db);
+    const after = await getNetWorth(db, { currency: "ARS" });
     expect(after.net.toFixed(2)).toBe("0.00");
     expect(after.assets.toFixed(2)).toBe("500000.00");
     expect(after.liabilities.toFixed(2)).toBe("500000.00");
@@ -1495,7 +1497,7 @@ describeDb("EL ESCENARIO COMPLETO · sueldo, gastos, préstamo y tarjeta", () =>
       },
     });
 
-    const afterPurchase = await getNetWorth(db);
+    const afterPurchase = await getNetWorth(db, { currency: "ARS" });
     expect(afterPurchase.net.toFixed(2)).toBe("50000.00");
 
     // Pagás el resumen completo.
@@ -1510,7 +1512,7 @@ describeDb("EL ESCENARIO COMPLETO · sueldo, gastos, préstamo y tarjeta", () =>
       },
     });
 
-    const afterPayment = await getNetWorth(db);
+    const afterPayment = await getNetWorth(db, { currency: "ARS" });
     // El patrimonio NO cambió: pagar la tarjeta es mover plata de un bolsillo
     // a otro. Si el pago hubiera sido un gasto, acá habría bajado a 0.
     expect(afterPayment.net.toFixed(2)).toBe("50000.00");
@@ -1605,7 +1607,7 @@ describeDb("movementTotals · el tope limita lo que se muestra, no lo que se cal
 
     // 2 · Los totales NO se truncan. Si `movementTotals` tomara el mismo `take`
     //     que la lista —el bug—, acá daría 5.000,00 en vez de 10.500,00.
-    const totals = await movementTotals(db, where);
+    const totals = await movementTotals(db, where, "ARS");
     expect(totals.expenseCount).toBe(GASTOS);
     expect(totals.incomeCount).toBe(INGRESOS);
     expect(totals.expenses).toBe((GASTOS * 10).toFixed(2));
@@ -1743,7 +1745,7 @@ describeDb("Los agregados de reportes · completos aunque la lista se topee", ()
     // ── 1 · Los totales ──────────────────────────────────────────────────────
     // Si `movementTotals` tomara el `take` de la lista, acá daría 5.000,00 y
     // 2.500,00 en vez de 4.500,00 y 10.500,00 (las primeras 500 filas sembradas).
-    const totals = await movementTotals(db, where);
+    const totals = await movementTotals(db, where, "ARS");
     expect(totals.expenses).toBe("4500.00");
     expect(totals.expenseCount).toBe(GASTOS_GRANDES + GASTOS_CHICOS);
     expect(totals.income).toBe("10500.00");
@@ -1756,7 +1758,7 @@ describeDb("Los agregados de reportes · completos aunque la lista se topee", ()
     // de TODAS las porciones tiene que ser exactamente el total de gastos: es
     // la coherencia interna de la pantalla. Si la transferencia se colara como
     // gasto, la igualdad se rompería por 500,00.
-    const byCategory = await movementCategoryBreakdown(db, where);
+    const byCategory = await movementCategoryBreakdown(db, where, "ARS");
     expect(byCategory.length).toBe(2);
     expect(byCategory[0].name).toBe("Gastos");
     expect(byCategory[0].amount).toBe("3000.00");
@@ -1769,7 +1771,7 @@ describeDb("Los agregados de reportes · completos aunque la lista se topee", ()
     // ── 3 · Las barras ───────────────────────────────────────────────────────
     // Un renglón por día CON movimientos de cada tipo (5 de gastos + 3 de
     // ingresos), y ninguno el 20, que es el día de la transferencia.
-    const byDate = await movementDateBreakdown(db, where);
+    const byDate = await movementDateBreakdown(db, where, "ARS");
     expect(byDate.length).toBe(8);
     expect(byDate.some((row) => row.date === "2026-10-20")).toBe(false);
 
@@ -1793,7 +1795,7 @@ describeDb("Los agregados de reportes · completos aunque la lista se topee", ()
     // ── 4 · El selector de categorías ────────────────────────────────────────
     // Todas las categorías con movimientos en octubre —y ninguna otra—,
     // ordenadas por nombre normalizado. "Vieja" sólo vive en septiembre.
-    const enOctubre = await categoriesInPeriod(db, "2026-10-01", "2026-10-31");
+    const enOctubre = await categoriesInPeriod(db, "2026-10-01", "2026-10-31", "ARS");
     expect(enOctubre.map((category) => category.name)).toEqual([
       "Compras",
       "Gastos",
@@ -1802,11 +1804,11 @@ describeDb("Los agregados de reportes · completos aunque la lista se topee", ()
 
     // El mismo selector visto desde septiembre: ahí la única es "Vieja". Es el
     // cruce de mes del bug B3, aplicado al selector.
-    const enSeptiembre = await categoriesInPeriod(db, "2026-09-01", "2026-09-30");
+    const enSeptiembre = await categoriesInPeriod(db, "2026-09-01", "2026-09-30", "ARS");
     expect(enSeptiembre.map((category) => category.name)).toEqual(["Vieja"]);
 
     // Sin extremos de rango: todas las categorías usadas alguna vez.
-    const todas = await categoriesInPeriod(db, null, null);
+    const todas = await categoriesInPeriod(db, null, null, "ARS");
     expect(todas.length).toBe(4);
   });
 });
@@ -1872,12 +1874,12 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
 
     // La caja: entró medio millón al banco. El préstamo es deuda, así que su
     // lado del movimiento no cuenta.
-    expect(await movementCashFlow(db, septiembre)).toBe("500000.00");
+    expect(await movementCashFlow(db, septiembre, "ARS")).toBe("500000.00");
 
     // Y la misma lectura desde el DTO que usa el panel: $ 0 de ingreso,
     // +500.000 de flujo. Las dos cosas son ciertas al mismo tiempo, y por eso
     // los dos números existen por separado.
-    const totals = await movementTotals(db, septiembre);
+    const totals = await movementTotals(db, septiembre, "ARS");
     expect(totals.income).toBe("0.00");
     expect(totals.expenses).toBe("0.00");
     expect(totals.cashFlow).toBe("500000.00");
@@ -1903,11 +1905,11 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
     const octubre = rango("2026-10-01", "2026-10-31");
 
     // Ninguna cuenta de dinero participó: no salió un peso de la caja.
-    expect(await movementCashFlow(db, octubre)).toBe("0.00");
+    expect(await movementCashFlow(db, octubre, "ARS")).toBe("0.00");
 
     // Pero el gasto consumido es real: la deuda subió. Si la compra contara en
     // el flujo, acá daría −50.000,00.
-    const totals = await movementTotals(db, octubre);
+    const totals = await movementTotals(db, octubre, "ARS");
     expect(totals.expenses).toBe("50000.00");
     expect(totals.cashFlow).toBe("0.00");
   });
@@ -1932,9 +1934,9 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
     const noviembre = rango("2026-11-01", "2026-11-30");
 
     // Origen de dinero (banco), destino pasivo (tarjeta): la caja baja 50.000.
-    expect(await movementCashFlow(db, noviembre)).toBe("-50000.00");
+    expect(await movementCashFlow(db, noviembre, "ARS")).toBe("-50000.00");
 
-    const totals = await movementTotals(db, noviembre);
+    const totals = await movementTotals(db, noviembre, "ARS");
     expect(totals.transfers).toBe("50000.00");
     expect(totals.expenses).toBe("0.00");
     expect(totals.cashFlow).toBe("-50000.00");
@@ -1960,11 +1962,11 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
 
     // Salió del banco Y entró al efectivo: neto 0,00. Si el flujo contara sólo
     // una punta, mover plata entre bolsillos parecería que ganaste o perdiste.
-    expect(await movementCashFlow(db, octubre)).toBe("0.00");
+    expect(await movementCashFlow(db, octubre, "ARS")).toBe("0.00");
 
     // El movimiento sigue informado en `transfers`: la lista cuenta hechos, el
     // flujo mide liquidez.
-    const totals = await movementTotals(db, octubre);
+    const totals = await movementTotals(db, octubre, "ARS");
     expect(totals.transfers).toBe("300000.00");
     expect(totals.cashFlow).toBe("0.00");
   });
@@ -2065,7 +2067,7 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
 
     // ── Septiembre: ahorro 0, flujo +500.000 ────────────────────────────────
     // El mes donde los dos números NO pueden parecerse ni de casualidad.
-    const septiembre = await movementTotals(db, rango("2026-09-01", "2026-09-30"));
+    const septiembre = await movementTotals(db, rango("2026-09-01", "2026-09-30"), "ARS");
     expect(septiembre.income).toBe("0.00");
     expect(septiembre.cashFlow).toBe("500000.00");
 
@@ -2082,7 +2084,7 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
     //   · El capital de la cuota es plata que SALIÓ de la caja sin ser gasto:
     //     resta en el flujo (−31.412,71) y no toca el ahorro.
     //   125.000,00 + 50.000,00 − 31.412,71 = 143.587,29 ✓
-    const octubre = await movementTotals(db, rango("2026-10-01", "2026-10-31"));
+    const octubre = await movementTotals(db, rango("2026-10-01", "2026-10-31"), "ARS");
     expect(octubre.income).toBe("800000.00");
     expect(octubre.expenses).toBe("675000.00");
     expect(octubre.cashFlow).toBe("143587.29");
@@ -2094,7 +2096,7 @@ describeDb("Flujo de caja · el desembolso entra, la tarjeta no", () => {
     // ── Y los dos meses suman el flujo del año ──────────────────────────────
     // 500.000,00 + 143.587,29 = 643.587,29. La liquidez no desaparece al
     // cambiar de período: sólo se reparte distinto.
-    expect(await movementCashFlow(db, rango("2026-01-01", "2026-12-31"))).toBe(
+    expect(await movementCashFlow(db, rango("2026-01-01", "2026-12-31"), "ARS")).toBe(
       "643587.29",
     );
   });
@@ -2250,7 +2252,7 @@ describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
     //                  Neto: 928.587,29 − 518.587,29 = 410.000,00
     //                      = 100.000 iniciales + 310.000 de ahorro real
     //                        (800.000 de sueldo − 490.000 de gastos reales)
-    const serie = await getNetWorthSeries(db, { anchor: "2026-10-31" });
+    const serie = await getNetWorthSeries(db, { currency: "ARS", anchor: "2026-10-31" });
 
     // Doce meses, del más viejo (noviembre 2025) al más nuevo (octubre 2026).
     expect(serie).toHaveLength(12);
@@ -2289,7 +2291,7 @@ describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
     // El último punto es EXACTAMENTE la foto que devuelve `getNetWorth` para la
     // misma fecha: la serie no puede inventar un patrimonio distinto del que
     // muestra el panel para el mismo día.
-    const fotoDeOctubre = await getNetWorth(db, { asOf: "2026-10-31" });
+    const fotoDeOctubre = await getNetWorth(db, { currency: "ARS", asOf: "2026-10-31" });
     expect(porMes.get("2026-10")?.net).toBe(fotoDeOctubre.net.toFixed(2));
 
     // Los diez meses anteriores a septiembre no tienen movimientos: ninguno es
@@ -2382,7 +2384,7 @@ describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
     // Si el gasto del 17/10 se colara, octubre daría 114.000,01. Si el 31/07
     // cayera en agosto, agosto daría 95.000. Si el 01/09 cayera en agosto,
     // agosto daría 125.000.
-    const serie = await getNetWorthSeries(db, { anchor: "2026-10-16" });
+    const serie = await getNetWorthSeries(db, { currency: "ARS", anchor: "2026-10-16" });
     const porMes = new Map(serie.map((point) => [point.month, point]));
 
     expect(porMes.get("2026-07")?.net).toBe("95000.00");
@@ -2399,7 +2401,7 @@ describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
 
     // Y el mes en curso también llega marcado así cuando el ancla es el último
     // día: ahí el mes SÍ terminó, aunque siga siendo el mes de hoy.
-    const finDeMes = await getNetWorthSeries(db, { anchor: "2026-10-31" });
+    const finDeMes = await getNetWorthSeries(db, { currency: "ARS", anchor: "2026-10-31" });
     const octubreCerrado = finDeMes.find((point) => point.month === "2026-10");
     expect(octubreCerrado?.net).toBe("114000.01");
     expect(octubreCerrado?.partial).toBe(false);
@@ -2411,7 +2413,7 @@ describeDb("Serie mensual del patrimonio · la foto de cada mes", () => {
     // es "no hay datos", y el contrato del DTO lo dice con una lista vacía.
     // (Un saldo inicial de cero en una cuenta que existe SÍ es un cero real:
     // eso lo cubren los otros dos tests.)
-    expect(await getNetWorthSeries(db, { anchor: "2026-10-16" })).toEqual([]);
+    expect(await getNetWorthSeries(db, { currency: "ARS", anchor: "2026-10-16" })).toEqual([]);
   });
 });
 
@@ -2459,7 +2461,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
     //   net(31/10): 928.587,29 de activos − 518.587,29 de deudas         = 410.000,00
     //   Δ: 410.000 − 100.000                                             = +310.000,00
     //   ahorro: 800.000 (sueldo) − 490.000 (gastos reales)               = +310.000,00
-    const rec = await getMonthReconciliation(db, {
+    const rec = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -2484,11 +2486,11 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
     // El caso que el modelo viejo contaba como "+500.000 de ingresos": el
     // desembolso entra al banco Y sube la deuda por el mismo monto. La
     // composición prueba que pasó algo; el neto prueba que no ganaste nada.
-    const sep = await getNetWorth(db, { asOf: "2026-09-30" });
+    const sep = await getNetWorth(db, { currency: "ARS", asOf: "2026-09-30" });
     expect(sep.assets.toFixed(2)).toBe("600000.00");
     expect(sep.liabilities.toFixed(2)).toBe("500000.00");
 
-    const rec = await getMonthReconciliation(db, {
+    const rec = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-09",
       anchor: "2026-10-31",
     });
@@ -2513,7 +2515,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
     // Agosto no tuvo ni un movimiento: las dos fotos son el saldo inicial del
     // banco, y el ahorro es 0,00. No es un hueco ni un caso especial — es la
     // misma identidad.
-    const rec = await getMonthReconciliation(db, {
+    const rec = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-08",
       anchor: "2026-10-31",
     });
@@ -2595,7 +2597,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
     // 50.000) y net(16/10) = 115.000 (125.000 + 30.000 − 30.000 − 10.000). El
     // gasto del 17 NO puede entrar: si entrara en un solo lado (por ejemplo,
     // sólo en el ahorro), la reconciliación daría una falsa alarma.
-    const al16 = await getMonthReconciliation(db, {
+    const al16 = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-16",
     });
@@ -2615,7 +2617,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
 
     // Y con el ancla a fin de mes —el mes cerró— el 17/10 entra en los DOS
     // lados: Δ y ahorro bajan juntos 10.000 + 999,99 y la identidad se mantiene.
-    const al31 = await getMonthReconciliation(db, {
+    const al31 = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -2649,7 +2651,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
 
     // El mes futuro se corta a su fin de mes (no "a hoy"): los precargados
     // entran en los dos caminos y el resultado es honesto — 0,00 de diferencia.
-    const rec = await getMonthReconciliation(db, {
+    const rec = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-11",
       anchor: "2026-10-31",
     });
@@ -2696,7 +2698,7 @@ describeDb("Reconciliación visible · ΔPatrimonio = Ahorro", () => {
       },
     });
 
-    const rec = await getMonthReconciliation(inflado as unknown as PrismaClient, {
+    const rec = await getMonthReconciliation(inflado as unknown as PrismaClient, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -2749,7 +2751,7 @@ describeDb("Reportes de deuda · progreso, interés y DTI", () => {
   it("octubre · deuda viva, progreso e interés al corte, y el DTI del mes", async () => {
     const { card, loan } = await seedScenario();
 
-    const report = await getDebtReport(db, {
+    const report = await getDebtReport(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -2805,7 +2807,7 @@ describeDb("Reportes de deuda · progreso, interés y DTI", () => {
     // Al 10/10 la cuota es del 15 y la compra con tarjeta, del 12: las dos
     // quedan FUERA del corte. El corte del mes en curso es el ancla —la misma
     // convención que la reconciliación (`monthCut`)— y viaja marcado parcial.
-    const al10 = await getDebtReport(db, {
+    const al10 = await getDebtReport(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-10",
     });
@@ -2830,7 +2832,7 @@ describeDb("Reportes de deuda · progreso, interés y DTI", () => {
     // Al 30/09 sólo pasó el desembolso: el préstamo debe 500.000,00 y no hay
     // capital amortizado —ni, por lo tanto, interés pagado—. Septiembre no tuvo
     // ingresos: el DTI viaja como "no se puede calcular".
-    const report = await getDebtReport(db, {
+    const report = await getDebtReport(db, { currency: "ARS",
       month: "2026-09",
       anchor: "2026-10-31",
     });
@@ -2876,7 +2878,7 @@ describeDb("Reportes de deuda · progreso, interés y DTI", () => {
       },
     });
 
-    const report = await getDebtReport(db, {
+    const report = await getDebtReport(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -2907,7 +2909,7 @@ describeDb("Reportes de deuda · progreso, interés y DTI", () => {
       },
     });
 
-    const report = await getDebtReport(db, {
+    const report = await getDebtReport(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -2941,7 +2943,7 @@ describeDb("Reportes de deuda · progreso, interés y DTI", () => {
       data: { archived: true },
     });
 
-    const report = await getDebtReport(db, {
+    const report = await getDebtReport(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -3061,7 +3063,7 @@ describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
     const { candidates, truncated } = await movementBurnCandidates(db, {
       from: "2027-01-01",
       to: "2027-01-31",
-    });
+    }, "ARS");
 
     // El sueldo no es candidato (no es un gasto) y el regalo tampoco (es de
     // otro período): la lista es del período Y de los EXPENSE, las dos cosas.
@@ -3087,7 +3089,7 @@ describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
       from: "2027-01-01",
       to: "2027-01-31",
       movementId: expensasAnuales.id,
-    });
+    }, "ARS");
 
     expect(burn).toMatchObject({
       movementId: expensasAnuales.id,
@@ -3112,14 +3114,14 @@ describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
 
     // No existe.
     expect(
-      await movementBurn(db, { ...period, movementId: "no-existe" }),
+      await movementBurn(db, { ...period, movementId: "no-existe" }, "ARS"),
     ).toBeNull();
     // Existe, pero es un ingreso: no hay gasto que repartir.
     expect(
-      await movementBurn(db, { ...period, movementId: sueldoEnero.id }),
+      await movementBurn(db, { ...period, movementId: sueldoEnero.id }, "ARS"),
     ).toBeNull();
     // Existe y es un gasto, pero de OTRO período.
-    expect(await movementBurn(db, { ...period, movementId: regalo.id })).toBeNull();
+    expect(await movementBurn(db, { ...period, movementId: regalo.id }, "ARS")).toBeNull();
 
     // El mismo regalo SÍ tiene burn en su propio período: el `null` de arriba
     // es el período, no el gasto.
@@ -3127,7 +3129,7 @@ describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
       from: "2026-12-01",
       to: "2026-12-31",
       movementId: regalo.id,
-    });
+    }, "ARS");
     expect(diciembre?.monthlyShare).toBe("833.33"); // 10.000 / 12
   });
 
@@ -3149,7 +3151,7 @@ describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
     const { candidates, truncated } = await movementBurnCandidates(db, {
       from: "2027-01-01",
       to: "2027-01-31",
-    });
+    }, "ARS");
 
     // La lista se corta y LO DICE: una lista incompleta que se ve completa es
     // la clase de mentira que el tope existe para no repetir.
@@ -3163,7 +3165,7 @@ describeDb("Burn mensualizado · el gasto anual en las dos vistas", () => {
       from: "2027-01-01",
       to: "2027-01-31",
       movementId: expensasAnuales.id,
-    });
+    }, "ARS");
 
     // El cálculo mira los 502 gastos aunque la lista haya cortado en 500:
     // 500 × 100 + 500.000 + 240.000 = 790.000, y con el burn 570.000. Si el
@@ -3290,7 +3292,7 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
     expect(movements.every((m) => m.recurrenceRuleId === rule.id)).toBe(true);
 
     // Y la plata posteada SÍ entra en los números reales.
-    const totals = await movementTotals(db, {});
+    const totals = await movementTotals(db, {}, "ARS");
     expect(totals.expenses).toBe("15000.00");
     expect(totals.expenseCount).toBe(3);
   });
@@ -3320,17 +3322,17 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
     expect(overview.pending.map((p) => p.dueDate)).toEqual(["2026-08-20", "2026-09-20"]);
 
     // ...pero NINGÚN total las cuenta: una ocurrencia no es un movimiento.
-    expect((await movementTotals(db, {})).expenses).toBe("0.00");
+    expect((await movementTotals(db, {}, "ARS")).expenses).toBe("0.00");
     const balances = await getAccountBalances(db, {});
     expect(balances[0]?.balance.toFixed(2)).toBe("100000.00");
 
     // Aceptar la primera SÍ mueve la plata...
     const accepted = await acceptOccurrence(db, overview.pending[0].id);
     expect(accepted.created).toBe(true);
-    expect((await movementTotals(db, {})).expenses).toBe("1000.00");
+    expect((await movementTotals(db, {}, "ARS")).expenses).toBe("1000.00");
 
     // ...y la segunda sigue sin mover nada hasta su propio "aceptar".
-    expect((await movementTotals(db, {})).expenseCount).toBe(1);
+    expect((await movementTotals(db, {}, "ARS")).expenseCount).toBe(1);
   });
 
   it("una regla con startDate futuro no materializa nada", async () => {
@@ -3745,7 +3747,7 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
 
     await runDueOccurrences(db, { today: TODAY });
     const movement = await db.movement.findFirstOrThrow();
-    expect((await movementTotals(db, {})).expenses).toBe("800.00");
+    expect((await movementTotals(db, {}, "ARS")).expenses).toBe("800.00");
 
     // Borrar el movimiento reabre la ocurrencia en la MISMA transacción.
     await deleteMovement(db, movement.id);
@@ -3755,7 +3757,7 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
     });
     expect(reopened.status).toBe("PENDING");
     expect(reopened.movementId).toBeNull();
-    expect((await movementTotals(db, {})).expenses).toBe("0.00");
+    expect((await movementTotals(db, {}, "ARS")).expenses).toBe("0.00");
 
     // El generador NO la recrea: la fecha ya está materializada. Y una regla
     // AUTO tampoco la re-postea sola: la ocurrencia reabierta espera en la
@@ -3771,7 +3773,7 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
     // porque la persona lo pidió.
     const accepted = await acceptOccurrence(db, reopened.id);
     expect(accepted.created).toBe(true);
-    expect((await movementTotals(db, {})).expenses).toBe("800.00");
+    expect((await movementTotals(db, {}, "ARS")).expenses).toBe("800.00");
 
     // Un id inexistente da el error de dominio de "no existe".
     await expect(deleteMovement(db, "no-existe")).rejects.toThrow(/no existe/);
@@ -3851,7 +3853,7 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
     const run = await runDueOccurrences(db, { today: TODAY });
     expect(run.posted).toBe(1);
     expect(run.blocked).toHaveLength(0);
-    expect((await movementTotals(db, {})).expenses).toBe("400.00");
+    expect((await movementTotals(db, {}, "ARS")).expenses).toBe("400.00");
   });
 
   it("rechaza una regla con monto cero", async () => {
@@ -5313,7 +5315,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     expect(receivableBalance?.debt).toBeNull();
 
     // El reporte de deudas NO lo ve: es un activo, no una deuda.
-    const report = await getDebtReport(db, {
+    const report = await getDebtReport(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -5322,7 +5324,7 @@ describeDb("Préstamos: cronograma, pago y vista (Fase 4)", () => {
     expect(report.dti).toMatchObject({ monthlyCommitment: "0.00", planCount: 0 });
 
     // El patrimonio tampoco cambia por prestar: el activo reemplaza a la plata.
-    const worth = await getNetWorth(db, { asOf: "2026-10-31" });
+    const worth = await getNetWorth(db, { currency: "ARS", asOf: "2026-10-31" });
     expect(worth.assets.toFixed(2)).toBe("100000.00");
     expect(worth.liabilities.toFixed(2)).toBe("0.00");
     expect(worth.net.toFixed(2)).toBe("100000.00");
@@ -6235,7 +6237,7 @@ describeDb("La banderita del ingreso declarado", () => {
   it("APAGADA (el default): el ingreso del mes es el de los movimientos y el ahorro es −6.400", async () => {
     await seedEscenario(false);
 
-    const totals = await periodTotals(db, octubre.where, octubre.period);
+    const totals = await periodTotals(db, octubre.where, octubre.period, "ARS");
 
     expect(totals.income).toBe("325000.00");
     expect(totals.declaredIncome).toBe("0.00");
@@ -6247,7 +6249,7 @@ describeDb("La banderita del ingreso declarado", () => {
   it("TILDADA: el ingreso del mes suma el saldo declarado (332.000) y el ahorro queda en +600", async () => {
     await seedEscenario(true);
 
-    const totals = await periodTotals(db, octubre.where, octubre.period);
+    const totals = await periodTotals(db, octubre.where, octubre.period, "ARS");
 
     expect(totals.income).toBe("332000.00");
     expect(totals.declaredIncome).toBe("7000.00");
@@ -6265,11 +6267,13 @@ describeDb("La banderita del ingreso declarado", () => {
       db,
       { date: { gte: calendarToDb("2026-09-01"), lte: calendarToDb("2026-09-30") } },
       { from: "2026-09-01", to: "2026-09-30" },
+      "ARS",
     );
     const noviembre = await periodTotals(
       db,
       { date: { gte: calendarToDb("2026-11-01"), lte: calendarToDb("2026-11-30") } },
       { from: "2026-11-01", to: "2026-11-30" },
+      "ARS",
     );
 
     expect(septiembre.declaredIncome).toBe("0.00");
@@ -6331,7 +6335,7 @@ describeDb("La banderita del ingreso declarado", () => {
   it("la reconciliación SIGUE cuadrando y explica la plata declarada", async () => {
     await seedEscenario(true);
 
-    const rec = await getMonthReconciliation(db, {
+    const rec = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -6353,7 +6357,7 @@ describeDb("La banderita del ingreso declarado", () => {
   it("sin la banderita, la reconciliación de octubre es la de siempre (0,00 de diferencia)", async () => {
     await seedEscenario(false);
 
-    const rec = await getMonthReconciliation(db, {
+    const rec = await getMonthReconciliation(db, { currency: "ARS",
       month: "2026-10",
       anchor: "2026-10-31",
     });
@@ -6616,5 +6620,541 @@ describeDb("Fase 4 · monedas", () => {
         }),
       ).rejects.toThrow();
     });
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * FASE 4.2 · CONSULTAS POR MONEDA
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Los invariantes de la Fase 4.1 garantizan que una transferencia entre
+ * monedas dice cuánto llega. Acá se verifica lo otro: que NINGUNA consulta sume
+ * pesos con dólares. El escenario mezcla las dos monedas a propósito; cada
+ * assertion es un número que la versión anterior (sin scoping) devolvía mal.
+ * ───────────────────────────────────────────────────────────────────────────── */
+describeDb("Fase 4.2 · consultas por moneda", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  async function createAccount(
+    name: string,
+    currency: "ARS" | "USD",
+    kind: "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" = "CASH",
+    openingBalance = "0",
+    extra: {
+      archived?: boolean;
+      principal?: string;
+      tnaPercent?: string;
+      installmentCount?: number;
+      firstInstallmentDate?: Date;
+      openingIncomeMonth?: Date;
+    } = {},
+  ) {
+    return db.account.create({
+      data: { name, kind, currency, openingBalance, ...extra },
+    });
+  }
+
+  it("movementTotals no incluye movimientos de otra moneda", async () => {
+    const pesos = await createAccount("Caja pesos", "ARS");
+    const dolares = await createAccount("Caja dólares", "USD");
+    const { gastos, sueldo } = await seedCategories();
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "INCOME",
+          amount: "1000",
+          date: calendarToDb("2026-10-01"),
+          accountId: pesos.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "200",
+          date: calendarToDb("2026-10-02"),
+          accountId: pesos.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "INCOME",
+          amount: "10",
+          date: calendarToDb("2026-10-03"),
+          accountId: dolares.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "2",
+          date: calendarToDb("2026-10-04"),
+          accountId: dolares.id,
+          categoryId: gastos.id,
+        },
+      ],
+    });
+
+    const ars = await movementTotals(db, {}, "ARS");
+    expect(ars.income).toBe("1000.00");
+    expect(ars.expenses).toBe("200.00");
+    expect(ars.incomeCount).toBe(1);
+    expect(ars.expenseCount).toBe(1);
+
+    const usd = await movementTotals(db, {}, "USD");
+    expect(usd.income).toBe("10.00");
+    expect(usd.expenses).toBe("2.00");
+    expect(usd.incomeCount).toBe(1);
+    expect(usd.expenseCount).toBe(1);
+  });
+
+  it("una transferencia ARS→USD baja el flujo ARS y sube el flujo USD", async () => {
+    const banco = await createAccount("Banco pesos", "ARS", "BANK");
+    const cajaUsd = await createAccount("Caja dólares", "USD");
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "120000",
+        toAmount: "100",
+        date: calendarToDb("2026-10-05"),
+        accountId: banco.id,
+        toAccountId: cajaUsd.id,
+      },
+    });
+
+    expect(await movementCashFlow(db, {}, "ARS")).toBe("-120000.00");
+    expect(await movementCashFlow(db, {}, "USD")).toBe("100.00");
+
+    // La pata que ENTRA a la cuenta en dólares vale `toAmount`, no `amount`:
+    // acreditar 120.000 acá sería el bug que esta fase elimina.
+    const balances = await getAccountBalances(db);
+    expect(
+      balances.find((balance) => balance.id === cajaUsd.id)?.balance.toFixed(2),
+    ).toBe("100.00");
+    expect(
+      balances.find((balance) => balance.id === banco.id)?.balance.toFixed(2),
+    ).toBe("-120000.00");
+  });
+
+  it("una transferencia USD→ARS baja el flujo USD y sube el ARS por toAmount", async () => {
+    const cajaUsd = await createAccount("Caja dólares", "USD");
+    const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "50",
+        toAmount: "60000",
+        date: calendarToDb("2026-10-06"),
+        accountId: cajaUsd.id,
+        toAccountId: banco.id,
+      },
+    });
+
+    expect(await movementCashFlow(db, {}, "USD")).toBe("-50.00");
+    expect(await movementCashFlow(db, {}, "ARS")).toBe("60000.00");
+  });
+
+  it("una transferencia ARS→ARS no toca el flujo en dólares", async () => {
+    const banco = await createAccount("Banco pesos", "ARS", "BANK");
+    const caja = await createAccount("Caja pesos", "ARS");
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "10000",
+        date: calendarToDb("2026-10-07"),
+        accountId: banco.id,
+        toAccountId: caja.id,
+      },
+    });
+
+    expect(await movementCashFlow(db, {}, "USD")).toBe("0.00");
+    // Mover plata entre dos cuentas propias no cambia la liquidez total.
+    expect(await movementCashFlow(db, {}, "ARS")).toBe("0.00");
+  });
+
+  it("el patrimonio se calcula por moneda y no mezcla cuentas", async () => {
+    await createAccount("Banco pesos", "ARS", "BANK", "100000");
+    await createAccount("Caja pesos", "ARS", "CASH", "5000");
+    await createAccount("Caja dólares", "USD", "CASH", "100");
+    // Archivada: su plata sigue siendo tuya y sigue contando.
+    await createAccount("Banco dólares", "USD", "BANK", "50", {
+      archived: true,
+    });
+    await createAccount("Visa dólares", "USD", "CREDIT_CARD", "-20");
+
+    const ars = await getNetWorth(db, { currency: "ARS" });
+    expect(ars.assets.toFixed(2)).toBe("105000.00");
+    expect(ars.liabilities.toFixed(2)).toBe("0.00");
+    expect(ars.net.toFixed(2)).toBe("105000.00");
+
+    const usd = await getNetWorth(db, { currency: "USD" });
+    expect(usd.assets.toFixed(2)).toBe("150.00");
+    expect(usd.liabilities.toFixed(2)).toBe("20.00");
+    expect(usd.net.toFixed(2)).toBe("130.00");
+
+    const blocks = await getNetWorthByCurrency(db);
+    expect(
+      blocks.map((block) => [
+        block.currency,
+        block.assets.toFixed(2),
+        block.liabilities.toFixed(2),
+        block.net.toFixed(2),
+      ]),
+    ).toEqual([
+      ["ARS", "105000.00", "0.00", "105000.00"],
+      ["USD", "150.00", "20.00", "130.00"],
+    ]);
+  });
+
+  it("sin cuentas, el patrimonio por moneda es una lista vacía", async () => {
+    expect(await getNetWorthByCurrency(db)).toEqual([]);
+  });
+
+  it("una moneda sin cuentas no devuelve la serie de la otra", async () => {
+    // La serie se arma sólo con las cuentas de la moneda pedida. Si el conteo
+    // previo mirara todas las cuentas, pedir USD en una base sin dólares
+    // devolvería 12 fotos en pesos rotuladas como dólares: una historia que la
+    // app no conoce, y el mismo error de unidad que esta fase elimina.
+    await createAccount("Banco pesos", "ARS", "BANK", "100000");
+
+    expect(
+      await getNetWorthSeries(db, { currency: "USD", anchor: "2026-10-31" }),
+    ).toEqual([]);
+
+    const enPesos = await getNetWorthSeries(db, {
+      currency: "ARS",
+      anchor: "2026-10-31",
+    });
+    expect(enPesos).toHaveLength(12);
+    expect(enPesos.at(-1)?.net).toBe("100000.00");
+  });
+
+  it("la torta y las barras de ARS no ven categorías gastadas sólo en USD", async () => {
+    const pesos = await createAccount("Caja pesos", "ARS");
+    const dolares = await createAccount("Caja dólares", "USD");
+    const [gastosArs, gastosUsd] = await Promise.all([
+      db.category.create({
+        data: { name: "Gastos ARS", normalizedName: "gastos ars", kind: "EXPENSE" },
+      }),
+      db.category.create({
+        data: { name: "Gastos USD", normalizedName: "gastos usd", kind: "EXPENSE" },
+      }),
+    ]);
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "EXPENSE",
+          amount: "200",
+          date: calendarToDb("2026-10-02"),
+          accountId: pesos.id,
+          categoryId: gastosArs.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "2",
+          date: calendarToDb("2026-10-04"),
+          accountId: dolares.id,
+          categoryId: gastosUsd.id,
+        },
+      ],
+    });
+
+    const ars = await movementCategoryBreakdown(db, {}, "ARS");
+    expect(ars).toHaveLength(1);
+    expect(ars[0]?.name).toBe("Gastos ARS");
+    expect(ars[0]?.amount).toBe("200.00");
+
+    const usd = await movementCategoryBreakdown(db, {}, "USD");
+    expect(usd).toHaveLength(1);
+    expect(usd[0]?.name).toBe("Gastos USD");
+
+    const arsByDate = await movementDateBreakdown(db, {}, "ARS");
+    expect(arsByDate).toEqual([
+      { date: "2026-10-02", kind: "EXPENSE", amount: "200.00" },
+    ]);
+  });
+
+  it("la plata declarada se suma sólo en la moneda de su cuenta", async () => {
+    await createAccount("Caja pesos", "ARS", "CASH", "7000", {
+      openingIncomeMonth: calendarToDb("2026-10-01"),
+    });
+    await createAccount("Caja dólares", "USD", "CASH", "100", {
+      openingIncomeMonth: calendarToDb("2026-10-01"),
+    });
+
+    const period = { from: "2026-10-01", to: "2026-10-31" };
+    expect(
+      (await declaredIncomeInPeriod(db, period, "ARS")).toFixed(2),
+    ).toBe("7000.00");
+    expect(
+      (await declaredIncomeInPeriod(db, period, "USD")).toFixed(2),
+    ).toBe("100.00");
+
+    const ars = await periodTotals(db, {}, period, "ARS");
+    expect(ars.declaredIncome).toBe("7000.00");
+    expect(ars.income).toBe("7000.00");
+    // La cuenta de pesos es la única que declaró en ARS; el conteo de
+    // movimientos sigue en cero.
+    expect(ars.incomeCount).toBe(0);
+  });
+
+  it("el burn no resta un gasto de otra moneda", async () => {
+    const pesos = await createAccount("Caja pesos", "ARS");
+    const dolares = await createAccount("Caja dólares", "USD");
+    const { gastos } = await seedCategories();
+
+    const [gastoArs, gastoUsd] = await Promise.all([
+      db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "1200",
+          date: calendarToDb("2026-10-02"),
+          accountId: pesos.id,
+          categoryId: gastos.id,
+        },
+      }),
+      db.movement.create({
+        data: {
+          kind: "EXPENSE",
+          amount: "12",
+          date: calendarToDb("2026-10-03"),
+          accountId: dolares.id,
+          categoryId: gastos.id,
+        },
+      }),
+    ]);
+
+    const period = { from: "2026-10-01", to: "2026-10-31" };
+    const arsCandidates = await movementBurnCandidates(db, period, "ARS");
+    expect(arsCandidates.candidates.map((candidate) => candidate.id)).toEqual([
+      gastoArs.id,
+    ]);
+
+    // El gasto en dólares no participa de la vista en pesos: ni siquiera se
+    // puede pedir su burn ahí.
+    expect(
+      await movementBurn(db, { ...period, movementId: gastoUsd.id }, "ARS"),
+    ).toBeNull();
+    expect(
+      await movementBurn(db, { ...period, movementId: gastoArs.id }, "ARS"),
+    ).not.toBeNull();
+  });
+
+  it("la reconciliación en ARS no ve movimientos ni cuentas en USD", async () => {
+    const banco = await createAccount("Banco pesos", "ARS", "BANK", "100000");
+    const cajaUsd = await createAccount("Caja dólares", "USD", "CASH", "500");
+    const { gastos, sueldo } = await seedCategories();
+
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "INCOME",
+          amount: "50000",
+          date: calendarToDb("2026-10-01"),
+          accountId: banco.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "20000",
+          date: calendarToDb("2026-10-03"),
+          accountId: banco.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "INCOME",
+          amount: "1000",
+          date: calendarToDb("2026-10-01"),
+          accountId: cajaUsd.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "400",
+          date: calendarToDb("2026-10-03"),
+          accountId: cajaUsd.id,
+          categoryId: gastos.id,
+        },
+      ],
+    });
+
+    const ars = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+      currency: "ARS",
+    });
+    expect(ars.netStart).toBe("100000.00");
+    expect(ars.netEnd).toBe("130000.00");
+    expect(ars.netDelta).toBe("30000.00");
+    expect(ars.saving).toBe("30000.00");
+    expect(ars.balanced).toBe(true);
+
+    const usd = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+      currency: "USD",
+    });
+    expect(usd.netStart).toBe("500.00");
+    expect(usd.netEnd).toBe("1100.00");
+    expect(usd.saving).toBe("600.00");
+    expect(usd.balanced).toBe(true);
+  });
+
+  it("la reconciliación cuadra aunque haya una transferencia entre monedas", async () => {
+    const banco = await createAccount("Banco pesos", "ARS", "BANK", "100000");
+    const cajaUsd = await createAccount("Caja dólares", "USD");
+
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "120000",
+        toAmount: "100",
+        date: calendarToDb("2026-10-05"),
+        accountId: banco.id,
+        toAccountId: cajaUsd.id,
+      },
+    });
+
+    const ars = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+      currency: "ARS",
+    });
+    expect(ars.netStart).toBe("100000.00");
+    expect(ars.netEnd).toBe("-20000.00");
+    expect(ars.netDelta).toBe("-120000.00");
+    expect(ars.saving).toBe("0.00");
+    expect(ars.difference).toBe("0.00");
+    expect(ars.balanced).toBe(true);
+
+    const usd = await getMonthReconciliation(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+      currency: "USD",
+    });
+    expect(usd.netStart).toBe("0.00");
+    expect(usd.netEnd).toBe("100.00");
+    expect(usd.netDelta).toBe("100.00");
+    expect(usd.saving).toBe("0.00");
+    expect(usd.difference).toBe("0.00");
+    expect(usd.balanced).toBe(true);
+  });
+
+  it("el reporte de deudas en ARS no ve deudas ni ingresos en USD", async () => {
+    await createAccount("Banco pesos", "ARS", "BANK", "0");
+    await createAccount("Caja dólares", "USD", "CASH", "0");
+    await createAccount("Préstamo pesos", "ARS", "LOAN", "-50000", {
+      principal: "50000",
+      tnaPercent: "60",
+      installmentCount: 12,
+    });
+    await createAccount("Préstamo dólares", "USD", "LOAN", "-1000", {
+      principal: "1000",
+      tnaPercent: "10",
+      installmentCount: 12,
+    });
+    const { sueldo } = await seedCategories();
+    const banco = await db.account.findFirstOrThrow({
+      where: { name: "Banco pesos" },
+    });
+    const cajaUsd = await db.account.findFirstOrThrow({
+      where: { name: "Caja dólares" },
+    });
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "INCOME",
+          amount: "10000",
+          date: calendarToDb("2026-10-01"),
+          accountId: banco.id,
+          categoryId: sueldo.id,
+        },
+        {
+          kind: "INCOME",
+          amount: "1000",
+          date: calendarToDb("2026-10-01"),
+          accountId: cajaUsd.id,
+          categoryId: sueldo.id,
+        },
+      ],
+    });
+
+    const ars = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+      currency: "ARS",
+    });
+    expect(ars.rows.map((row) => row.name)).toEqual(["Préstamo pesos"]);
+    expect(ars.totalDebt).toBe("50000.00");
+    expect(ars.dti.income).toBe("10000.00");
+
+    const usd = await getDebtReport(db, {
+      month: "2026-10",
+      anchor: "2026-10-31",
+      currency: "USD",
+    });
+    expect(usd.rows.map((row) => row.name)).toEqual(["Préstamo dólares"]);
+    expect(usd.totalDebt).toBe("1000.00");
+    expect(usd.dti.income).toBe("1000.00");
+  });
+
+  it("la vista de préstamos cuenta el capital pagado entre monedas con toAmount", async () => {
+    const banco = await createAccount("Banco pesos", "ARS", "BANK");
+    const cajaUsd = await createAccount("Caja dólares", "USD");
+    const prestamo = await createAccount("Préstamo dólares", "USD", "LOAN", "-1000", {
+      principal: "1000",
+      tnaPercent: "10",
+      installmentCount: 12,
+      firstInstallmentDate: calendarToDb("2026-11-15"),
+    });
+
+    // 120.000 ARS → 100 USD: la pata que ENTRA al préstamo vale `toAmount`.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "120000",
+        toAmount: "100",
+        date: calendarToDb("2026-10-05"),
+        accountId: banco.id,
+        toAccountId: prestamo.id,
+      },
+    });
+    // 50 USD → mismo préstamo: acá `amount` ya está en dólares.
+    await db.movement.create({
+      data: {
+        kind: "TRANSFER",
+        amount: "50",
+        date: calendarToDb("2026-10-06"),
+        accountId: cajaUsd.id,
+        toAccountId: prestamo.id,
+      },
+    });
+
+    const view = await getLoansView(db, { today: "2026-10-31" });
+    const loan = view.loans.find((item) => item.id === prestamo.id);
+
+    // Sumar `amount` daría 120.050 → clampeado a 1.000 (100 % pagado): una
+    // mentira visible. El número correcto es 150 (15 %).
+    expect(loan?.capitalPaid).toBe("150.00");
+    expect(loan?.progressPercent).toBe("15.00");
+  });
+
+  it("el DTO de la cuenta dice en qué moneda está su saldo", async () => {
+    const dolares = await createAccount("Caja dólares", "USD");
+    const balances = await getAccountBalances(db);
+    const balance = balances[0]!;
+    const dto = toAccountDTO({
+      id: balance.id,
+      name: balance.name,
+      kind: balance.kind,
+      archived: balance.archived,
+      currency: balance.currency,
+      openingBalance: balance.opening,
+    });
+
+    expect(dolares.currency).toBe("USD");
+    expect(dto.currency).toBe("USD");
   });
 });

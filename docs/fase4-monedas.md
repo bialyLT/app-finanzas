@@ -349,7 +349,8 @@ model AppSettings {
 | `lib/queries.ts` | `movementCategoryBreakdown` | Filtra por moneda: un gráfico de gastos no puede mezclar. |
 | `lib/queries.ts` | `declaredIncomeInPeriod` | La banderita de saldo inicial es de una cuenta: hereda su moneda. |
 | `lib/balance.ts` | `getNetWorth` | Pasa a devolver **un patrimonio por moneda**, no uno solo. Es el cambio de contrato más visible. |
-| `lib/balance.ts` | `getAccountBalances` | Sin cambios: cada saldo ya es de una cuenta y por lo tanto de una moneda. |
+| `lib/balance.ts` | `getAccountBalances` | **Sí cambió**: la pata entrante de una transferencia entre monedas acredita `toAmount`, no `amount`. Sin esto, un cambio ARS→USD acreditaba 120.000 dólares en vez de 100. |
+| `lib/queries.ts` | `getMonthReconciliation` | Suma el término `transferNet`: en una sola moneda vale 0; con dos, un cambio de moneda mueve el patrimonio de cada moneda y sin restarlo la reconciliación daba `balanced: false`. |
 
 **Contrato propuesto para `getNetWorth`:**
 

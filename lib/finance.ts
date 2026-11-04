@@ -28,6 +28,15 @@ export type CategoryKindDTO = "INCOME" | "EXPENSE";
 export type AccountKindDTO = "CASH" | "BANK" | "CREDIT_CARD" | "LOAN" | "RECEIVABLE";
 
 /**
+ * La moneda tal como viaja al cliente.
+ *
+ * Es el espejo del enum `Currency` del esquema. Se declara acá y no se importa
+ * de `@prisma/client` para que el contrato del DTO no dependa del ORM: la UI
+ * recibe un string que conoce, no un tipo generado.
+ */
+export type CurrencyDTO = "ARS" | "USD";
+
+/**
  * El sistema de amortización de un préstamo, tal como viaja al cliente.
  *
  * Son los mismos cinco de `Account.amortizationSystem`: francés (cuota
@@ -56,6 +65,14 @@ export interface AccountDTO {
   name: string;
   kind: AccountKindDTO;
   archived: boolean;
+  /**
+   * La moneda de la cuenta.
+   *
+   * Sin este campo la UI no puede decir en qué unidad está el saldo que muestra
+   * —ni siquiera para mostrar "$" o "US$", que es trabajo de la Fase 4.4—. Viaja
+   * siempre: una cuenta sin moneda no existe desde la Fase 4.
+   */
+  currency: CurrencyDTO;
   /** Monto como string decimal exacto. Ver la nota de arriba. */
   openingBalance: string;
 
