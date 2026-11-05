@@ -77,9 +77,14 @@ import * as dalModule from "@/lib/auth/dal";
 import * as csrfModule from "@/lib/auth/csrf";
 import { prisma as apiPrisma } from "@/lib/prisma";
 import {
+  GET as getAccounts,
   PATCH as patchAccount,
   POST as postAccount,
 } from "@/app/api/accounts/route";
+import {
+  GET as getSettings,
+  PATCH as patchSettings,
+} from "@/app/api/settings/route";
 import {
   GET as getTransactions,
   POST as postTransaction,
@@ -7270,6 +7275,12 @@ describeDb("Fase 4.2 · consultas por moneda", () => {
 describeDb("Fase 4.3 · escritura con monedas", () => {
   beforeEach(async () => {
     await resetDatabase();
+    // F4.4b: una cuenta sólo puede nacer en una moneda HABILITADA. Estos tests
+    // ejercen el alta en dólares, así que habilitan las dos monedas primero.
+    await db.appSettings.update({
+      where: { id: 1 },
+      data: { enabledCurrencies: ["ARS", "USD"] },
+    });
     // `restoreMocks` del config de vitest limpia las implementaciones entre
     // tests: la sesión y el CSRF se reponen en cada uno.
     vi.mocked(dalModule.requireApiSession).mockResolvedValue({
@@ -8027,6 +8038,282 @@ describeDb("Fase 4.3 · escritura con monedas", () => {
       expect(
         await db.movement.count({ where: { recurrenceRuleId: valida.id } }),
       ).toBe(3);
+    });
+  });
+});
+
+/* ═════════════════════════════════════════════════════════════════════════════
+ * FASE 4.4b · CONFIGURACIÓN DE MONEDAS Y PATRIMONIO POR MONEDA
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * Dos contratos del borde:
+ *
+ *   · `/api/settings` decide qué monedas existen para la app. Una moneda con
+ *     cuentas NO se puede apagar (409 con qué hacer), y la lista vacía,
+ *     repetida o inventada es 400.
+ *   · `/api/accounts` devuelve el patrimonio de CADA moneda. La respuesta no
+ *     tiene ningún total mezclado: el panel pinta un bloque por moneda.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+describeDb("Fase 4.4b · configuración de monedas y patrimonio por moneda", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({
+      v: 1,
+      iat: 0,
+      exp: 0,
+    });
+    vi.mocked(csrfModule.assertSameOrigin).mockReturnValue(null);
+    // El estado de fábrica antes de cada caso: el PATCH de un test no puede
+    // dejarle a otro una lista habilitada distinta.
+    await db.appSettings.update({
+      where: { id: 1 },
+      data: { enabledCurrencies: ["ARS"] },
+    });
+  });
+
+  function request(method: string, path: string, body?: unknown) {
+    return new Request(`http://localhost:3000${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  async function createAccount(
+    name: string,
+    currency: "ARS" | "USD",
+    kind: "CASH" | "BANK" | "CREDIT_CARD" = "CASH",
+    openingBalance = "0",
+  ) {
+    return db.account.create({
+      data: { name, kind, currency, openingBalance },
+    });
+  }
+
+  describe("/api/settings", () => {
+    it("GET de fábrica devuelve sólo pesos", async () => {
+      const res = await getSettings();
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabledCurrencies: ["ARS"] });
+    });
+
+    it("PATCH habilita dólares y lo persiste", async () => {
+      const res = await patchSettings(
+        request("PATCH", "/api/settings", {
+          enabledCurrencies: ["ARS", "USD"],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabledCurrencies: ["ARS", "USD"] });
+
+      const fila = await db.appSettings.findUnique({ where: { id: 1 } });
+      expect(fila?.enabledCurrencies).toEqual(["ARS", "USD"]);
+
+      // Y el GET siguiente cuenta la misma historia.
+      const leido = await getSettings();
+      expect(await leido.json()).toEqual({ enabledCurrencies: ["ARS", "USD"] });
+    });
+
+    it("normaliza el orden para que dos cuerpos equivalentes den la misma fila", async () => {
+      const res = await patchSettings(
+        request("PATCH", "/api/settings", {
+          enabledCurrencies: ["USD", "ARS"],
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabledCurrencies: ["ARS", "USD"] });
+    });
+
+    it("una lista vacía es 400 y no toca la configuración", async () => {
+      const res = await patchSettings(
+        request("PATCH", "/api/settings", { enabledCurrencies: [] }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/al menos una moneda/i);
+
+      const fila = await db.appSettings.findUnique({ where: { id: 1 } });
+      expect(fila?.enabledCurrencies).toEqual(["ARS"]);
+    });
+
+    it("una moneda repetida es 400", async () => {
+      const res = await patchSettings(
+        request("PATCH", "/api/settings", {
+          enabledCurrencies: ["ARS", "ARS"],
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/repetida/i);
+    });
+
+    it("valores inválidos son 400: no se convierten ni se adivinan", async () => {
+      const hostiles: unknown[] = [
+        ["EUR"],
+        ["ARS", "usd"],
+        ["ARS", null],
+        ["ARS", 3],
+        "ARS",
+        null,
+        undefined,
+      ];
+
+      for (const enabledCurrencies of hostiles) {
+        const res = await patchSettings(
+          request("PATCH", "/api/settings", { enabledCurrencies }),
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/lista de monedas|ARS o USD/);
+      }
+
+      const fila = await db.appSettings.findUnique({ where: { id: 1 } });
+      expect(fila?.enabledCurrencies).toEqual(["ARS"]);
+    });
+
+    it("quitar pesos con cuentas en pesos es 409 con el motivo y la salida", async () => {
+      await createAccount("Caja pesos", "ARS");
+      await patchSettings(
+        request("PATCH", "/api/settings", {
+          enabledCurrencies: ["ARS", "USD"],
+        }),
+      );
+
+      const res = await patchSettings(
+        request("PATCH", "/api/settings", { enabledCurrencies: ["USD"] }),
+      );
+
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error).toMatch(/cuenta[s]? en pesos/);
+      expect(body.error).toMatch(/Archivá|archivá/);
+      expect(body.error).toMatch(/otra moneda/);
+
+      // La configuración NO cambió: la fila sigue con las dos monedas.
+      const fila = await db.appSettings.findUnique({ where: { id: 1 } });
+      expect(fila?.enabledCurrencies).toEqual(["ARS", "USD"]);
+    });
+
+    it("quitar una moneda sin cuentas se puede", async () => {
+      await patchSettings(
+        request("PATCH", "/api/settings", {
+          enabledCurrencies: ["ARS", "USD"],
+        }),
+      );
+
+      const res = await patchSettings(
+        request("PATCH", "/api/settings", { enabledCurrencies: ["ARS"] }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ enabledCurrencies: ["ARS"] });
+    });
+
+    it("cuenta las cuentas ARCHIVADAS: la plata sigue siendo de esa moneda", async () => {
+      const cuenta = await createAccount("Vieja dólares", "USD");
+      await db.account.update({
+        where: { id: cuenta.id },
+        data: { archived: true },
+      });
+      await patchSettings(
+        request("PATCH", "/api/settings", {
+          enabledCurrencies: ["ARS", "USD"],
+        }),
+      );
+
+      const res = await patchSettings(
+        request("PATCH", "/api/settings", { enabledCurrencies: ["ARS"] }),
+      );
+
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toMatch(/cuenta[s]? en dólares/);
+    });
+
+    it("un PATCH que reenvía la lista actual no conflictúa por una moneda ya apagada", async () => {
+      // Estado heredado (el alta de cuentas no valida la moneda habilitada: es
+      // el diferido de F4.4b): hay una cuenta en dólares y los dólares YA están
+      // apagados. Guardar la MISMA lista no apaga ninguna moneda, así que no
+      // puede ser un 409; si lo fuera, el modal quedaría sin salida: la
+      // persona no está quitando nada y el servidor le contesta "no podés
+      // quitar dólares".
+      await createAccount("Caja dólares", "USD");
+
+      const mismo = await patchSettings(
+        request("PATCH", "/api/settings", { enabledCurrencies: ["ARS"] }),
+      );
+
+      expect(mismo.status).toBe(200);
+      expect(await mismo.json()).toEqual({ enabledCurrencies: ["ARS"] });
+
+      // Y apagar de verdad una moneda habilitada sigue siendo un conflicto.
+      await patchSettings(
+        request("PATCH", "/api/settings", {
+          enabledCurrencies: ["ARS", "USD"],
+        }),
+      );
+      const quitar = await patchSettings(
+        request("PATCH", "/api/settings", { enabledCurrencies: ["ARS"] }),
+      );
+      expect(quitar.status).toBe(409);
+    });
+  });
+
+  describe("GET /api/accounts · netWorthByCurrency", () => {
+    it("devuelve un bloque por moneda con activos, pasivos y neto, sin total mezclado", async () => {
+      await createAccount("Banco pesos", "ARS", "BANK", "1000");
+      await createAccount("Caja dólares", "USD", "CASH", "100");
+      await createAccount("Visa dólares", "USD", "CREDIT_CARD", "-20");
+
+      const res = await getAccounts(
+        request("GET", "/api/accounts?asOf=2026-11-30"),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.netWorthByCurrency).toEqual([
+        {
+          currency: "ARS",
+          assets: "1000.00",
+          liabilities: "0.00",
+          net: "1000.00",
+        },
+        {
+          currency: "USD",
+          assets: "100.00",
+          liabilities: "20.00",
+          net: "80.00",
+        },
+      ]);
+
+      // No existe ningún campo que sume las dos monedas: 1.080 sería una
+      // mentira con unidad inventada.
+      expect(body).not.toHaveProperty("netWorthTotal");
+      expect(JSON.stringify(body)).not.toContain("1080.00");
+    });
+
+    it("`currency=USD` cambia el netWorth pedido pero NO recorta los bloques", async () => {
+      await createAccount("Banco pesos", "ARS", "BANK", "1000");
+      await createAccount("Caja dólares", "USD", "CASH", "100");
+
+      const res = await getAccounts(
+        request("GET", "/api/accounts?asOf=2026-11-30&currency=USD"),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.netWorth).toEqual({
+        assets: "100.00",
+        liabilities: "0.00",
+        net: "100.00",
+      });
+      expect(body.netWorthByCurrency.map((block: { currency: string }) => block.currency)).toEqual([
+        "ARS",
+        "USD",
+      ]);
     });
   });
 });

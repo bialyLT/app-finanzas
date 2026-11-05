@@ -31,7 +31,11 @@ import {
   formatPercent,
   toCents,
 } from "@/lib/format";
-import { DEFAULT_CURRENCY } from "@/lib/currency";
+import {
+  CurrencySelector,
+  useCurrencyPreference,
+  useEnabledCurrencies,
+} from "@/components/CurrencySelector";
 import { TriangleAlert, Search, ChartColumn, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -134,6 +138,10 @@ const EMPTY_TOTALS: PeriodTotalsDTO = {
 export default function AnalisisPage() {
   const [mode, setMode] = useState<ViewMode>("month");
 
+  // La moneda de trabajo del análisis: la misma preferencia que el panel.
+  const { enabledCurrencies } = useEnabledCurrencies();
+  const [currency, setCurrency] = useCurrencyPreference(enabledCurrencies);
+
   // ── La fecha ancla ─────────────────────────────────────────────────────────
   // Antes: `new Date().toISOString().slice(0, 10)`. Después de las 21:00 en
   // Buenos Aires eso da el día SIGUIENTE, así que el análisis arrancaba en la
@@ -213,7 +221,7 @@ export default function AnalisisPage() {
       setLoading(true);
       setLoadError("");
       try {
-        const params = new URLSearchParams({ from: range.from, to: range.to });
+        const params = new URLSearchParams({ from: range.from, to: range.to, currency });
         if (categoryId) params.set("categoryId", categoryId);
         const query = debouncedSearch.trim();
         if (query) params.set("q", query);
@@ -250,7 +258,7 @@ export default function AnalisisPage() {
 
     load();
     return () => controller.abort();
-  }, [range.from, range.to, categoryId, debouncedSearch, burnId]);
+  }, [range.from, range.to, categoryId, debouncedSearch, burnId, currency]);
 
   function shift(direction: number) {
     setAnchor(shiftPeriod(mode, anchor, direction));
@@ -439,6 +447,18 @@ export default function AnalisisPage() {
         </CardContent>
       </Card>
 
+      {/* ── Moneda de trabajo ────────────────────────────────────────────── */}
+      {/* Oculta cuando hay una sola moneda habilitada. Cambiarla vuelve a
+          pedir los agregados de la pantalla en esa moneda. */}
+      <div className="flex justify-end">
+        <CurrencySelector
+          enabledCurrencies={enabledCurrencies}
+          value={currency}
+          onChange={setCurrency}
+          className="w-full sm:w-64"
+        />
+      </div>
+
       {/* ── Filtros ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-2">
         <select
@@ -514,9 +534,9 @@ export default function AnalisisPage() {
               <p className="text-xs uppercase text-fg-muted">Ingresos</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-success"
-                style={{ "--k": factorMonto(formatMoney(stats.incomeTotal, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
+                style={{ "--k": factorMonto(formatMoney(stats.incomeTotal, { currency: currency })) } as CSSProperties}
               >
-                {formatMoney(stats.incomeTotal, { currency: DEFAULT_CURRENCY })}
+                {formatMoney(stats.incomeTotal, { currency: currency })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.incomeCount}{" "}
@@ -529,7 +549,7 @@ export default function AnalisisPage() {
                   declarada no tiene categoría). */}
               {stats.declared !== "0.00" && (
                 <p className="text-xs opacity-80">
-                  + {formatMoney(stats.declared, { currency: DEFAULT_CURRENCY })} declarados
+                  + {formatMoney(stats.declared, { currency: currency })} declarados
                 </p>
               )}
             </div>
@@ -538,9 +558,9 @@ export default function AnalisisPage() {
               <p className="text-xs uppercase text-fg-muted">Gastos</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-danger"
-                style={{ "--k": factorMonto(formatMoney(stats.expenseTotal, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
+                style={{ "--k": factorMonto(formatMoney(stats.expenseTotal, { currency: currency })) } as CSSProperties}
               >
-                {formatMoney(stats.expenseTotal, { currency: DEFAULT_CURRENCY })}
+                {formatMoney(stats.expenseTotal, { currency: currency })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.expenseCount}{" "}
@@ -555,10 +575,10 @@ export default function AnalisisPage() {
               <p
                 className={`monto-tarjeta monto-tarjeta--analisis font-extrabold ${stats.positive ? "text-success" : "text-danger"}`}
                 style={
-                  { "--k": factorMonto(formatMoney(stats.result, { withSign: true, currency: DEFAULT_CURRENCY })) } as CSSProperties
+                  { "--k": factorMonto(formatMoney(stats.result, { withSign: true, currency: currency })) } as CSSProperties
                 }
               >
-                {formatMoney(stats.result, { withSign: true, currency: DEFAULT_CURRENCY })}
+                {formatMoney(stats.result, { withSign: true, currency: currency })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.savingRate !== null
@@ -579,9 +599,9 @@ export default function AnalisisPage() {
               <p className="text-xs uppercase text-fg-muted">Transferencias</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-transfer"
-                style={{ "--k": factorMonto(formatMoney(stats.transferTotal, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
+                style={{ "--k": factorMonto(formatMoney(stats.transferTotal, { currency: currency })) } as CSSProperties}
               >
-                {formatMoney(stats.transferTotal, { currency: DEFAULT_CURRENCY })}
+                {formatMoney(stats.transferTotal, { currency: currency })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.transferCount}{" "}
@@ -601,7 +621,7 @@ export default function AnalisisPage() {
                   <XAxis dataKey="label" fontSize={12} tick={{ fill: "var(--fg-muted)" }} />
                   <YAxis fontSize={12} width={70} tick={{ fill: "var(--fg-muted)" }} />
                   <Tooltip
-                    formatter={(value) => formatMoney(String(value ?? 0))}
+                    formatter={(value) => formatMoney(String(value ?? 0), { currency })}
                     contentStyle={{
                       backgroundColor: "var(--surface-2)",
                       border: "1px solid var(--line-strong)",
@@ -642,7 +662,7 @@ export default function AnalisisPage() {
                       ))}
                     </Pie>
                     <Tooltip
-                      formatter={(value) => formatMoney(String(value ?? 0))}
+                      formatter={(value) => formatMoney(String(value ?? 0), { currency })}
                       contentStyle={{
                         backgroundColor: "var(--surface-2)",
                         border: "1px solid var(--line-strong)",
@@ -676,7 +696,7 @@ export default function AnalisisPage() {
                       {formatPercent(entry.sharePercent)}
                     </span>
                     <span className="font-semibold whitespace-nowrap">
-                      {formatMoney(String(entry.value))}
+                      {formatMoney(String(entry.value), { currency })}
                     </span>
                   </li>
                 ))}
@@ -741,7 +761,7 @@ export default function AnalisisPage() {
                 {burnCandidates.map((candidate) => (
                   <option key={candidate.id} value={candidate.id}>
                     {candidate.description ?? candidate.categoryName ?? "Gasto"}{" "}
-                    · {formatMoney(candidate.amount)} · {candidate.date}
+                    · {formatMoney(candidate.amount, { currency })} · {candidate.date}
                   </option>
                 ))}
               </select>
@@ -769,8 +789,8 @@ export default function AnalisisPage() {
                         selectedCandidate.categoryName ??
                         "Gasto"}
                     </strong>{" "}
-                    — {formatMoney(burn.amount)} ÷ 12 ={" "}
-                    <strong>{formatMoney(burn.monthlyShare)}</strong> por mes
+                    — {formatMoney(burn.amount, { currency })} ÷ 12 ={" "}
+                    <strong>{formatMoney(burn.monthlyShare, { currency })}</strong> por mes
                   </p>
 
                   {/* Las dos vistas, una al lado de la otra: la de caja es un
@@ -784,11 +804,11 @@ export default function AnalisisPage() {
                       <p className="text-sm mt-1">
                         Gastos:{" "}
                         <span className="font-semibold">
-                          {formatMoney(burn.expenses)}
+                          {formatMoney(burn.expenses, { currency })}
                         </span>
                       </p>
                       <p className="text-lg font-extrabold mt-1">
-                        {formatMoney(burn.cashResult, { withSign: true })}
+                        {formatMoney(burn.cashResult, { withSign: true, currency })}
                       </p>
                       <p className="text-xs text-fg-muted">
                         Te quedó con el gasto entero en su mes
@@ -802,7 +822,7 @@ export default function AnalisisPage() {
                       <p className="text-sm mt-1">
                         Gastos:{" "}
                         <span className="font-semibold">
-                          {formatMoney(burn.burnExpenses)}
+                          {formatMoney(burn.burnExpenses, { currency })}
                         </span>
                       </p>
                       <p
@@ -812,7 +832,7 @@ export default function AnalisisPage() {
                             : "text-danger "
                         }`}
                       >
-                        {formatMoney(burn.burnResult, { withSign: true })}
+                        {formatMoney(burn.burnResult, { withSign: true, currency })}
                       </p>
                       <p className="text-xs text-fg-muted">
                         Te quedó repartiendo el gasto en 12

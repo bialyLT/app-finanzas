@@ -3,13 +3,14 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
-import { getAccountBalances, getNetWorth } from "@/lib/balance";
+import { getAccountBalances, getNetWorth, getNetWorthByCurrency } from "@/lib/balance";
 import {
   DEFAULT_CURRENCY,
   currencyNoun,
   parseCurrencyBody,
   parseCurrencyParam,
 } from "@/lib/currency";
+import { isCurrencyEnabled } from "@/lib/currency-preference";
 import { calendarToDb, isCalendarDate, todayCalendar } from "@/lib/dates";
 import { cleanName } from "@/lib/finance";
 import {
@@ -89,6 +90,37 @@ function accountNameConflict(name: string, currency: Currency) {
       error: `Ya tenés una cuenta llamada «${name}» en ${currencyNoun(currency)}. El nombre tiene que ser distinto dentro de la misma moneda; en otra moneda podés repetirlo.`,
     },
     { status: 409 },
+  );
+}
+
+/**
+ * Rechaza una moneda que la persona no habilitó (Fase 4.4b).
+ *
+ * Sin este chequeo existían dos caminos DETERMINISTAS —no hacía falta ninguna
+ * carrera— para terminar con una cuenta en una moneda apagada: crearla con
+ * `currency` explícita, o mudar una cuenta sin historia con `PATCH`. El
+ * resultado no corrompe montos, pero deja plata en una unidad que ningún
+ * selector ofrece.
+ *
+ * Devuelve `null` si la moneda está habilitada, o la respuesta 409 lista para
+ * retornar. El 409 (y no 400) porque la moneda existe: lo que falta es
+ * habilitarla.
+ */
+async function currencyNotEnabled(currency: Currency): Promise<Response | null> {
+  const settings = await prisma.appSettings.findUnique({
+    where: { id: 1 },
+    select: { enabledCurrencies: true },
+  });
+
+  const enabled = settings?.enabledCurrencies ?? [DEFAULT_CURRENCY];
+
+  if (isCurrencyEnabled(currency, enabled)) return null;
+
+  return NextResponse.json(
+    {
+      error: `La moneda ${currencyNoun(currency)} no está habilitada. Habilitala en Monedas antes de usarla.`,
+    },
+    { status: 409, headers: { "Cache-Control": "no-store" } },
   );
 }
 
@@ -247,11 +279,13 @@ export async function GET(req: Request) {
   // pantalla que está bien. El mapa P2024/P2028 → 503 con copy de reintento es
   // el mismo de las rutas de escritura (`describeDatabaseError`).
   try {
-    const [balances, netWorth, netWorthSeries] = await Promise.all([
-      getAccountBalances(prisma, { asOf: cutoff, includeArchived }),
-      getNetWorth(prisma, { asOf: cutoff, currency }),
-      getNetWorthSeries(prisma, { anchor: cutoff, currency }),
-    ]);
+    const [balances, netWorth, netWorthByCurrency, netWorthSeries] =
+      await Promise.all([
+        getAccountBalances(prisma, { asOf: cutoff, includeArchived }),
+        getNetWorth(prisma, { asOf: cutoff, currency }),
+        getNetWorthByCurrency(prisma, { asOf: cutoff }),
+        getNetWorthSeries(prisma, { anchor: cutoff, currency }),
+      ]);
 
     return NextResponse.json({
       accounts: balances.map((balance) => ({
@@ -284,6 +318,19 @@ export async function GET(req: Request) {
         liabilities: netWorth.liabilities.toFixed(2),
         net: netWorth.net.toFixed(2),
       },
+      /**
+       * El patrimonio de CADA moneda con cuentas, en el orden del enum.
+       *
+       * Es el contrato que reemplaza al "total": la pantalla muestra un bloque
+       * por moneda y NUNCA suma los dos. `netWorth` sigue viajando por
+       * compatibilidad (la moneda pedida), pero la UI nueva usa este arreglo.
+       */
+      netWorthByCurrency: netWorthByCurrency.map((block) => ({
+        currency: block.currency,
+        assets: block.assets.toFixed(2),
+        liabilities: block.liabilities.toFixed(2),
+        net: block.net.toFixed(2),
+      })),
       netWorthSeries,
     });
   } catch (error) {
@@ -376,6 +423,9 @@ export async function POST(req: Request) {
     return badRequest("La moneda tiene que ser ARS o USD.");
   }
   const currency: Currency = parsedCurrency ?? DEFAULT_CURRENCY;
+
+  const currencyError = await currencyNotEnabled(currency);
+  if (currencyError) return currencyError;
 
   const openingBalance = parseMoneyInput(String(body.openingBalance ?? "0"));
   if (openingBalance === null) {
@@ -912,6 +962,10 @@ export async function PATCH(req: Request) {
     if (parsed === null || parsed === "invalid") {
       return badRequest("La moneda tiene que ser ARS o USD.");
     }
+
+    const currencyError = await currencyNotEnabled(parsed);
+    if (currencyError) return currencyError;
+
     data.currency = parsed;
   }
 

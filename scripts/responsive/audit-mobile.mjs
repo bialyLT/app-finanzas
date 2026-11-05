@@ -205,6 +205,15 @@ const MODALS = [
   { name: "ingreso", path: "/", trigger: "#btn-income", scope: PANEL },
   { name: "transferencia", path: "/", trigger: "#btn-transfer", scope: PANEL },
   { name: "cuenta", path: "/", trigger: "#btn-add-account", scope: PANEL },
+  {
+    // El modal global de monedas: la lista de toggles con sus conteos. Se mide
+    // en las tres orientaciones porque en landscape la ventana es baja y el
+    // cuerpo tiene que scrollear sin tapar el pie.
+    name: "monedas",
+    path: "/",
+    trigger: "#btn-currency-settings",
+    scope: PANEL,
+  },
   { name: "csv", path: "/", trigger: "#btn-import-csv", scope: PANEL, prepare: "csv-preview" },
   { name: "paleta", path: "/", trigger: "#btn-palette", scope: PANEL },
   { name: "prestamo", path: "/prestamos", trigger: "#loans-new", scope: PANEL },

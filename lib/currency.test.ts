@@ -17,12 +17,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CURRENCIES,
   DEFAULT_CURRENCY,
+  currencyLabel,
   currencyNoun,
   isCrossCurrencyTransfer,
   isCurrency,
   parseCurrencyBody,
   parseCurrencyParam,
+  parseEnabledCurrencies,
 } from "./currency";
+import {
+  isCurrencyEnabled,
+  resolveSelectedCurrency,
+  shouldShowCurrencySelector,
+} from "./currency-preference";
 import { money } from "./money";
 import * as dal from "@/lib/auth/dal";
 import * as balance from "@/lib/balance";
@@ -125,6 +132,78 @@ describe("parseCurrencyBody · la moneda en el cuerpo de una cuenta (Fase 4.3)",
   it("nombra la moneda para un mensaje: pesos y dólares", () => {
     expect(currencyNoun("ARS")).toBe("pesos");
     expect(currencyNoun("USD")).toBe("dólares");
+    expect(currencyLabel("ARS")).toBe("Pesos (ARS)");
+    expect(currencyLabel("USD")).toBe("Dólares (USD)");
+  });
+});
+
+describe("parseEnabledCurrencies · la lista de trabajo (Fase 4.4b)", () => {  it("acepta una o dos monedas y normaliza el orden del enum", () => {
+    expect(parseEnabledCurrencies(["USD", "ARS"])).toEqual({
+      ok: true,
+      currencies: ["ARS", "USD"],
+    });
+    expect(parseEnabledCurrencies(["USD"])).toEqual({
+      ok: true,
+      currencies: ["USD"],
+    });
+  });
+
+  it("la lista vacía no es una preferencia válida", () => {
+    const parsed = parseEnabledCurrencies([]);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toMatch(/al menos una/i);
+  });
+
+  it("rechaza repetidas con un mensaje que nombra la moneda", () => {
+    const parsed = parseEnabledCurrencies(["ARS", "ARS"]);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toMatch(/ARS.*repetida/i);
+  });
+
+  it("no convierte valores: sólo strings de la lista exacta", () => {
+    const hostiles: unknown[] = [
+      ["EUR"],
+      ["usd"],
+      ["ARS", null],
+      ["ARS", 3],
+      ["ARS", true],
+      ["ARS", ["USD"]],
+      "ARS",
+      null,
+      undefined,
+      { 0: "ARS" },
+    ];
+    for (const hostile of hostiles) {
+      expect(parseEnabledCurrencies(hostile).ok).toBe(false);
+    }
+  });
+});
+
+describe("la moneda de trabajo y el selector (Fase 4.4b)", () => {
+  it("sólo una moneda HABILITADA puede ser la elegida", () => {
+    expect(isCurrencyEnabled("USD", ["ARS", "USD"])).toBe(true);
+    expect(isCurrencyEnabled("USD", ["ARS"])).toBe(false);
+    expect(isCurrencyEnabled("EUR", ["ARS", "USD"])).toBe(false);
+    expect(isCurrencyEnabled(null, ["ARS", "USD"])).toBe(false);
+    expect(isCurrencyEnabled(3, ["ARS", "USD"])).toBe(false);
+  });
+
+  it("la preferencia guardada se respeta si sigue habilitada", () => {
+    expect(resolveSelectedCurrency(["ARS", "USD"], "USD")).toBe("USD");
+  });
+
+  it("si la preferencia ya no está habilitada (o es basura), cae a la primera", () => {
+    expect(resolveSelectedCurrency(["ARS", "USD"], "EUR")).toBe("ARS");
+    expect(resolveSelectedCurrency(["USD"], "ARS")).toBe("USD");
+    expect(resolveSelectedCurrency(["ARS", "USD"], null)).toBe("ARS");
+    expect(resolveSelectedCurrency(["ARS", "USD"], "")).toBe("ARS");
+    expect(resolveSelectedCurrency([], "USD")).toBe(DEFAULT_CURRENCY);
+  });
+
+  it("con una sola moneda habilitada no hay selector que mostrar", () => {
+    expect(shouldShowCurrencySelector(["ARS"])).toBe(false);
+    expect(shouldShowCurrencySelector(["USD"])).toBe(false);
+    expect(shouldShowCurrencySelector(["ARS", "USD"])).toBe(true);
   });
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import AccountForm from "@/components/AccountForm";
@@ -10,6 +10,11 @@ import TransactionForm from "@/components/TransactionForm";
 import { VoiceCaptureButton } from "@/components/VoiceCaptureButton";
 import { VoiceCaptureModal } from "@/components/VoiceCaptureModal";
 import { VoiceBatchReviewModal } from "@/components/VoiceBatchReviewModal";
+import {
+  CurrencySelector,
+  useCurrencyPreference,
+  useEnabledCurrencies,
+} from "@/components/CurrencySelector";
 import type { ResolvedBatch } from "@/lib/voice-capture/resolve";
 import {
   formatCalendar,
@@ -29,7 +34,7 @@ import {
   type MovementDTO,
   type MovementKindDTO,
   type MovementsResponse,
-  type NetWorthDTO,
+  type NetWorthByCurrencyDTO,
   type NetWorthPointDTO,
   type PeriodTotalsDTO,
   type ReconciliationDTO,
@@ -47,7 +52,7 @@ import {
   toCents,
 } from "@/lib/format";
 import { shortcutMovementKind } from "@/lib/quick-entry";
-import { DEFAULT_CURRENCY } from "@/lib/currency";
+import { currencyNoun } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { isPaletteShortcut } from "@/lib/command-palette";
 import { Banknote, Receipt, ArrowLeftRight, RefreshCw, Import, Coins, Search, StickyNote, Trash, Check, X, Pencil, type LucideIcon } from "lucide-react";
@@ -122,9 +127,21 @@ function claseMontoLargo(texto: string): string {
 export default function Home() {
   const [month, setMonth] = useState(() => todayCalendar().slice(0, 7));
 
+  // La moneda de TRABAJO de la pantalla. Persiste en localStorage y sólo puede
+  // ser una de las habilitadas; con una sola, el selector ni se muestra.
+  const { enabledCurrencies } = useEnabledCurrencies();
+  const [currency, setCurrency] = useCurrencyPreference(enabledCurrencies);
+
   const [movements, setMovements] = useState<MovementDTO[]>([]);
   const [accounts, setAccounts] = useState<AccountBalanceDTO[]>([]);
-  const [netWorth, setNetWorth] = useState<NetWorthDTO | null>(null);
+  /**
+   * El patrimonio de CADA moneda con cuentas. No hay "netWorth" total: sumar
+   * pesos y dólares daría un número que no es plata de nada. El panel recorre
+   * este arreglo y pinta un bloque por moneda.
+   */
+  const [netWorthByCurrency, setNetWorthByCurrency] = useState<
+    NetWorthByCurrencyDTO[]
+  >([]);
   /**
    * La evolución del patrimonio: foto al cierre de cada uno de los últimos 12
    * meses, del más viejo al más nuevo. Llega calculada del servidor junto con
@@ -160,6 +177,8 @@ export default function Home() {
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
+  /** Identifica la carga vigente; una respuesta de una carga vieja se descarta. */
+  const loadToken = useRef(0);
   const [modal, setModal] = useState<Modal>(null);
 
   /**
@@ -280,6 +299,11 @@ export default function Home() {
   );
 
   const load = useCallback(async () => {
+    // Token de la carga: cambiar de moneda dispara dos cargas (la resuelta al
+    // hidratar y la de la preferencia guardada). Sin esto, la respuesta VIEJA
+    // puede llegar después de la nueva y pisar los totales de la moneda que la
+    // persona está mirando.
+    const token = ++loadToken.current;
     setLoading(true);
     setLoadError("");
     try {
@@ -320,11 +344,15 @@ export default function Home() {
         recurrenceRes,
         favoritesRes,
       ] = await Promise.all([
-        fetch(`/api/transactions?from=${range.from}&to=${range.to}`),
+        fetch(
+          `/api/transactions?from=${range.from}&to=${range.to}&currency=${currency}`,
+        ),
         fetch("/api/categories"),
-        fetch("/api/accounts?includeArchived=false"),
-        fetch(`/api/reconciliation?month=${shownMonth}`),
-        fetch(`/api/debts?month=${shownMonth}`),
+        fetch(`/api/accounts?includeArchived=false&currency=${currency}`),
+        fetch(
+          `/api/reconciliation?month=${shownMonth}&currency=${currency}`,
+        ),
+        fetch(`/api/debts?month=${shownMonth}&currency=${currency}`),
         // Sólo para el banner de pendientes. Con `catch` propio: un fallo de
         // ESTE pedido no puede tumbar un panel que por lo demás cargó bien.
         fetch("/api/recurrence").catch(() => null),
@@ -349,7 +377,7 @@ export default function Home() {
       };
       const accountsData = (await accountsRes.json()) as {
         accounts: AccountBalanceDTO[];
-        netWorth: NetWorthDTO;
+        netWorthByCurrency: NetWorthByCurrencyDTO[];
         netWorthSeries: NetWorthPointDTO[];
       };
       const reconciliationData = (await reconciliationRes.json()) as {
@@ -367,12 +395,14 @@ export default function Home() {
           ? ((await favoritesRes.json()) as FavoritesResponse)
           : null;
 
+      if (token !== loadToken.current) return;
+
       setMovements(movementsData.movements);
       setTruncated(movementsData.truncated);
       setServerTotals(movementsData.totals);
       setCategories(categoriesData.categories);
       setAccounts(accountsData.accounts);
-      setNetWorth(accountsData.netWorth);
+      setNetWorthByCurrency(accountsData.netWorthByCurrency ?? []);
       setNetWorthSeries(accountsData.netWorthSeries);
       setReconciliation(reconciliationData.reconciliation);
       setDebtReport(debtData.debtReport);
@@ -382,13 +412,14 @@ export default function Home() {
         setFavoritesMax(favoritesData.max);
       }
     } catch {
+      if (token !== loadToken.current) return;
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
       );
     } finally {
-      setLoading(false);
+      if (token === loadToken.current) setLoading(false);
     }
-  }, [range.from, range.to]);
+  }, [range.from, range.to, currency]);
 
   useEffect(() => {
     load();
@@ -807,6 +838,19 @@ export default function Home() {
         </Button>
       </div>
 
+      {/* ── Moneda de trabajo ────────────────────────────────────────────── */}
+      {/* El control se oculta solo con una sola moneda habilitada. Cambiarlo
+          vuelve a pedir movimientos, totales, reconciliación y deudas en esa
+          moneda; el patrimonio de abajo sigue mostrando CADA moneda. */}
+      <div className="flex justify-end">
+        <CurrencySelector
+          enabledCurrencies={enabledCurrencies}
+          value={currency}
+          onChange={setCurrency}
+          className="w-full sm:w-64"
+        />
+      </div>
+
       {/* ── Aviso del generador de recurrencia ───────────────────────────── */}
       {recurrenceRunError && (
         <p
@@ -860,9 +904,9 @@ export default function Home() {
           <p className="text-xs uppercase text-fg-muted">Ingresos</p>
           <p
             className="monto-tarjeta font-extrabold text-success"
-            style={{ "--k": factorMonto(formatMoney(totals.income, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
+            style={{ "--k": factorMonto(formatMoney(totals.income, { currency: currency })) } as CSSProperties}
           >
-            {formatMoney(totals.income, { currency: DEFAULT_CURRENCY })}
+            {formatMoney(totals.income, { currency: currency })}
           </p>
           <p className="text-xs opacity-80 mt-1">
             {totals.incomeCount}{" "}
@@ -870,7 +914,7 @@ export default function Home() {
             {totals.declared !== "0.00" && (
               <>
                 {" · "}
-                <b>{formatMoney(totals.declared, { currency: DEFAULT_CURRENCY })}</b> declarados
+                <b>{formatMoney(totals.declared, { currency: currency })}</b> declarados
               </>
             )}
           </p>
@@ -880,9 +924,9 @@ export default function Home() {
           <p className="text-xs uppercase text-fg-muted">Gastos</p>
           <p
             className="monto-tarjeta font-extrabold text-danger"
-            style={{ "--k": factorMonto(formatMoney(totals.expenses, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
+            style={{ "--k": factorMonto(formatMoney(totals.expenses, { currency: currency })) } as CSSProperties}
           >
-            {formatMoney(totals.expenses, { currency: DEFAULT_CURRENCY })}
+            {formatMoney(totals.expenses, { currency: currency })}
           </p>
           <p className="text-xs opacity-80 mt-1">
             {totals.expenseCount}{" "}
@@ -897,10 +941,10 @@ export default function Home() {
           <p
             className={`monto-tarjeta font-extrabold ${totals.positive ? "text-success" : "text-danger"}`}
             style={
-              { "--k": factorMonto(formatMoney(totals.result, { withSign: true, currency: DEFAULT_CURRENCY })) } as CSSProperties
+              { "--k": factorMonto(formatMoney(totals.result, { withSign: true, currency: currency })) } as CSSProperties
             }
           >
-            {formatMoney(totals.result, { withSign: true, currency: DEFAULT_CURRENCY })}
+            {formatMoney(totals.result, { withSign: true, currency: currency })}
           </p>
           {/*
             ─────────────────────────────────────────────────────────────────────
@@ -933,7 +977,7 @@ export default function Home() {
             {totals.declared !== "0.00" ? (
               <>
                 Incluye{" "}
-                <b>{formatMoney(totals.declared, { currency: DEFAULT_CURRENCY })}</b>{" "}
+                <b>{formatMoney(totals.declared, { currency: currency })}</b>{" "}
                 que declaraste
                 como ingreso (ya los tenías).
               </>
@@ -962,10 +1006,10 @@ export default function Home() {
           <p
             className="monto-tarjeta font-extrabold text-transfer"
             style={
-              { "--k": factorMonto(formatMoney(totals.cashFlow, { withSign: true, currency: DEFAULT_CURRENCY })) } as CSSProperties
+              { "--k": factorMonto(formatMoney(totals.cashFlow, { withSign: true, currency: currency })) } as CSSProperties
             }
           >
-            {formatMoney(totals.cashFlow, { withSign: true, currency: DEFAULT_CURRENCY })}
+            {formatMoney(totals.cashFlow, { withSign: true, currency: currency })}
           </p>
           <p className="text-xs opacity-80 mt-1">
             {totals.transferCount === 0
@@ -997,46 +1041,83 @@ export default function Home() {
               ───────────────────────────────────────────────────────────────── */}
           {totals.declared !== "0.00" && (
             <p className="text-xs opacity-70 mt-0.5">
-              No cuenta {formatMoney(totals.declared, { currency: DEFAULT_CURRENCY })} que declaraste: esa
+              No cuenta {formatMoney(totals.declared, { currency: currency })} que declaraste: esa
               plata ya estaba en tus cuentas.
             </p>
           )}
         </div>
       </div>
 
-      {/* ── Patrimonio neto ──────────────────────────────────────────────── */}
-      {netWorth && (
+      {/* ── Patrimonio por moneda ────────────────────────────────────────── */}
+      {/*
+        UN BLOQUE POR MONEDA, NUNCA UN TOTAL. "Patrimonio $1.200.000" con
+        cuentas en pesos y en dólares sería la suma de dos unidades distintas:
+        un número que no se puede comparar ni usar para decidir nada. Cada
+        bloque declara su moneda y muestra activos, pasivos y neto de ESA
+        moneda; los bloques no se suman en ningún lado.
+      */}
+      {netWorthByCurrency.length > 0 ||
+      accounts.length > 0 ||
+      (!loading && !loadError) ? (
         <div className="bg-surface-2 rounded-md px-4 py-4 shadow-sm">
-          <div className="flex items-baseline justify-between flex-wrap gap-2">
-            <div>
-              <p className="text-xs uppercase text-fg-muted tracking-wide">
-                Patrimonio neto
-              </p>
-              <p
-                className={`text-xl font-extrabold ${
-                  Number(netWorth.net) < 0 ? "text-warning" : ""
-                } monto`}
+          {netWorthByCurrency.length === 0 && (
+            <p className="text-sm text-fg-muted">
+              Todavía no tenés cuentas. Creá la primera para ver tu patrimonio
+              acá.
+            </p>
+          )}
+          {netWorthByCurrency.length > 0 && (
+          <div
+            id="networth-por-moneda"
+            className="grid grid-cols-1 md:grid-cols-2 gap-3"
+          >
+            {netWorthByCurrency.map((block) => (
+              <section
+                key={block.currency}
+                id={`networth-${block.currency}`}
+                className="@container min-w-0 rounded-md bg-surface bg-surface-3/60 px-3 py-3"
               >
-                {formatMoney(netWorth.net, { currency: DEFAULT_CURRENCY })}
-              </p>
-            </div>
-            <div className="text-right text-sm">
-              <p className="text-fg-muted">
-                Tenés{" "}
-                <b className="text-success">
-                  {formatMoney(netWorth.assets, { currency: DEFAULT_CURRENCY })}
-                </b>
-              </p>
-              <p className="text-fg-muted">
-                Debés{" "}
-                <b className="text-danger">
-                  {formatMoney(netWorth.liabilities, {
-                    currency: DEFAULT_CURRENCY,
-                  })}
-                </b>
-              </p>
-            </div>
+                <p className="text-xs uppercase text-fg-muted tracking-wide">
+                  Patrimonio en {currencyNoun(block.currency)} ({block.currency})
+                </p>
+                <p
+                  className={`monto-tarjeta font-extrabold ${
+                    toCents(block.net) < 0 ? "text-warning" : ""
+                  }${claseMontoLargo(
+                    formatMoney(block.net, { currency: block.currency }),
+                  )}`}
+                  style={
+                    {
+                      "--k": factorMonto(
+                        formatMoney(block.net, { currency: block.currency }),
+                      ),
+                    } as CSSProperties
+                  }
+                >
+                  {formatMoney(block.net, { currency: block.currency })}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                  <p className="text-fg-muted">
+                    Tenés{" "}
+                    <b className="text-success">
+                      {formatMoney(block.assets, {
+                        currency: block.currency,
+                      })}
+                    </b>
+                  </p>
+                  <p className="text-fg-muted">
+                    Debés{" "}
+                    <b className="text-danger">
+                      {formatMoney(block.liabilities, {
+                        currency: block.currency,
+                      })}
+                    </b>
+                  </p>
+                </div>
+              </section>
+            ))}
           </div>
+          )}
 
           {/*
             ── Las cuentas: la tarjeta de cada una ──────────────────────────
@@ -1051,9 +1132,14 @@ export default function Home() {
             criterio.
           */}
           {accounts.length > 0 && (
+            <p className="mt-3 pt-3 border-t border-line text-xs uppercase text-fg-muted tracking-wide">
+              Tus cuentas activas
+            </p>
+          )}
+          {accounts.length > 0 && (
             <div
               id="account-cards"
-              className="mt-3 pt-3 border-t border-line grid grid-cols-1 min-[420px]:grid-cols-2 gap-2"
+              className="mt-2 grid grid-cols-1 min-[420px]:grid-cols-2 gap-2"
             >
               {accounts.map((account) => {
                 const declarada = account.openingIncomeMonth !== null;
@@ -1069,6 +1155,7 @@ export default function Home() {
                     <div className="flex items-center justify-between gap-2">
                       <p className="min-w-0 text-xs text-fg-muted truncate">
                         {account.name}
+                        <span className="text-fg-subtle"> · {account.currency}</span>
                         {declarada && (
                           <span className="text-transfer ">
                             {" "}
@@ -1185,7 +1272,8 @@ export default function Home() {
           {netWorthSeries.length > 0 && (
             <div className="mt-3 pt-3 border-t border-line ">
               <p className="text-xs uppercase text-fg-muted tracking-wide">
-                Evolución · últimos {netWorthSeries.length} meses
+                Evolución en {currencyNoun(currency)} · últimos{" "}
+                {netWorthSeries.length} meses
               </p>
 
               <div
@@ -1226,14 +1314,18 @@ export default function Home() {
                       <p
                         className={`monto-ficha font-bold ${
                           toCents(point.net) < 0 ? "text-warning" : ""
-                        }${claseMontoLargo(formatMoney(point.net))}`}
+                        }${claseMontoLargo(
+                          formatMoney(point.net, { currency }),
+                        )}`}
                         style={
                           {
-                            "--k": factorMontoFicha(formatMoney(point.net)),
+                            "--k": factorMontoFicha(
+                              formatMoney(point.net, { currency }),
+                            ),
                           } as CSSProperties
                         }
                       >
-                        {formatMoney(point.net)}
+                        {formatMoney(point.net, { currency })}
                       </p>
                       {previous && (
                         <p
@@ -1249,12 +1341,16 @@ export default function Home() {
                               "--k": factorMontoFicha(
                                 formatMoney(centsToString(deltaCents), {
                                   withSign: true,
+                                  currency,
                                 }),
                               ),
                             } as CSSProperties
                           }
                         >
-                          {formatMoney(centsToString(deltaCents), { withSign: true })}
+                          {formatMoney(centsToString(deltaCents), {
+                            withSign: true,
+                            currency,
+                          })}
                         </p>
                       )}
                     </div>
@@ -1300,6 +1396,8 @@ export default function Home() {
                 {reconciliation.partial && (
                   <span className="text-fg-subtle"> · en curso</span>
                 )}
+                {" · "}
+                {currencyNoun(currency)}
               </p>
 
               <div className="mt-2 grid grid-cols-3 gap-2">
@@ -1309,24 +1407,24 @@ export default function Home() {
                     id="reconciliation-delta"
                     className={`monto-ficha font-bold ${
                       toCents(reconciliation.netDelta) < 0 ? "text-warning" : ""
-                    }${claseMontoLargo(formatMoney(reconciliation.netDelta, { withSign: true }))}`}
+                    }${claseMontoLargo(formatMoney(reconciliation.netDelta, { withSign: true, currency }))}`}
                     style={
                       {
                         "--k": factorMontoFicha(
-                          formatMoney(reconciliation.netDelta, { withSign: true }),
+                          formatMoney(reconciliation.netDelta, { withSign: true, currency }),
                         ),
                       } as CSSProperties
                     }
                   >
-                    {formatMoney(reconciliation.netDelta, { withSign: true })}
+                    {formatMoney(reconciliation.netDelta, { withSign: true, currency })}
                   </p>
                   <p
                     className={`text-xs text-fg-subtle${claseMontoLargo(
-                      `${formatMoney(reconciliation.netStart)}${formatMoney(reconciliation.netEnd)}`,
+                      `${formatMoney(reconciliation.netStart, { currency })}${formatMoney(reconciliation.netEnd, { currency })}`,
                     )}`}
                   >
-                    de {formatMoney(reconciliation.netStart)} a{" "}
-                    {formatMoney(reconciliation.netEnd)}
+                    de {formatMoney(reconciliation.netStart, { currency })} a{" "}
+                    {formatMoney(reconciliation.netEnd, { currency })}
                   </p>
                 </div>
 
@@ -1336,16 +1434,16 @@ export default function Home() {
                     id="reconciliation-saving"
                     className={`monto-ficha font-bold ${
                       toCents(reconciliation.saving) < 0 ? "text-warning" : ""
-                    }${claseMontoLargo(formatMoney(reconciliation.saving, { withSign: true }))}`}
+                    }${claseMontoLargo(formatMoney(reconciliation.saving, { withSign: true, currency }))}`}
                     style={
                       {
                         "--k": factorMontoFicha(
-                          formatMoney(reconciliation.saving, { withSign: true }),
+                          formatMoney(reconciliation.saving, { withSign: true, currency }),
                         ),
                       } as CSSProperties
                     }
                   >
-                    {formatMoney(reconciliation.saving, { withSign: true })}
+                    {formatMoney(reconciliation.saving, { withSign: true, currency })}
                   </p>
                   <p className="text-xs text-fg-subtle break-words">
                     {reconciliation.declaredIncome !== "0.00"
@@ -1366,6 +1464,7 @@ export default function Home() {
                         "--k": factorMontoFicha(
                           formatMoney(reconciliation.difference, {
                             withSign: !reconciliation.balanced,
+                            currency,
                           }),
                         ),
                       } as CSSProperties
@@ -1376,6 +1475,7 @@ export default function Home() {
                         diferencia real es parte de lo que hay que ver. */}
                     {formatMoney(reconciliation.difference, {
                       withSign: !reconciliation.balanced,
+                      currency,
                     })}
                   </p>
                   <p
@@ -1385,7 +1485,7 @@ export default function Home() {
                   >
                     {reconciliation.balanced
                       ? reconciliation.declaredIncome !== "0.00"
-                        ? `cuadra con ${formatMoney(reconciliation.declaredIncome)} declarados`
+                        ? `cuadra con ${formatMoney(reconciliation.declaredIncome, { currency })} declarados`
                         : "cuadra al centavo"
                       : "no cuadra"}
                   </p>
@@ -1406,11 +1506,11 @@ export default function Home() {
                   id="reconciliation-declared"
                   className="mt-2 text-xs rounded-lg bg-transfer/10 text-transfer px-3 py-2"
                 >
-                  Declaraste <b>{formatMoney(reconciliation.declaredIncome)}</b>{" "}
+                  Declaraste <b>{formatMoney(reconciliation.declaredIncome, { currency })}</b>{" "}
                   que ya tenías: esa plata entra como ingreso de este mes, pero
                   ya estaba en tu patrimonio. Por eso el patrimonio Bajó{" "}
-                  {formatMoney(reconciliation.netDelta, { withSign: true })} y el
-                  ahorro del mes es {formatMoney(reconciliation.saving, { withSign: true })}.
+                  {formatMoney(reconciliation.netDelta, { withSign: true, currency })} y el
+                  ahorro del mes es {formatMoney(reconciliation.saving, { withSign: true, currency })}.
                 </p>
               )}
 
@@ -1449,7 +1549,7 @@ export default function Home() {
             + Agregar cuenta
           </Button>
         </div>
-      )}
+      ) : null}
 
       {/* ── Deudas ───────────────────────────────────────────────────────── */}
       {/*
@@ -1476,9 +1576,11 @@ export default function Home() {
                 {debtReport.partial && (
                   <span className="text-fg-subtle"> · en curso</span>
                 )}
+                {" · "}
+                {currencyNoun(currency)}
               </p>
               <p className="text-xl font-extrabold text-danger monto">
-                {formatMoney(debtReport.totalDebt)}
+                {formatMoney(debtReport.totalDebt, { currency })}
               </p>
             </div>
             <p className="text-xs text-fg-subtle text-right">
@@ -1512,7 +1614,7 @@ export default function Home() {
                       signo que se lea como un error. Sin `withSign`: un "+$" en
                       esta tarjeta es ruido. */}
                   <p className="text-sm font-bold text-danger">
-                    {formatLiability(row.debt)}
+                    {formatLiability(row.debt, currency)}
                   </p>
                 </div>
 
@@ -1525,16 +1627,18 @@ export default function Home() {
                       />
                     </div>
                     <p className="mt-1 text-xs text-fg-muted">
-                      cuota {formatMoney(row.plan.payment)} · {row.plan.paidCount}{" "}
-                      de {row.plan.installmentCount} cubiertas ·{" "}
+                      cuota {formatMoney(row.plan.payment, { currency })} ·{" "}
+                      {row.plan.paidCount} de {row.plan.installmentCount}{" "}
+                      cubiertas ·{" "}
                       {row.plan.remainingCount === 0
                         ? "sin cuotas pendientes"
                         : `faltan ${row.plan.remainingCount}`}
                     </p>
                     <p className="text-xs text-fg-subtle">
-                      capital devuelto {formatMoney(row.capitalPaid ?? "0.00")} (
+                      capital devuelto{" "}
+                      {formatMoney(row.capitalPaid ?? "0.00", { currency })} (
                       {row.progressPercent}%) · interés pagado{" "}
-                      {formatMoney(row.interestPaid ?? "0.00")}
+                      {formatMoney(row.interestPaid ?? "0.00", { currency })}
                     </p>
                   </div>
                 ) : (
@@ -1573,7 +1677,7 @@ export default function Home() {
             <p className="text-xs text-fg-muted">
               {debtReport.dti.percent === null
                 ? "No hubo ingresos este mes: sin ingreso, el DTI no se puede calcular."
-                : `Cuotas por ${formatMoney(debtReport.dti.monthlyCommitment)} sobre ${formatMoney(debtReport.dti.income)} de ingresos.`}
+                : `Cuotas por ${formatMoney(debtReport.dti.monthlyCommitment, { currency })} sobre ${formatMoney(debtReport.dti.income, { currency })} de ingresos.`}
             </p>
             <p className="text-xs text-fg-subtle">
               {debtReport.dti.planCount === 0
@@ -1747,7 +1851,11 @@ export default function Home() {
                     </span>
                     <span className="block text-xs text-fg-muted">
                       {MOVEMENT_KIND_LABEL[favorite.kind]}
-                      {favorite.amount ? ` · ${formatMoney(favorite.amount)}` : ""}
+                      {favorite.amount
+                        ? ` · ${formatMoney(favorite.amount, {
+                            currency: favorite.account.currency,
+                          })}`
+                        : ""}
                       {blocked ? " · cuenta archivada" : ""}
                     </span>
                   </button>

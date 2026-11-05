@@ -214,6 +214,22 @@ export interface NetWorthDTO {
 }
 
 /**
+ * El patrimonio de UNA moneda, listo para mostrar.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ HAY UN BLOQUE POR MONEDA Y NINGÚN TOTAL
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Sumar el neto en pesos con el neto en dólares da un número que no está en
+ * ninguna unidad: no se puede comparar ni presupuestar. La decisión de producto
+ * de la Fase 4 es mostrarlos SEPARADOS; un total convertido exigiría una
+ * cotización y otra discusión. Por eso el panel recorre este arreglo y pinta
+ * bloques, sin un número que los una.
+ */
+export interface NetWorthByCurrencyDTO extends NetWorthDTO {
+  currency: CurrencyDTO;
+}
+
+/**
  * Un punto de la serie mensual del patrimonio: la foto al cierre de un mes.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -432,6 +448,8 @@ export interface DebtReportDTO {
 export interface AccountsResponse {
   accounts: AccountBalanceDTO[];
   netWorth: NetWorthDTO;
+  /** Un bloque por moneda con cuentas; nunca un total mezclado. */
+  netWorthByCurrency: NetWorthByCurrencyDTO[];
   /**
    * La evolución del patrimonio: la foto al cierre de cada uno de los últimos
    * 12 meses calendario, del más viejo al más nuevo (el último es el mes en

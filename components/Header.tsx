@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth/dal";
 import Nav from "./Nav";
+import CurrencySettingsButton from "./CurrencySettingsButton";
 import { Wallet } from "lucide-react";
 
 /**
@@ -35,7 +36,12 @@ export default async function Header() {
           </span>
         </Link>
 
-        {session && <Nav />}
+        {session && (
+          <div className="flex items-center gap-2 min-w-0">
+            <CurrencySettingsButton id="btn-currency-settings" />
+            <Nav />
+          </div>
+        )}
       </nav>
     </header>
   );

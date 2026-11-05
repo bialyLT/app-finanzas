@@ -47,6 +47,11 @@ export function currencyNoun(currency: Currency): string {
   return CURRENCY_NOUNS[currency];
 }
 
+/** Cómo se llama una moneda en la interfaz: "Pesos (ARS)". */
+export function currencyLabel(currency: Currency): string {
+  return `${CURRENCY_NOUNS[currency][0].toUpperCase()}${CURRENCY_NOUNS[currency].slice(1)} (${currency})`;
+}
+
 /** `true` sólo para un string que sea exactamente una moneda conocida. */
 export function isCurrency(value: unknown): value is Currency {
   return (
@@ -126,4 +131,69 @@ export function parseCurrencyParam(value: string | null): ParsedCurrencyParam {
 export function parseCurrencyBody(value: unknown): Currency | null | "invalid" {
   if (value === undefined || value === null || value === "") return null;
   return isCurrency(value) ? value : "invalid";
+}
+
+/**
+ * El resultado de interpretar la lista de monedas habilitadas.
+ *
+ * Tres estados, igual que el resto de los parsers del borde: válida, inválida
+ * (400 con el motivo) y —no— vacía, que también es inválida acá. La lista
+ * vacía no tiene un estado útil: la app tiene que trabajar en alguna unidad y
+ * el CHECK `app_settings_at_least_one_currency` la rechaza en la base. La API
+ * la rechaza ANTES para poder explicar por qué.
+ */
+export type ParsedEnabledCurrencies =
+  | { ok: true; currencies: Currency[] }
+  | { ok: false; error: string };
+
+/**
+ * Interpreta `enabledCurrencies` del PATCH de configuración.
+ *
+ * Reglas, en este orden para que el mensaje sea el más útil:
+ *   1. tiene que ser una lista (un string suelto no es una lista de una);
+ *   2. al menos una;
+ *   3. sin repetidas (una lista con repetidas es un cliente roto, no una
+ *      preferencia);
+ *   4. todas del enum, con `typeof` estricto (un `null`, un número o un array
+ *      dentro de la lista no se convierten: se rechazan).
+ *
+ * La salida se normaliza al orden de `CURRENCIES` para que dos cuerpos
+ * equivalentes (`["USD","ARS"]` y `["ARS","USD"]`) produzcan la MISMA fila y
+ * la respuesta no dependa de cómo se escribió el JSON.
+ */
+export function parseEnabledCurrencies(value: unknown): ParsedEnabledCurrencies {
+  if (!Array.isArray(value)) {
+    return {
+      ok: false,
+      error: "`enabledCurrencies` tiene que ser una lista de monedas.",
+    };
+  }
+  if (value.length === 0) {
+    return {
+      ok: false,
+      error: "Tiene que quedar al menos una moneda habilitada.",
+    };
+  }
+
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string" || !isCurrency(item)) {
+      return {
+        ok: false,
+        error: "Las monedas habilitadas tienen que ser ARS o USD.",
+      };
+    }
+    if (seen.has(item)) {
+      return {
+        ok: false,
+        error: `La moneda ${item} está repetida en la lista.`,
+      };
+    }
+    seen.add(item);
+  }
+
+  return {
+    ok: true,
+    currencies: CURRENCIES.filter((currency) => seen.has(currency)),
+  };
 }
