@@ -84,6 +84,10 @@ import {
   GET as getTransactions,
   POST as postTransaction,
 } from "@/app/api/transactions/route";
+import {
+  GET as getBudgets,
+  POST as postBudget,
+} from "@/app/api/budgets/route";
 import { POST as postBatch } from "@/app/api/transactions/batch/route";
 import { POST as postRecurrenceRule } from "@/app/api/recurrence/rules/route";
 import { addDays, calendarToDb, dbToCalendar } from "./dates";
@@ -8024,5 +8028,200 @@ describeDb("Fase 4.3 · escritura con monedas", () => {
         await db.movement.count({ where: { recurrenceRuleId: valida.id } }),
       ).toBe(3);
     });
+  });
+});
+
+/* ═════════════════════════════════════════════════════════════════════════════
+ * FASE 4.4 · PRESUPUESTOS POR MONEDA EN LA API
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * El presupuesto vive por `(categoryId, month, currency)`. Si el borde HTTP
+ * ignorara la moneda, pedir `?currency=USD` devolvería los límites en pesos
+ * (o peor: compararía gastos en dólares contra un límite en pesos). Acá se
+ * ejerce el handler real con `finanzas_test`: se crean las dos monedas y se
+ * verifica que cada pedido vea SÓLO la suya.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+describeDb("Fase 4.4 · presupuestos por moneda en la API", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({
+      v: 1,
+      iat: 0,
+      exp: 0,
+    });
+    vi.mocked(csrfModule.assertSameOrigin).mockReturnValue(null);
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await apiPrisma.$disconnect();
+    await db.$disconnect();
+  });
+
+  function request(method: string, path: string, body?: unknown) {
+    return new Request(`http://localhost:3000${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  it("POST con ?currency=USD crea un presupuesto aparte del de ARS y lo actualiza en su moneda", async () => {
+    const { gastos } = await seedCategories();
+
+    const ars = await postBudget(
+      request("POST", "/api/budgets", {
+        categoryId: gastos.id,
+        month: "2026-11",
+        amount: 1000,
+      }),
+    );
+    expect(ars.status).toBe(200);
+
+    const usd = await postBudget(
+      request("POST", "/api/budgets?currency=USD", {
+        categoryId: gastos.id,
+        month: "2026-11",
+        amount: 100,
+      }),
+    );
+    expect(usd.status).toBe(200);
+    expect((await usd.json()).currency).toBe("USD");
+
+    // Dos filas para el MISMO mes y categoría: la moneda es parte de la clave.
+    let rows = await db.budget.findMany({ orderBy: { currency: "asc" } });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.currency)).toEqual(["ARS", "USD"]);
+    expect(rows.map((row) => row.amount.toFixed(2))).toEqual(["1000.00", "100.00"]);
+
+    // El segundo POST en USD actualiza ESA fila, no crea una tercera ni toca
+    // el presupuesto en pesos.
+    const usdActualizado = await postBudget(
+      request("POST", "/api/budgets?currency=USD", {
+        categoryId: gastos.id,
+        month: "2026-11",
+        amount: 150,
+      }),
+    );
+    expect(usdActualizado.status).toBe(200);
+
+    rows = await db.budget.findMany({ orderBy: { currency: "asc" } });
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.currency === "USD")?.amount.toFixed(2)).toBe(
+      "150.00",
+    );
+    expect(rows.find((row) => row.currency === "ARS")?.amount.toFixed(2)).toBe(
+      "1000.00",
+    );
+  });
+
+  it("GET con ?currency=USD devuelve sólo los presupuestos y gastos en dólares", async () => {
+    const { gastos } = await seedCategories();
+    const [pesos, dolares] = await Promise.all([
+      db.account.create({
+        data: { name: "Caja pesos", kind: "CASH", currency: "ARS" },
+      }),
+      db.account.create({
+        data: { name: "Caja dólares", kind: "CASH", currency: "USD" },
+      }),
+    ]);
+
+    await postBudget(
+      request("POST", "/api/budgets", {
+        categoryId: gastos.id,
+        month: "2026-11",
+        amount: 1000,
+      }),
+    );
+    await postBudget(
+      request("POST", "/api/budgets?currency=USD", {
+        categoryId: gastos.id,
+        month: "2026-11",
+        amount: 100,
+      }),
+    );
+
+    // Un gasto en cada moneda: sólo el de USD puede compararse contra el
+    // presupuesto en USD. Si la consulta de gastos no filtrara, el consumo
+    // sería 540 y el porcentaje 540 %.
+    await db.movement.createMany({
+      data: [
+        {
+          kind: "EXPENSE",
+          amount: "500",
+          date: calendarToDb("2026-11-05"),
+          accountId: pesos.id,
+          categoryId: gastos.id,
+        },
+        {
+          kind: "EXPENSE",
+          amount: "40",
+          date: calendarToDb("2026-11-06"),
+          accountId: dolares.id,
+          categoryId: gastos.id,
+        },
+      ],
+    });
+
+    const res = await getBudgets(
+      request("GET", "/api/budgets?month=2026-11&currency=USD"),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+
+    expect(data.currency).toBe("USD");
+    expect(data.budgets).toHaveLength(1);
+    expect(data.budgets[0].currency).toBe("USD");
+    expect(data.budgets[0].budgetedAmount).toBe(100);
+    expect(data.budgets[0].spentAmount).toBe(40);
+    expect(data.budgets[0].percentageUsed).toBe(40);
+    expect(data.budgets[0].status).toBe("ok");
+  });
+
+  it("una moneda inválida es 400 en GET y en POST, y no escribe nada", async () => {
+    const { gastos } = await seedCategories();
+
+    const getRes = await getBudgets(
+      request("GET", "/api/budgets?month=2026-11&currency=EUR"),
+    );
+    expect(getRes.status).toBe(400);
+    expect((await getRes.json()).error).toMatch(/ARS o USD/);
+
+    const postRes = await postBudget(
+      request("POST", "/api/budgets?currency=EUR", {
+        categoryId: gastos.id,
+        month: "2026-11",
+        amount: 100,
+      }),
+    );
+    expect(postRes.status).toBe(400);
+    expect(await db.budget.count()).toBe(0);
+  });
+
+  it("un monto hostil es 400, nunca 500 ni un número inventado", async () => {
+    const { gastos } = await seedCategories();
+
+    const hostiles: unknown[] = [
+      ["100"],
+      { value: 100 },
+      true,
+      "1" + "0".repeat(20), // 21 dígitos: desborda DECIMAL(18,2)
+      "100abc",
+      "",
+      null,
+    ];
+
+    for (const amount of hostiles) {
+      const res = await postBudget(
+        request("POST", "/api/budgets", {
+          categoryId: gastos.id,
+          month: "2026-11",
+          amount,
+        }),
+      );
+      expect(res.status, `amount=${JSON.stringify(amount)}`).toBe(400);
+    }
+
+    expect(await db.budget.count()).toBe(0);
   });
 });

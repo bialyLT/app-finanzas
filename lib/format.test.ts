@@ -9,7 +9,68 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { factorMonto, factorMontoFicha, formatLiability, montoLargo } from "./format";
+import {
+  factorMonto,
+  factorMontoFicha,
+  formatAmountInput,
+  formatLiability,
+  formatMoney,
+  montoLargo,
+} from "./format";
+
+/**
+ * `Intl` separa el símbolo del número con un espacio duro (U+00A0). Las
+ * comparaciones exactas lo normalizan a un espacio común: lo que se prueba es
+ * el SÍMBOLO y el número, no qué clase de espacio eligió el motor.
+ */
+function plain(text: string): string {
+  return text.replace(/\u00a0/g, " ");
+}
+
+describe("formatMoney · la moneda del número (Fase 4.4)", () => {
+  it("por defecto sigue mostrando pesos: el comportamiento de siempre", () => {
+    expect(plain(formatMoney("1234.56"))).toBe("$ 1.234,56");
+  });
+
+  it("ARS y USD se distinguen en el símbolo, no sólo en el código", () => {
+    expect(plain(formatMoney("1234.56", { currency: "ARS" }))).toBe(
+      "$ 1.234,56",
+    );
+    expect(plain(formatMoney("1234.56", { currency: "USD" }))).toBe(
+      "US$ 1.234,56",
+    );
+  });
+
+  it("el signo negativo va antes del símbolo de la moneda", () => {
+    expect(plain(formatMoney("-1500", { currency: "USD" }))).toBe(
+      "-US$ 1.500,00",
+    );
+  });
+
+  it("withSign conserva la moneda elegida", () => {
+    expect(plain(formatMoney("1500", { currency: "USD", withSign: true }))).toBe(
+      "+US$ 1.500,00",
+    );
+  });
+
+  it("sin símbolo no hay moneda que mostrar", () => {
+    expect(plain(formatMoney("1234.56", { currency: "USD", withSymbol: false }))).toBe(
+      "1.234,56",
+    );
+  });
+
+  it("la deuda hereda la moneda de la cuenta", () => {
+    expect(plain(formatLiability("50000.00", "USD"))).toBe(
+      "debe US$ 50.000,00",
+    );
+  });
+
+  it("la vista previa del formulario también respeta la moneda", () => {
+    expect(plain(formatAmountInput("1234,5", "USD") ?? "")).toBe(
+      "US$ 1.234,50",
+    );
+  });
+});
 
 describe("formatLiability", () => {
   it("una deuda pendiente se dice con 'debe'", () => {

@@ -15,6 +15,7 @@ import {
   type MovementKindDTO,
 } from "@/lib/finance";
 import { formatAmountInput, formatLiability, formatMoney } from "@/lib/format";
+import { isCrossCurrencyTransfer } from "@/lib/currency";
 import {
   browserStorage,
   canBeSourceAccount,
@@ -110,8 +111,8 @@ function accountLabel(account: AccountBalanceDTO): string {
   // $ 50.000" cuando se debe y "a favor $ 50.000" cuando se pagó de más
   // (ver `formatLiability`). "Visa · −$ 50.000" se lee como un error.
   const amount = account.isLiability
-    ? formatLiability(account.debt ?? "0.00")
-    : formatMoney(account.balance);
+    ? formatLiability(account.debt ?? "0.00", account.currency)
+    : formatMoney(account.balance, { currency: account.currency });
   return `${account.name} · ${amount}`;
 }
 
@@ -223,6 +224,16 @@ export default function TransactionForm({
   const [amount, setAmount] = useState(() =>
     favorite?.amount ? favorite.amount.replace(".", ",") : "",
   );
+
+  /**
+   * "¿Cuánto llega?": la segunda punta de una transferencia entre monedas.
+   *
+   * El texto NO se borra al cambiar el destino a una cuenta de la misma
+   * moneda: la condición se recalcula, el campo desaparece, y si la persona
+   * vuelve a elegir una cuenta en otra moneda lo escrito sigue ahí. Perderlo
+   * obligaría a tipearlo de nuevo por haber probado una opción.
+   */
+  const [toAmount, setToAmount] = useState("");
   const [categoryName, setCategoryName] = useState(
     () => favorite?.category?.name ?? "",
   );
@@ -306,6 +317,7 @@ export default function TransactionForm({
    */
   const dirty =
     amount.trim() !== "" ||
+    toAmount.trim() !== "" ||
     categoryName.trim() !== "" ||
     description.trim() !== "";
 
@@ -395,7 +407,25 @@ export default function TransactionForm({
   );
 
   const selectedAccount = accounts.find((a) => a.id === accountId);
-  const amountPreview = formatAmountInput(amount);
+  const destinationAccount = accounts.find((a) => a.id === toAccountId);
+  const amountPreview = formatAmountInput(amount, selectedAccount?.currency);
+
+  // La regla del segundo monto vive en `isCrossCurrencyTransfer`: es la misma
+  // comparación que usan la API y el trigger de la base.
+  const crossCurrency = isTransfer && isCrossCurrencyTransfer(
+    selectedAccount?.currency,
+    destinationAccount?.currency,
+  );
+  const toAmountPreview = formatAmountInput(
+    toAmount,
+    destinationAccount?.currency,
+  );
+  /**
+   * Sin el segundo monto no se puede guardar: la cuenta de destino recibiría
+   * un número en la moneda de la cuenta de ORIGEN (120.000 "dólares" por
+   * 120.000 pesos). El botón se deshabilita y el campo explica qué falta.
+   */
+  const missingToAmount = crossCurrency && toAmountPreview === null;
 
   // ── Categorías: del tipo activo, ordenadas por búsqueda + recencia ─────────
   const kindCategories = useMemo(
@@ -601,6 +631,9 @@ export default function TransactionForm({
         date,
         accountId,
         ...(isTransfer ? { toAccountId } : {}),
+        // Sólo entre monedas distintas: la API rechaza `toAmount` cuando las
+        // dos cuentas están en la misma moneda (y la base también).
+        ...(crossCurrency ? { toAmount } : {}),
         // La categoría es opcional (Fase 7): vacía viaja como "" y el servidor
         // la normaliza a `null` — un movimiento sin clasificar, que los
         // reportes agrupan bajo "Sin categoría".
@@ -644,6 +677,12 @@ export default function TransactionForm({
     }
     if (isTransfer && !toAccountId) {
       setError("Elegí a qué cuenta va la plata.");
+      return;
+    }
+    if (missingToAmount) {
+      setError(
+        "Escribí cuánto llega a la cuenta de destino: las cuentas están en monedas distintas.",
+      );
       return;
     }
 
@@ -1117,6 +1156,7 @@ export default function TransactionForm({
 
           {/* ── Cuenta de destino (sólo transferencias) ───────────────────── */}
           {isTransfer && (
+            <>
             <div>
               <Label htmlFor="tx-to-account" className="text-sm font-medium">
                 A qué cuenta va *
@@ -1147,6 +1187,50 @@ export default function TransactionForm({
                 ingreso: tu patrimonio no cambia.
               </p>
             </div>
+
+            {/* ── La segunda punta: sólo si las monedas difieren ─────────── */}
+            {/*
+              `amount` es lo que SALE, en la moneda de origen. Sin este campo,
+              una transferencia de 120.000 pesos a una caja en dólares
+              acreditaría 120.000 dólares. El campo aparece y desaparece con la
+              condición de las monedas; el texto escrito se conserva al cambiar
+              de destino para no perderlo por probar una opción.
+            */}
+            {crossCurrency && (
+              <div>
+                <Label htmlFor="tx-to-amount" className="text-sm font-medium">
+                  ¿Cuánto llega? *
+                </Label>
+                <Input
+                  id="tx-to-amount"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  value={toAmount}
+                  onChange={(e) => {
+                    setToAmount(e.target.value);
+                    clearDuplicateWarning();
+                  }}
+                  placeholder="0,00"
+                  className={`mt-1 w-full text-xl font-bold rounded-lg border-line-strong bg-transparent px-4 py-3 ${style.focus}`}
+                />
+                <p className="mt-1 text-xs text-fg-muted">
+                  {toAmountPreview ? (
+                    <>
+                      Entran <b>{toAmountPreview}</b> a{" "}
+                      {destinationAccount?.name ?? "la cuenta de destino"}.
+                    </>
+                  ) : toAmount.trim() ? (
+                    <span className="text-warning">
+                      No se entiende el monto. Probá con 100 o 1.234,56
+                    </span>
+                  ) : (
+                    "Lo que entra a la cuenta de destino, en su moneda. Es obligatorio entre monedas distintas."
+                  )}
+                </p>
+              </div>
+            )}
+            </>
           )}
 
           {/* ── Categoría (sólo ingresos y gastos, y OPCIONAL) ────────────── */}
@@ -1385,7 +1469,7 @@ export default function TransactionForm({
                     variant="secondary"
                     size="sm"
                     onClick={() => void saveAnyway()}
-                    disabled={saving}
+                    disabled={saving || missingToAmount}
                     className="px-3 py-1 text-xs font-bold bg-warning hover:bg-warning/90 text-primary-fg"
                   >
                     Guardar igual
@@ -1407,7 +1491,7 @@ export default function TransactionForm({
                   type="submit"
                   form="tx-form"
                   variant="secondary"
-                  disabled={saving}
+                  disabled={saving || missingToAmount}
                   className={`flex-1 py-3 font-bold text-primary-fg ${style.badge}`}
                 >
                   {saving ? "Guardando…" : "Guardar"}

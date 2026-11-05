@@ -48,6 +48,16 @@ export const LOCALE = process.env.NEXT_PUBLIC_LOCALE ?? "es-AR";
 export const MONEY_SCALE = 2;
 
 /**
+ * Las monedas que este módulo sabe mostrar.
+ *
+ * Es una lista CERRADA a propósito: una moneda nueva necesita un símbolo y un
+ * formato decididos, no un `Intl` que adivine. El espejo del enum `Currency`
+ * del esquema está en `lib/finance.ts` (`CurrencyDTO`); acá se repite sólo la
+ * unión de strings para que este archivo siga sin importar nada.
+ */
+export type FormatCurrency = "ARS" | "USD";
+
+/**
  * Cualquier cosa que represente un monto y sepa convertirse a string.
  *
  * Es un tipo ESTRUCTURAL: `number` y `Prisma.Decimal` lo cumplen los dos
@@ -68,8 +78,22 @@ function toDecimalString(value: MoneyLike): string {
  * Formatea un monto para mostrarlo.
  *
  *     formatMoney("800000.5")   → "$ 800.000,50"
+ *     formatMoney("800000.5", { currency: "USD" }) → "US$ 800.000,50"
  *     formatMoney("800000.5", { withSymbol: false }) → "800.000,50"
  *     formatMoney("-1500")      → "-$ 1.500,00"
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * POR QUÉ LA MONEDA ES UNA OPCIÓN Y NO SE LEE DEL ENTORNO
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `CURRENCY` (la variable de entorno) sigue siendo el default: la app nació en
+ * pesos y cada pantalla que no sabe de monedas tiene que seguir mostrando
+ * pesos. Pero desde la Fase 4 el mismo listado puede tener una cuenta en ARS y
+ * otra en USD: el llamador que CONOCE la moneda la pasa, y el default sólo
+ * cubre los casos donde no hay unidad mejor.
+ *
+ * El símbolo sale de `Intl`, no de una tabla paralela: es-AR ya formatea USD
+ * como `US$ 1.234,56` y ARS como `$ 1.234,56`. Una tabla propia sería un
+ * segundo lugar donde equivocarse.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * POR QUÉ PASA POR `Number` AL FINAL
@@ -82,14 +106,21 @@ function toDecimalString(value: MoneyLike): string {
  */
 export function formatMoney(
   value: MoneyLike,
-  options: { withSymbol?: boolean; withSign?: boolean } = {},
+  options: {
+    withSymbol?: boolean;
+    withSign?: boolean;
+    currency?: FormatCurrency;
+  } = {},
 ): string {
   const { withSymbol = true, withSign = false } = options;
+  // `CURRENCY` es un string de entorno: el default puede ser cualquier código
+  // ISO, y `FormatCurrency` documenta los que la app conoce.
+  const currency: string = options.currency ?? CURRENCY;
   const decimal = toDecimalString(value);
 
   return new Intl.NumberFormat(LOCALE, {
     style: withSymbol ? "currency" : "decimal",
-    currency: withSymbol ? CURRENCY : undefined,
+    currency: withSymbol ? currency : undefined,
     minimumFractionDigits: MONEY_SCALE,
     maximumFractionDigits: MONEY_SCALE,
     signDisplay: withSign ? "always" : "auto",
@@ -137,12 +168,16 @@ export function formatPercent(
  *
  * El cero se queda del lado de "debe": es la deuda nula, no un saldo a favor.
  */
-export function formatLiability(debt: MoneyLike): string {
+export function formatLiability(
+  debt: MoneyLike,
+  currency?: FormatCurrency,
+): string {
   const cents = toCents(toDecimalString(debt));
+  const money = (value: string) => formatMoney(value, { currency });
 
   return cents < 0
-    ? `a favor ${formatMoney(centsToString(-cents))}`
-    : `debe ${formatMoney(centsToString(cents))}`;
+    ? `a favor ${money(centsToString(-cents))}`
+    : `debe ${money(centsToString(cents))}`;
 }
 
 /**
@@ -442,7 +477,10 @@ export function sumAmounts(amounts: readonly (string | number)[]): string {
  * una heurística conservadora: si el número formateado no coincide con lo que
  * se escribió, no se muestra nada en vez de mostrar algo equivocado.
  */
-export function formatAmountInput(raw: string): string | null {
+export function formatAmountInput(
+  raw: string,
+  currency?: FormatCurrency,
+): string | null {
   const cleaned = raw.replace(/[^\d.,+-]/g, "").trim();
   if (cleaned === "" || cleaned === "-" || cleaned === "+" || cleaned === "." || cleaned === ",") {
     return null;
@@ -478,5 +516,5 @@ export function formatAmountInput(raw: string): string | null {
   const value = Number(normalized);
   if (!Number.isFinite(value)) return null;
 
-  return formatMoney(centsToString(toCents(normalized)));
+  return formatMoney(centsToString(toCents(normalized)), { currency });
 }

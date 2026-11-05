@@ -6,11 +6,13 @@ import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { todayCalendar } from "@/lib/dates";
 import {
   ACCOUNT_KIND_LABEL,
+  type AccountBalanceDTO,
   type AccountKindDTO,
+  type CurrencyDTO,
   type LoanPreviewDTO,
 } from "@/lib/finance";
 import { formatPercent } from "@/lib/format";
-import { formatAmountInput, formatMoney } from "@/lib/format";
+import { formatAmountInput, formatMoney, toCents } from "@/lib/format";
 import { CreditCard, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +22,32 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 interface Props {
   onClose: () => void;
   onSaved: () => void;
+  /**
+   * La cuenta a editar, o `null` para crear una nueva.
+   *
+   * En edición el formulario sólo toca lo que el PATCH de cuentas acepta:
+   * nombre y moneda. El resto de la ficha (saldo inicial, parámetros de
+   * tarjeta y de préstamo) tiene sus propios caminos y no se reescribe acá.
+   */
+  account?: AccountBalanceDTO | null;
+}
+
+/**
+ * ¿La cuenta ya tiene historia?
+ *
+ * `inflow`/`outflow` son la suma de TODO lo que entró y salió (en valores
+ * absolutos), así que un movimiento alcanza para que una de las dos no sea
+ * cero. Es la señal que la UI puede ver sin una consulta extra; el candado de
+ * verdad —movimientos, reglas, planes de tarjeta, cuotas— vive en la base y
+ * responde 409. Acá se usa sólo para no OFRECER un cambio que la otra capa va
+ * a rechazar en el caso más común.
+ */
+function hasHistory(account: AccountBalanceDTO): boolean {
+  // Un préstamo nace con su cronograma materializado: aunque todavía no tenga
+  // movimientos, la moneda ya está atada a las cuotas.
+  if (account.kind === "LOAN" || account.kind === "RECEIVABLE") return true;
+
+  return toCents(account.inflow) > 0 || toCents(account.outflow) > 0;
 }
 
 const KIND_ORDER: AccountKindDTO[] = ["CASH", "BANK", "CREDIT_CARD", "LOAN"];
@@ -35,10 +63,17 @@ const KIND_HELP: Record<AccountKindDTO, string> = {
     "Plata que prestaste y te tienen que devolver: es un activo, no una deuda.",
 };
 
-export default function AccountForm({ onClose, onSaved }: Props) {
-  const [name, setName] = useState("");
-  const [kind, setKind] = useState<AccountKindDTO>("BANK");
-  const [openingBalance, setOpeningBalance] = useState("");
+export default function AccountForm({ onClose, onSaved, account = null }: Props) {
+  const editing = account !== null;
+
+  const [name, setName] = useState(account?.name ?? "");
+  const [kind, setKind] = useState<AccountKindDTO>(account?.kind ?? "BANK");
+  const [currency, setCurrency] = useState<CurrencyDTO>(
+    account?.currency ?? "ARS",
+  );
+  const [openingBalance, setOpeningBalance] = useState(
+    account?.openingBalance ?? "",
+  );
 
   // ── La banderita: «contar este saldo como ingreso de este mes» ───────────
   //
@@ -69,6 +104,11 @@ export default function AccountForm({ onClose, onSaved }: Props) {
   // La banderita sólo existe en las cuentas de DINERO: en una tarjeta o un
   // préstamo ese saldo es una deuda, y una deuda no es un ingreso.
   const isMoney = kind === "CASH" || kind === "BANK";
+
+  // En edición, la moneda de una cuenta con historia es INMUTABLE: cambiarla
+  // reescribiría el significado de todos sus movimientos sin tocar una fila.
+  // La base lo hace cumplir con un trigger; la UI no ofrece el cambio.
+  const currencyLocked = account !== null && hasHistory(account);
 
   // ── Vista previa del préstamo ──────────────────────────────────────────────
   // Se pide al servidor DESPUÉS de que la persona deja de escribir (300 ms), no
@@ -126,7 +166,9 @@ export default function AccountForm({ onClose, onSaved }: Props) {
       return;
     }
 
-    if (isLoan) {
+    // En edición el formulario no muestra los campos de préstamo ni de tarjeta:
+    // no hay nada que validar de ellos.
+    if (!editing && isLoan) {
       const missing: string[] = [];
       if (!principal.trim()) missing.push("el monto prestado");
       if (!tnaPercent.trim()) missing.push("la tasa (TNA)");
@@ -140,7 +182,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
       }
     }
 
-    if (isCard) {
+    if (!editing && isCard) {
       const daysError = cardDaysError(closingDay, dueDay);
       if (daysError) {
         setError(daysError);
@@ -150,52 +192,73 @@ export default function AccountForm({ onClose, onSaved }: Props) {
 
     setSaving(true);
     try {
+      // Edición: sólo nombre y moneda (lo que acepta el PATCH). El saldo
+      // inicial no se reescribe —cambiarlo reescribiría el patrimonio— y la
+      // moneda bloqueada no se manda: la base la rechazaría con 409.
+      const payload = editing
+        ? {
+            id: account!.id,
+            name: name.trim(),
+            ...(currencyLocked ? {} : { currency }),
+          }
+        : {
+            name: name.trim(),
+            kind,
+            currency,
+            openingBalance: openingBalance.trim() || "0",
+            ...(isLoan
+              ? {
+                  principal,
+                  tnaPercent,
+                  installmentCount,
+                  firstInstallmentDate,
+                }
+              : {}),
+            // Sólo si la tarjeta tiene los dos días: la API exige el par completo
+            // (o ninguno). El límite viaja solo y es opcional.
+            ...(isCard && closingDay.trim() && dueDay.trim()
+              ? { closingDay: Number(closingDay), dueDay: Number(dueDay) }
+              : {}),
+            ...(isCard && creditLimit.trim() ? { creditLimit } : {}),
+            // La banderita: el mes en el que este saldo cuenta como ingreso.
+            // Apagada no se manda nada (la cuenta queda con la bandera apagada,
+            // que es su comportamiento de siempre).
+            ...(isMoney && declareIncome && incomeMonth
+              ? { openingIncomeMonth: incomeMonth }
+              : {}),
+          };
+
       const response = await fetch("/api/accounts", {
-        method: "POST",
+        method: editing ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          kind,
-          openingBalance: openingBalance.trim() || "0",
-          ...(isLoan
-            ? {
-                principal,
-                tnaPercent,
-                installmentCount,
-                firstInstallmentDate,
-              }
-            : {}),
-          // Sólo si la tarjeta tiene los dos días: la API exige el par completo
-          // (o ninguno). El límite viaja solo y es opcional.
-          ...(isCard && closingDay.trim() && dueDay.trim()
-            ? { closingDay: Number(closingDay), dueDay: Number(dueDay) }
-            : {}),
-          ...(isCard && creditLimit.trim() ? { creditLimit } : {}),
-          // La banderita: el mes en el que este saldo cuenta como ingreso.
-          // Apagada no se manda nada (la cuenta queda con la bandera apagada,
-          // que es su comportamiento de siempre).
-          ...(isMoney && declareIncome && incomeMonth
-            ? { openingIncomeMonth: incomeMonth }
-            : {}),
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        throw new Error(data.error ?? "No se pudo crear la cuenta.");
+        throw new Error(
+          data.error ??
+            (editing ? "No se pudo guardar la cuenta." : "No se pudo crear la cuenta."),
+        );
       }
 
       onSaved();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo crear la cuenta.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : editing
+            ? "No se pudo guardar la cuenta."
+            : "No se pudo crear la cuenta.",
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  const openingPreview = formatAmountInput(openingBalance);
-  const limitPreview = formatAmountInput(creditLimit);
+  const openingPreview = formatAmountInput(openingBalance, currency);
+  const limitPreview = formatAmountInput(creditLimit, currency);
 
   return (
     <div
@@ -205,7 +268,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Nueva cuenta"
+        aria-label={editing ? "Editar cuenta" : "Nueva cuenta"}
         className="w-full sm:max-w-md max-h-[92vh] flex flex-col overflow-hidden bg-surface-2 rounded-t-md sm:rounded-md shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -216,7 +279,9 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             en un campo tapado caía en el pie. */}
         <div className="flex-none px-6 pt-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold">Nueva cuenta</h2>
+          <h2 className="text-lg font-bold">
+            {editing ? "Editar cuenta" : "Nueva cuenta"}
+          </h2>
           <Button
             id="acc-close"
             variant="ghost"
@@ -252,7 +317,11 @@ export default function AccountForm({ onClose, onSaved }: Props) {
             <Label htmlFor="acc-kind" className="text-sm font-medium">
               Qué tipo de cuenta es *
             </Label>
-            <Select value={kind} onValueChange={(v) => setKind(v as AccountKindDTO)}>
+            <Select
+              value={kind}
+              onValueChange={(v) => setKind(v as AccountKindDTO)}
+              disabled={editing}
+            >
               <SelectTrigger id="acc-kind" className="mt-1 w-full py-3">
                 <SelectValue placeholder="Tipo de cuenta" />
               </SelectTrigger>
@@ -264,11 +333,47 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 ))}
               </SelectContent>
             </Select>
-            <p className="mt-1 text-xs text-fg-muted">{KIND_HELP[kind]}</p>
+            <p className="mt-1 text-xs text-fg-muted">
+              {editing
+                ? "El tipo de una cuenta no cambia después de crearla."
+                : KIND_HELP[kind]}
+            </p>
+          </div>
+
+          {/* ── La moneda ─────────────────────────────────────────────────── */}
+          {/*
+            La moneda es parte del SIGNIFICADO del saldo, no una etiqueta: "$
+            10.000" y "US$ 10.000" son dos patrimonios distintos. Se elige al
+            crear. En una cuenta con historia no se puede cambiar —la base lo
+            rechaza con 409— así que el selector se bloquea y se explica por
+            qué, en vez de ofrecer un camino que termina en error.
+          */}
+          <div>
+            <Label htmlFor="acc-currency" className="text-sm font-medium">
+              Moneda *
+            </Label>
+            <Select
+              value={currency}
+              onValueChange={(value) => setCurrency(value as CurrencyDTO)}
+              disabled={currencyLocked}
+            >
+              <SelectTrigger id="acc-currency" className="mt-1 w-full py-3">
+                <SelectValue placeholder="Moneda de la cuenta" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ARS">Pesos (ARS)</SelectItem>
+                <SelectItem value="USD">Dólares (USD)</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-fg-muted">
+              {currencyLocked
+                ? "Esta cuenta ya tiene movimientos: la moneda no se puede cambiar. Si necesitás la otra moneda, creá una cuenta nueva."
+                : "Todos los montos de esta cuenta se muestran en la moneda elegida."}
+            </p>
           </div>
 
           {/* ── Parámetros del préstamo ──────────────────────────────────── */}
-          {isLoan ? (
+          {!editing && (isLoan ? (
             <>
               <div>
                 <Label htmlFor="loan-principal" className="text-sm font-medium">
@@ -345,18 +450,21 @@ export default function AccountForm({ onClose, onSaved }: Props) {
               {preview && (
                 <div className="rounded-md bg-transfer/10 px-4 py-3 text-sm">
                   <p className="font-bold text-transfer ">
-                    {installmentCount} cuotas de {formatMoney(preview.payment)}
+                    {installmentCount} cuotas de{" "}
+                    {formatMoney(preview.payment, { currency })}
                   </p>
                   <p className="mt-1 text-transfer ">
                     Vas a pagar en total{" "}
-                    <b>{formatMoney(preview.totalPaid)}</b>.
+                    <b>{formatMoney(preview.totalPaid, { currency })}</b>.
                   </p>
                   <p className="mt-1 text-transfer ">
-                    De eso, <b>{formatMoney(preview.totalInterest)}</b> son
-                    intereses: es lo que te cuesta el préstamo.
+                    De eso,{" "}
+                    <b>{formatMoney(preview.totalInterest, { currency })}</b>{" "}
+                    son intereses: es lo que te cuesta el préstamo.
                   </p>
                   <p className="mt-1 text-transfer text-xs">
-                    De cada 100 pesos que pagues,{" "}
+                    De cada 100 {currency === "USD" ? "dólares" : "pesos"} que
+                    pagues,{" "}
                     <b>
                       {formatMoney(preview.interestSharePercent, {
                         withSymbol: false,
@@ -468,7 +576,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                       Arranca con <b>{openingPreview}</b>.
                     </>
                   ) : isCard ? (
-                    "Ojo: en una tarjeta el saldo negativo es deuda. Si ya debés $ 50.000, escribí -50.000."
+                    `Ojo: en una tarjeta el saldo negativo es deuda. Si ya debés ${formatMoney("50000", { currency })}, escribí -50.000.`
                   ) : (
                     "Sirve para empezar hoy sin cargar meses de movimientos viejos."
                   )}
@@ -538,7 +646,7 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 </div>
               )}
             </>
-          )}
+          ))}
 
         </form>
         </div>
@@ -575,7 +683,13 @@ export default function AccountForm({ onClose, onSaved }: Props) {
                 disabled={saving}
                 className="flex-1 py-3 bg-transfer hover:bg-transfer/90 text-primary-fg"
               >
-                {saving ? "Creando…" : "Crear cuenta"}
+                {saving
+                  ? editing
+                    ? "Guardando…"
+                    : "Creando…"
+                  : editing
+                    ? "Guardar cambios"
+                    : "Crear cuenta"}
               </Button>
             </div>
           </div>

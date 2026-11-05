@@ -11,6 +11,8 @@ interface BudgetViewItem {
   categoryId: string;
   categoryName: string;
   month: string;
+  /** Moneda del límite y de los gastos que se le comparan. */
+  currency: "ARS" | "USD";
   budgetedAmount: number;
   spentAmount: number;
   remainingAmount: number;
@@ -198,7 +200,10 @@ export function BudgetsSection({ month }: { month: string }) {
                     {isExceeded && (
                       <span className="flex items-center gap-1 text-xs text-brand-error font-normal">
                         <AlertCircle className="w-3.5 h-3.5" />
-                        Desvío: sobreconsumo de {formatMoney(Math.abs(b.remainingAmount))}
+                        Desvío: sobreconsumo de{" "}
+                        {formatMoney(Math.abs(b.remainingAmount), {
+                          currency: b.currency,
+                        })}
                       </span>
                     )}
                     {isWarning && (
@@ -248,11 +253,15 @@ export function BudgetsSection({ month }: { month: string }) {
                 <div className="flex flex-wrap items-center justify-between text-xs text-fg-muted pt-1">
                   <span>
                     Gastado:{" "}
-                    <strong className="text-fg">{formatMoney(b.spentAmount)}</strong>
+                    <strong className="text-fg">
+                      {formatMoney(b.spentAmount, { currency: b.currency })}
+                    </strong>
                   </span>
                   <span>
                     Presupuesto:{" "}
-                    <strong className="text-fg">{formatMoney(b.budgetedAmount)}</strong>
+                    <strong className="text-fg">
+                      {formatMoney(b.budgetedAmount, { currency: b.currency })}
+                    </strong>
                   </span>
                   <span>
                     {b.remainingAmount >= 0 ? "Disponible:" : "Excedido:"}{" "}
@@ -261,7 +270,9 @@ export function BudgetsSection({ month }: { month: string }) {
                         b.remainingAmount < 0 ? "text-brand-error" : "text-fg"
                       }
                     >
-                      {formatMoney(Math.abs(b.remainingAmount))}
+                      {formatMoney(Math.abs(b.remainingAmount), {
+                        currency: b.currency,
+                      })}
                     </strong>
                   </span>
                 </div>

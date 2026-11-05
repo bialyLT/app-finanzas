@@ -47,9 +47,10 @@ import {
   toCents,
 } from "@/lib/format";
 import { shortcutMovementKind } from "@/lib/quick-entry";
+import { DEFAULT_CURRENCY } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
 import { isPaletteShortcut } from "@/lib/command-palette";
-import { Banknote, Receipt, ArrowLeftRight, RefreshCw, Import, Coins, Search, StickyNote, Trash, Check, X, type LucideIcon } from "lucide-react";
+import { Banknote, Receipt, ArrowLeftRight, RefreshCw, Import, Coins, Search, StickyNote, Trash, Check, X, Pencil, type LucideIcon } from "lucide-react";
 
 /** Lo que se abre en el modal. */
 type Modal = MovementKindDTO | "ACCOUNT" | null;
@@ -160,6 +161,16 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [modal, setModal] = useState<Modal>(null);
+
+  /**
+   * La cuenta que el modal de cuentas está editando, o `null` para alta.
+   *
+   * Vive separado de `modal` porque el tipo `"ACCOUNT"` no dice CUÁL cuenta:
+   * con un solo estado, abrir "Editar" y después "Nueva" dejaría la anterior
+   * pegada al próximo alta.
+   */
+  const [editingAccount, setEditingAccount] =
+    useState<AccountBalanceDTO | null>(null);
 
   /**
    * La plantilla con la que se abrió el formulario, si vino de un favorito.
@@ -391,6 +402,7 @@ export default function Home() {
    * pegada al próximo "Nuevo gasto".
    */
   function openMovement(kind: MovementKindDTO, favorite: FavoriteDTO | null = null) {
+    setEditingAccount(null);
     setFavoriteForForm(favorite);
     setModal(kind);
   }
@@ -399,6 +411,23 @@ export default function Home() {
   function closeMovement() {
     setModal(null);
     setFavoriteForForm(null);
+  }
+
+  /**
+   * Abre el modal de cuentas en alta (`null`) o edición.
+   *
+   * El alta y la edición comparten formulario: los campos son los mismos, y
+   * tener dos pantallas casi iguales garantiza que una quede atrás. Lo que
+   * cambia —método HTTP y qué campos se tocan— lo decide `AccountForm`.
+   */
+  function openAccountForm(account: AccountBalanceDTO | null = null) {
+    setEditingAccount(account);
+    setModal("ACCOUNT");
+  }
+
+  function closeAccountForm() {
+    setModal(null);
+    setEditingAccount(null);
   }
 
   /** Recarga sólo las plantillas (guardar una nueva no exige recargar el panel). */
@@ -486,6 +515,7 @@ export default function Home() {
       );
       if (!next) return;
       event.preventDefault();
+      setEditingAccount(null);
       setModal(next);
     }
 
@@ -830,9 +860,9 @@ export default function Home() {
           <p className="text-xs uppercase text-fg-muted">Ingresos</p>
           <p
             className="monto-tarjeta font-extrabold text-success"
-            style={{ "--k": factorMonto(formatMoney(totals.income)) } as CSSProperties}
+            style={{ "--k": factorMonto(formatMoney(totals.income, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
           >
-            {formatMoney(totals.income)}
+            {formatMoney(totals.income, { currency: DEFAULT_CURRENCY })}
           </p>
           <p className="text-xs opacity-80 mt-1">
             {totals.incomeCount}{" "}
@@ -840,7 +870,7 @@ export default function Home() {
             {totals.declared !== "0.00" && (
               <>
                 {" · "}
-                <b>{formatMoney(totals.declared)}</b> declarados
+                <b>{formatMoney(totals.declared, { currency: DEFAULT_CURRENCY })}</b> declarados
               </>
             )}
           </p>
@@ -850,9 +880,9 @@ export default function Home() {
           <p className="text-xs uppercase text-fg-muted">Gastos</p>
           <p
             className="monto-tarjeta font-extrabold text-danger"
-            style={{ "--k": factorMonto(formatMoney(totals.expenses)) } as CSSProperties}
+            style={{ "--k": factorMonto(formatMoney(totals.expenses, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
           >
-            {formatMoney(totals.expenses)}
+            {formatMoney(totals.expenses, { currency: DEFAULT_CURRENCY })}
           </p>
           <p className="text-xs opacity-80 mt-1">
             {totals.expenseCount}{" "}
@@ -867,10 +897,10 @@ export default function Home() {
           <p
             className={`monto-tarjeta font-extrabold ${totals.positive ? "text-success" : "text-danger"}`}
             style={
-              { "--k": factorMonto(formatMoney(totals.result, { withSign: true })) } as CSSProperties
+              { "--k": factorMonto(formatMoney(totals.result, { withSign: true, currency: DEFAULT_CURRENCY })) } as CSSProperties
             }
           >
-            {formatMoney(totals.result, { withSign: true })}
+            {formatMoney(totals.result, { withSign: true, currency: DEFAULT_CURRENCY })}
           </p>
           {/*
             ─────────────────────────────────────────────────────────────────────
@@ -902,7 +932,9 @@ export default function Home() {
           <p className="text-xs opacity-70 mt-0.5">
             {totals.declared !== "0.00" ? (
               <>
-                Incluye <b>{formatMoney(totals.declared)}</b> que declaraste
+                Incluye{" "}
+                <b>{formatMoney(totals.declared, { currency: DEFAULT_CURRENCY })}</b>{" "}
+                que declaraste
                 como ingreso (ya los tenías).
               </>
             ) : (
@@ -930,10 +962,10 @@ export default function Home() {
           <p
             className="monto-tarjeta font-extrabold text-transfer"
             style={
-              { "--k": factorMonto(formatMoney(totals.cashFlow, { withSign: true })) } as CSSProperties
+              { "--k": factorMonto(formatMoney(totals.cashFlow, { withSign: true, currency: DEFAULT_CURRENCY })) } as CSSProperties
             }
           >
-            {formatMoney(totals.cashFlow, { withSign: true })}
+            {formatMoney(totals.cashFlow, { withSign: true, currency: DEFAULT_CURRENCY })}
           </p>
           <p className="text-xs opacity-80 mt-1">
             {totals.transferCount === 0
@@ -965,7 +997,7 @@ export default function Home() {
               ───────────────────────────────────────────────────────────────── */}
           {totals.declared !== "0.00" && (
             <p className="text-xs opacity-70 mt-0.5">
-              No cuenta {formatMoney(totals.declared)} que declaraste: esa
+              No cuenta {formatMoney(totals.declared, { currency: DEFAULT_CURRENCY })} que declaraste: esa
               plata ya estaba en tus cuentas.
             </p>
           )}
@@ -985,15 +1017,23 @@ export default function Home() {
                   Number(netWorth.net) < 0 ? "text-warning" : ""
                 } monto`}
               >
-                {formatMoney(netWorth.net)}
+                {formatMoney(netWorth.net, { currency: DEFAULT_CURRENCY })}
               </p>
             </div>
             <div className="text-right text-sm">
               <p className="text-fg-muted">
-                Tenés <b className="text-success">{formatMoney(netWorth.assets)}</b>
+                Tenés{" "}
+                <b className="text-success">
+                  {formatMoney(netWorth.assets, { currency: DEFAULT_CURRENCY })}
+                </b>
               </p>
               <p className="text-fg-muted">
-                Debés <b className="text-danger">{formatMoney(netWorth.liabilities)}</b>
+                Debés{" "}
+                <b className="text-danger">
+                  {formatMoney(netWorth.liabilities, {
+                    currency: DEFAULT_CURRENCY,
+                  })}
+                </b>
               </p>
             </div>
           </div>
@@ -1027,66 +1067,87 @@ export default function Home() {
                     className="@container min-w-0 rounded-md bg-surface bg-surface-3/60 px-3 py-2 flex flex-col gap-1"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-xs text-fg-muted truncate">
-                          {account.name}
-                          {declarada && (
-                            <span className="text-transfer ">
-                              {" "}
-                              · ingreso de{" "}
-                              {formatCalendar(
-                                `${account.openingIncomeMonth}-01`,
-                                LOCALE,
-                                { month: "short", year: "numeric" },
-                              )}
-                            </span>
-                          )}
-                        </p>
-                        <p
-                          className={`monto-ficha font-bold ${
-                            account.isLiability ? "text-danger" : ""
-                          }${claseMontoLargo(
-                            formatMoney(
-                              account.isLiability
-                                ? account.debt ?? "0.00"
-                                : account.balance,
-                            ),
-                          )}`}
-                        >
-                          {account.isLiability
-                            ? formatLiability(account.debt ?? "0.00")
-                            : formatMoney(account.balance)}
-                        </p>
-                      </div>
+                      <p className="min-w-0 text-xs text-fg-muted truncate">
+                        {account.name}
+                        {declarada && (
+                          <span className="text-transfer ">
+                            {" "}
+                            · ingreso de{" "}
+                            {formatCalendar(
+                              `${account.openingIncomeMonth}-01`,
+                              LOCALE,
+                              { month: "short", year: "numeric" },
+                            )}
+                          </span>
+                        )}
+                      </p>
 
-                      {puedeDeclarar && (
+                      <div className="flex items-center gap-1 shrink-0">
                         <button
                           type="button"
-                          id={`acc-income-toggle-${account.id}`}
-                          role="checkbox"
-                          aria-checked={declarada}
-                          aria-label={
-                            declarada
-                              ? `Dejar de contar el saldo de ${account.name} como ingreso`
-                              : `Contar el saldo de ${account.name} como ingreso de este mes`
-                          }
-                          title={
-                            declarada
-                              ? "Dejar de contarlo como ingreso"
-                              : "Contarlo como ingreso de este mes"
-                          }
-                          onClick={() => toggleDeclaredIncome(account)}
-                          disabled={incomeToggleBusyId !== null}
-                          className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg border-2 transition-colors ${
-                            declarada
-                              ? "border-transfer bg-transfer text-primary-fg"
-                              : "border-line-strong text-fg-subtle"
-                          } disabled:opacity-50`}
+                          id={`acc-edit-${account.id}`}
+                          aria-label={`Editar ${account.name}`}
+                          title="Editar nombre y moneda"
+                          onClick={() => openAccountForm(account)}
+                          className="grid h-11 w-11 place-items-center rounded-lg border border-line-strong text-fg-muted hover:bg-surface-3"
                         >
-                          <Check className="size-5" aria-hidden />
+                          <Pencil className="size-4" aria-hidden />
                         </button>
-                      )}
+
+                        {puedeDeclarar && (
+                          <button
+                            type="button"
+                            id={`acc-income-toggle-${account.id}`}
+                            role="checkbox"
+                            aria-checked={declarada}
+                            aria-label={
+                              declarada
+                                ? `Dejar de contar el saldo de ${account.name} como ingreso`
+                                : `Contar el saldo de ${account.name} como ingreso de este mes`
+                            }
+                            title={
+                              declarada
+                                ? "Dejar de contarlo como ingreso"
+                                : "Contarlo como ingreso de este mes"
+                            }
+                            onClick={() => toggleDeclaredIncome(account)}
+                            disabled={incomeToggleBusyId !== null}
+                            className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg border-2 transition-colors ${
+                              declarada
+                                ? "border-transfer bg-transfer text-primary-fg"
+                                : "border-line-strong text-fg-subtle"
+                            } disabled:opacity-50`}
+                          >
+                            <Check className="size-5" aria-hidden />
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    {/* El monto va en su PROPIA línea: compartiendo fila con
+                        los botones, el ancho disponible se encogía y a 480 px
+                        el número se partía dentro de la tarjeta. */}
+                    <p
+                      className={`monto-ficha font-bold ${
+                        account.isLiability ? "text-danger" : ""
+                      }${claseMontoLargo(
+                        formatMoney(
+                          account.isLiability
+                            ? account.debt ?? "0.00"
+                            : account.balance,
+                          { currency: account.currency },
+                        ),
+                      )}`}
+                    >
+                      {account.isLiability
+                        ? formatLiability(
+                            account.debt ?? "0.00",
+                            account.currency,
+                          )
+                        : formatMoney(account.balance, {
+                            currency: account.currency,
+                          })}
+                    </p>
 
                     {incomeToggleNotice?.id === account.id && (
                       <p
@@ -1286,7 +1347,7 @@ export default function Home() {
                   >
                     {formatMoney(reconciliation.saving, { withSign: true })}
                   </p>
-                  <p className="text-xs text-fg-subtle">
+                  <p className="text-xs text-fg-subtle break-words">
                     {reconciliation.declaredIncome !== "0.00"
                       ? "ingresos del mes − gastos del mes"
                       : "ingresos ganados − gastos consumidos"}
@@ -1382,7 +1443,7 @@ export default function Home() {
             id="btn-add-account"
             variant="link"
             size="sm"
-            onClick={() => setModal("ACCOUNT")}
+            onClick={() => openAccountForm()}
             className="mt-3 text-xs text-muted-foreground"
           >
             + Agregar cuenta
@@ -1956,14 +2017,19 @@ export default function Home() {
                   <p
                     className={`mov-monto monto font-extrabold pt-1 ${style.amount}${
                       montoLargo(
-                        `${movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}${formatMoney(movement.amount)}`,
+                        `${movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}${formatMoney(
+                          movement.amount,
+                          { currency: movement.account.currency },
+                        )}`,
                       )
                         ? " min-w-0 break-all"
                         : " whitespace-nowrap"
                     }`}
                   >
                     {movement.kind === "INCOME" ? "+" : movement.kind === "EXPENSE" ? "−" : ""}
-                    {formatMoney(movement.amount)}
+                    {formatMoney(movement.amount, {
+                      currency: movement.account.currency,
+                    })}
                   </p>
 
                   {confirmDeleteId === movement.id ? (
@@ -2132,7 +2198,11 @@ export default function Home() {
       )}
 
       {modal === "ACCOUNT" ? (
-        <AccountForm onClose={() => setModal(null)} onSaved={load} />
+        <AccountForm
+          account={editingAccount}
+          onClose={closeAccountForm}
+          onSaved={load}
+        />
       ) : modal ? (
         <TransactionForm
           kind={modal}

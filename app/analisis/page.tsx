@@ -31,6 +31,7 @@ import {
   formatPercent,
   toCents,
 } from "@/lib/format";
+import { DEFAULT_CURRENCY } from "@/lib/currency";
 import { TriangleAlert, Search, ChartColumn, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -513,9 +514,9 @@ export default function AnalisisPage() {
               <p className="text-xs uppercase text-fg-muted">Ingresos</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-success"
-                style={{ "--k": factorMonto(formatMoney(stats.incomeTotal)) } as CSSProperties}
+                style={{ "--k": factorMonto(formatMoney(stats.incomeTotal, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
               >
-                {formatMoney(stats.incomeTotal)}
+                {formatMoney(stats.incomeTotal, { currency: DEFAULT_CURRENCY })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.incomeCount}{" "}
@@ -528,7 +529,7 @@ export default function AnalisisPage() {
                   declarada no tiene categoría). */}
               {stats.declared !== "0.00" && (
                 <p className="text-xs opacity-80">
-                  + {formatMoney(stats.declared)} declarados
+                  + {formatMoney(stats.declared, { currency: DEFAULT_CURRENCY })} declarados
                 </p>
               )}
             </div>
@@ -537,9 +538,9 @@ export default function AnalisisPage() {
               <p className="text-xs uppercase text-fg-muted">Gastos</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-danger"
-                style={{ "--k": factorMonto(formatMoney(stats.expenseTotal)) } as CSSProperties}
+                style={{ "--k": factorMonto(formatMoney(stats.expenseTotal, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
               >
-                {formatMoney(stats.expenseTotal)}
+                {formatMoney(stats.expenseTotal, { currency: DEFAULT_CURRENCY })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.expenseCount}{" "}
@@ -554,10 +555,10 @@ export default function AnalisisPage() {
               <p
                 className={`monto-tarjeta monto-tarjeta--analisis font-extrabold ${stats.positive ? "text-success" : "text-danger"}`}
                 style={
-                  { "--k": factorMonto(formatMoney(stats.result, { withSign: true })) } as CSSProperties
+                  { "--k": factorMonto(formatMoney(stats.result, { withSign: true, currency: DEFAULT_CURRENCY })) } as CSSProperties
                 }
               >
-                {formatMoney(stats.result, { withSign: true })}
+                {formatMoney(stats.result, { withSign: true, currency: DEFAULT_CURRENCY })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.savingRate !== null
@@ -578,9 +579,9 @@ export default function AnalisisPage() {
               <p className="text-xs uppercase text-fg-muted">Transferencias</p>
               <p
                 className="monto-tarjeta monto-tarjeta--analisis font-extrabold text-transfer"
-                style={{ "--k": factorMonto(formatMoney(stats.transferTotal)) } as CSSProperties}
+                style={{ "--k": factorMonto(formatMoney(stats.transferTotal, { currency: DEFAULT_CURRENCY })) } as CSSProperties}
               >
-                {formatMoney(stats.transferTotal)}
+                {formatMoney(stats.transferTotal, { currency: DEFAULT_CURRENCY })}
               </p>
               <p className="text-xs opacity-80">
                 {stats.transferCount}{" "}

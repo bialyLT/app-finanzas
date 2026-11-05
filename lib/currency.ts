@@ -56,6 +56,27 @@ export function isCurrency(value: unknown): value is Currency {
 }
 
 /**
+ * ¿Una transferencia cruza monedas?
+ *
+ * Es la condición que decide si el formulario tiene que pedir el segundo monto
+ * ("¿cuánto llega?"). Vive acá, pura y testeada, porque es una REGLA del
+ * dominio: la misma comparación la usa la API para exigir/prohibir `toAmount`
+ * y la base para hacer cumplir la bicondicional. El `null` significa "todavía
+ * no se eligieron las dos cuentas": no hay transferencia que comparar.
+ *
+ * Ojo: `null !== null` es `false` en JS, pero acá se compara con `== null`
+ * explícito para que "sin origen" y "sin destino" NO se lean como "distintas
+ * monedas" y el formulario no pida un monto que después no puede mandar.
+ */
+export function isCrossCurrencyTransfer(
+  from: Currency | null | undefined,
+  to: Currency | null | undefined,
+): boolean {
+  if (from == null || to == null) return false;
+  return from !== to;
+}
+
+/**
  * El resultado de interpretar `?currency=` de una petición.
  *
  * Tres estados y no dos, igual que `parseIncomeMonth`: "no vino" (default ARS) y

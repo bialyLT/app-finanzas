@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { calculateBudgetStatus, parseBudgetMonth } from "@/lib/budgets";
+import { parseCurrencyParam } from "@/lib/currency";
 import { Prisma } from "@prisma/client";
 
 function badRequest(message: string) {
@@ -10,9 +11,14 @@ function badRequest(message: string) {
 }
 
 /**
- * GET /api/budgets?month=YYYY-MM
+ * GET /api/budgets?month=YYYY-MM&currency=ARS|USD
  * Devuelve todos los presupuestos asignados para el mes consultado,
  * calculando el gasto real acumulado por categoría en dicho mes y el estado (ok, warning, exceeded).
+ *
+ * `currency` es OPCIONAL y su default es ARS (el comportamiento histórico).
+ * El presupuesto y los gastos que se comparan contra él tienen que estar en la
+ * MISMA moneda: sumar pesos y dólares contra un límite en una sola moneda da
+ * un porcentaje que no significa nada.
  */
 export async function GET(request: Request) {
   const session = await requireApiSession();
@@ -33,20 +39,28 @@ export async function GET(request: Request) {
     return badRequest(msg);
   }
 
+  // La moneda del presupuesto y de los gastos que se le comparan. Sin
+  // parámetro, ARS; un valor que no existe es 400, nunca un default silencioso
+  // (mentiría sobre la unidad de los porcentajes).
+  const parsedCurrency = parseCurrencyParam(searchParams.get("currency"));
+  if (!parsedCurrency.ok) {
+    return badRequest(parsedCurrency.error);
+  }
+  const currency = parsedCurrency.currency;
+
   // Rango del mes para sumar movimientos EXPENSE
   const year = monthDate.getUTCFullYear();
   const month = monthDate.getUTCMonth();
   const nextMonthDate = new Date(Date.UTC(year, month + 1, 1));
 
-  // Traer presupuestos del mes y los gastos reales por categoría
+  // Traer presupuestos del mes y los gastos reales por categoría.
   //
-  // MONEDA: mientras el endpoint no ofrezca elegir (F4.4), POST crea el
-  // presupuesto en ARS y acá se filtra a ARS en las DOS consultas. Sin el
-  // filtro en los gastos, un gasto en dólares entraría a compararse contra un
-  // límite en pesos. El scoping completo por moneda es F4.2.
+  // La moneda se filtra en las DOS consultas: el presupuesto que se muestra y
+  // los gastos que se le comparan. Filtrar sólo una compararía pesos con
+  // dólares y el porcentaje de consumo sería un número inventado.
   const [budgets, expensesByCategory] = await Promise.all([
     prisma.budget.findMany({
-      where: { month: monthDate, currency: "ARS" },
+      where: { month: monthDate, currency },
       include: { category: true },
       orderBy: { category: { name: "asc" } },
     }),
@@ -59,7 +73,7 @@ export async function GET(request: Request) {
           lt: nextMonthDate,
         },
         categoryId: { not: null },
-        account: { currency: "ARS" },
+        account: { currency },
       },
       _sum: {
         amount: true,
@@ -84,6 +98,7 @@ export async function GET(request: Request) {
       categoryId: b.categoryId,
       categoryName: b.category.name,
       month: monthParam.slice(0, 7),
+      currency: b.currency,
       budgetedAmount: budgeted,
       spentAmount: spent,
       remainingAmount: calc.remaining,
@@ -94,20 +109,32 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     month: monthParam.slice(0, 7),
+    currency,
     budgets: items,
   });
 }
 
 /**
- * POST /api/budgets
+ * POST /api/budgets?currency=ARS|USD
  * Crea o actualiza el presupuesto mensual de una categoría.
  * Body: { categoryId: string, month: string (YYYY-MM), amount: number }
+ *
+ * El `upsert` es por `(categoryId, month, currency)`: el mismo límite en pesos
+ * y en dólares son dos presupuestos distintos, no una actualización del otro.
  */
 export async function POST(request: Request) {
   const session = await requireApiSession();
   if (!session) return unauthorized();
   const csrf = assertSameOrigin(request);
   if (csrf) return csrf;
+
+  const parsedCurrency = parseCurrencyParam(
+    new URL(request.url).searchParams.get("currency"),
+  );
+  if (!parsedCurrency.ok) {
+    return badRequest(parsedCurrency.error);
+  }
+  const currency = parsedCurrency.currency;
 
   let body: { categoryId?: unknown; month?: unknown; amount?: unknown };
   try {
@@ -126,8 +153,15 @@ export async function POST(request: Request) {
     return badRequest("El mes (YYYY-MM) es requerido.");
   }
 
-  const numAmount = Number(amount);
-  if (isNaN(numAmount) || numAmount <= 0) {
+  // `typeof` estricto: `Number(["100"])` es 100 y `Number(true)` es 1. Un
+  // array o un booleano no son montos, y aceptarlos sería guardar un número
+  // que nadie escribió. El tope es el de la columna (`DECIMAL(18,2)`): un
+  // monto de 20 dígitos desborda la base y sin este chequeo salía como 500.
+  if (typeof amount !== "number" && typeof amount !== "string") {
+    return badRequest("El monto debe ser un número positivo.");
+  }
+  const numAmount = typeof amount === "number" ? amount : Number(amount);
+  if (!Number.isFinite(numAmount) || numAmount <= 0 || numAmount >= 1e16) {
     return badRequest("El monto debe ser un número positivo.");
   }
 
@@ -156,14 +190,12 @@ export async function POST(request: Request) {
 
   const budget = await prisma.budget.upsert({
     where: {
-      // El presupuesto es por categoría, mes Y moneda. Mientras la pantalla no
-      // ofrezca elegir moneda (F4.4), este endpoint opera sobre pesos: el
-      // mismo DEFAULT que tiene la columna, escrito explícito para que el día
-      // que se agregue el selector no haya que adivinar qué hacía antes.
+      // El presupuesto es por categoría, mes Y moneda: el mismo límite en pesos
+      // y en dólares son dos presupuestos distintos.
       categoryId_month_currency: {
         categoryId,
         month: monthDate,
-        currency: "ARS",
+        currency,
       },
     },
     update: {
@@ -173,7 +205,7 @@ export async function POST(request: Request) {
       categoryId,
       month: monthDate,
       amount: decimalAmount,
-      currency: "ARS",
+      currency,
     },
     include: {
       category: true,
@@ -185,6 +217,7 @@ export async function POST(request: Request) {
     categoryId: budget.categoryId,
     categoryName: budget.category.name,
     month: month.slice(0, 7),
+    currency: budget.currency,
     budgetedAmount: budget.amount.toNumber(),
   });
 }

@@ -442,7 +442,7 @@ export default function CardsPage() {
                     {card.archived ? " (archivada)" : ""}
                   </p>
                   <p id={`card-debt-${card.id}`} className="mt-0.5 font-semibold">
-                    {formatLiability(card.debt ?? "0")}
+                    {formatLiability(card.debt ?? "0", card.currency)}
                   </p>
                   <p id={`card-utilization-${card.id}`} className="text-sm text-fg-muted mt-0.5">
                     {utilizationText}

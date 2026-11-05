@@ -18,6 +18,7 @@ import {
   CURRENCIES,
   DEFAULT_CURRENCY,
   currencyNoun,
+  isCrossCurrencyTransfer,
   isCurrency,
   parseCurrencyBody,
   parseCurrencyParam,
@@ -81,6 +82,27 @@ describe("parseCurrencyParam", () => {
     expect(isCurrency(1)).toBe(false);
     expect(isCurrency(null)).toBe(false);
     expect(isCurrency(undefined)).toBe(false);
+  });
+});
+
+describe("isCrossCurrencyTransfer · cuándo hace falta el segundo monto (Fase 4.4)", () => {
+  it("dos cuentas en la misma moneda NO piden el segundo monto", () => {
+    expect(isCrossCurrencyTransfer("ARS", "ARS")).toBe(false);
+    expect(isCrossCurrencyTransfer("USD", "USD")).toBe(false);
+  });
+
+  it("monedas distintas piden el segundo monto", () => {
+    expect(isCrossCurrencyTransfer("ARS", "USD")).toBe(true);
+    expect(isCrossCurrencyTransfer("USD", "ARS")).toBe(true);
+  });
+
+  it("sin las dos cuentas elegidas no hay condición que evaluar", () => {
+    // `null !== null` da false, pero el caso importa: el formulario renderiza
+    // antes de que existan las dos cuentas y no puede quedar pidiendo un monto
+    // que la API después no acepta.
+    expect(isCrossCurrencyTransfer(null, "USD")).toBe(false);
+    expect(isCrossCurrencyTransfer("ARS", null)).toBe(false);
+    expect(isCrossCurrencyTransfer(undefined, undefined)).toBe(false);
   });
 });
 

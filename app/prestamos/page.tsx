@@ -717,7 +717,7 @@ export default function LoansPage() {
               className="mt-0.5 font-semibold"
             >
               {loan.kind === "LOAN"
-                ? formatLiability(loan.debt ?? "0")
+                ? formatLiability(loan.debt ?? "0", loan.currency)
                 : `te deben ${formatMoney(loan.receivable ?? "0")}`}
             </p>
             {plan !== null && (

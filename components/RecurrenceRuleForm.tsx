@@ -64,8 +64,8 @@ const KIND_STYLE: Record<MovementKindDTO, { accent: string; selected: string }> 
  */
 function accountLabel(account: AccountBalanceDTO): string {
   const amount = account.isLiability
-    ? formatLiability(account.debt ?? "0.00")
-    : formatMoney(account.balance);
+    ? formatLiability(account.debt ?? "0.00", account.currency)
+    : formatMoney(account.balance, { currency: account.currency });
   return `${account.name}${account.archived ? " (archivada)" : ""} · ${amount}`;
 }
 
