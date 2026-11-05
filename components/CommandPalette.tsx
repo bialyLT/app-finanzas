@@ -263,12 +263,17 @@ export default function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 px-4 pt-[10vh]"
+      className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 animate-fade-in px-4 pt-[10vh]"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      {/* El panel se limita al alto de la ventana (`max-h-[80vh]`) y la lista
+      {/* El panel entra con la MISMA animación que el diálogo (`fade-scale-in`,
+          los mismos tokens): la paleta es un overlay centrado más. La salida es
+          instantánea porque la paleta se desmonta cuando `paletteOpen` pasa a
+          false (no hay `Presence`): ver el diferido en docs/design-system.md.
+
+          El panel se limita al alto de la ventana (`max-h-[80vh]`) y la lista
           toma lo que sobra (`flex-1 min-h-0`): en un teléfono ACOSTADO la
           ventana tiene 390 px de alto y la paleta, con su lista de 320 px, se
           iba 88 px más abajo del borde (medido: el panel ocupaba de y=39 a
@@ -280,7 +285,7 @@ export default function CommandPalette({
         aria-modal="true"
         aria-label="Paleta de comandos"
         id="command-palette"
-        className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-md bg-surface-2 shadow-2xl overflow-hidden"
+        className="w-full max-w-lg max-h-[80vh] flex flex-col rounded-md bg-surface-2 shadow-2xl overflow-hidden animate-fade-scale-in"
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <span aria-hidden="true" className="text-fg-subtle">

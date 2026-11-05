@@ -19,17 +19,26 @@ import { cn } from "@/lib/utils";
  *
  * Radios: el panel lateral es `rounded-none` (una barra que toca el borde no
  * es una píldora); la hoja inferior usa `rounded-t-md`, de la misma escala.
+ *
+ * Movimiento (F3a): cada borde entra desde su borde y sale hacia su borde, con
+ * los MISMOS tokens que el modal (180 ms de entrada, 120 ms de salida). Es el
+ * panel del menú del teléfono: la misma curva que un modal, otra geometría.
  */
 const sheetVariants = cva(
   "fixed z-50 flex flex-col gap-4 bg-popover text-popover-foreground transition-colors",
   {
     variants: {
       side: {
-        right: "inset-y-0 right-0 h-full w-3/4 max-w-sm rounded-none border-l border-line",
-        left: "inset-y-0 left-0 h-full w-3/4 max-w-sm rounded-none border-r border-line",
-        top: "inset-x-0 top-0 max-h-[80dvh] rounded-none border-b border-line",
+        // Cada borde entra DESDE su borde y sale HACIA su borde, con los
+        // mismos tokens que el modal (180 ms para entrar, 120 ms para salir).
+        // El `translate` del keyframe no pelea con nada: la hoja se ubica con
+        // `inset`, no con `translate`.
+        right:
+          "inset-y-0 right-0 h-full w-3/4 max-w-sm rounded-none border-l border-line data-[state=open]:animate-sheet-in-right data-[state=closed]:animate-sheet-out-right",
+        left: "inset-y-0 left-0 h-full w-3/4 max-w-sm rounded-none border-r border-line data-[state=open]:animate-sheet-in-left data-[state=closed]:animate-sheet-out-left",
+        top: "inset-x-0 top-0 max-h-[80dvh] rounded-none border-b border-line data-[state=open]:animate-sheet-in-top data-[state=closed]:animate-sheet-out-top",
         bottom:
-          "inset-x-0 bottom-0 max-h-[85dvh] rounded-t-md border-t border-line",
+          "inset-x-0 bottom-0 max-h-[85dvh] rounded-t-md border-t border-line data-[state=open]:animate-sheet-in-bottom data-[state=closed]:animate-sheet-out-bottom",
       },
     },
     defaultVariants: {
@@ -65,7 +74,11 @@ function SheetOverlay({
   return (
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
-      className={cn("fixed inset-0 z-50 bg-black/60", className)}
+      className={cn(
+        "fixed inset-0 z-50 bg-black/60",
+        "data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out",
+        className,
+      )}
       {...props}
     />
   );
@@ -93,7 +106,7 @@ function SheetContent({
         {showCloseButton && (
           <SheetPrimitive.Close
             data-slot="sheet-close"
-            className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-lg text-fg-subtle transition-colors outline-none hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring"
+            className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-lg text-fg-subtle transition-colors duration-fast outline-none hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring"
           >
             <X className="size-4" aria-hidden />
             <span className="sr-only">Cerrar</span>

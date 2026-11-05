@@ -12,7 +12,8 @@ import { cn } from "@/lib/utils";
  * El trigger es un `<button>`: la capa base le da 44 px de alto en un puntero
  * grueso sin que la primitiva lo declare. El borde es `line-strong` (control,
  * ≥ 3:1), el radio `rounded-md` (un campo, no una píldora) y el estado abierto
- * se pinta con `data-[state=open]` (no hay animación: F3).
+ * se pinta con `data-[state=open]`. La entrada y la salida son las del sistema
+ * (F3a): `fade-scale-in` / `fade-scale-out`, el mismo par que el modal.
  */
 function Select(props: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />;
@@ -70,6 +71,8 @@ function SelectContent({
         position={position}
         className={cn(
           "relative z-50 max-h-96 min-w-36 overflow-hidden rounded-md border border-line bg-popover text-popover-foreground",
+          // Mismo par que el diálogo y los menús: el `select` es un menú.
+          "data-[state=open]:animate-fade-scale-in data-[state=closed]:animate-fade-scale-out",
           className,
         )}
         {...props}

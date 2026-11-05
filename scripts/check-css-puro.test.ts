@@ -238,4 +238,64 @@ describe("check-css-puro", () => {
     expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
     expect(r.code).toBe(1);
   });
+
+  /* ───────────────────────────────────────────────────────────────────────
+   * LOS KEYFRAMES (F3a)
+   *
+   * Tailwind v4 declara una animación con `--animate-*` en el `@theme` y sus
+   * `@keyframes` EN EL MISMO BLOQUE. Sin esta excepción el proyecto no podría
+   * tener una sola animación sin salirse de la regla de «cero CSS a mano».
+   *
+   * La excepción es ANGOSTA: sólo dentro de `@theme`. Un `@keyframes` suelto
+   * en el nivel superior (o metido en un `@utility`) sigue siendo una falla,
+   * y un selector de clase dentro del `@theme` también.
+   * ─────────────────────────────────────────────────────────────────────── */
+  it("acepta `@keyframes` dentro de `@theme` (la forma documentada de Tailwind v4)", () => {
+    const r = contraCss(
+      [
+        `@import "tailwindcss";`,
+        `@theme inline {`,
+        `  --animate-fade-in: fade-in 180ms ease-out both;`,
+        `  @keyframes fade-in {`,
+        `    from { opacity: 0; }`,
+        `    to { opacity: 1; }`,
+        `  }`,
+        `}`,
+        "",
+      ].join("\n"),
+    );
+    expect(resultado(r.salida)!.fail).toBe(0);
+    expect(r.code).toBe(0);
+  });
+
+  it("rechaza un `@keyframes` suelto en el nivel superior", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
+
+  it("rechaza un `@keyframes` escondido dentro de `@utility`", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n@utility mi-utilidad { @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } } }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
+
+  it("sigue rechazando un selector de clase dentro de `@theme` aunque haya keyframes", () => {
+    const r = contraCss(
+      [
+        `@import "tailwindcss";`,
+        `@theme {`,
+        `  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }`,
+        `  .mi-estilo { color: red; }`,
+        `}`,
+        "",
+      ].join("\n"),
+    );
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
 });

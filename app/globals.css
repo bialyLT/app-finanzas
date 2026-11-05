@@ -192,6 +192,219 @@
   --font-weight-bold: 700;
   --font-weight-extrabold: 800;
 
+  /* ── EL MOVIMIENTO: TRES DURACIONES, DOS CURVAS Y TRECE ANIMACIONES ──────
+     Antes de F3a el sistema no tenía movimiento: sólo `transition-colors` con
+     la duración de fábrica de Tailwind (150 ms). Eso deja dos huecos:
+
+       · un modal aparecía y desaparecía de golpe (el cierre no esperaba a
+         nada: Radix desmonta el nodo en el mismo frame);
+       · cualquier dev podía inventar `duration-[200ms]` en su componente y
+         el sistema no se enteraba.
+
+     Igual que los colores, acá los NOMBRES viven en el `@theme` y los VALORES
+     en el `:root` (con la excepción de `reduce`, ver el `@layer base` del
+     final). La razón es la misma: `prefers-reduced-motion` es un cambio de
+     valor, no de markup.
+
+     ─────────────────────────────────────────────────────────────────────────
+     LAS TRES DURACIONES (el presupuesto del modal es 250 ms)
+     ─────────────────────────────────────────────────────────────────────────
+       fast    120 ms   la salida de un overlay y el feedback chico (un hover
+                        que no debe sentirse lento)
+       normal  180 ms   la ENTRADA de un modal, un menú o la paleta
+       slow    240 ms   sólo el aviso persistente (nace mientras leés, no
+                        necesita el ritmo de un modal)
+
+     La entrada es más larga que la salida a propósito: entrar tiene que
+     explicar de dónde salió la cosa; salir, sólo despejar. Y ninguna pasa de
+     250 ms: más que eso y el tap se siente trabado (el usuario ya tocó otra
+     cosa cuando el modal todavía está entrando).
+
+     ─────────────────────────────────────────────────────────────────────────
+     LAS DOS CURVAS
+     ─────────────────────────────────────────────────────────────────────────
+       enter  cubic-bezier(0.22, 1, 0.36, 1)   arranca rápido y frena: lo que
+                                               APARECE se asienta
+       exit   cubic-bezier(0.4, 0, 1, 1)       arranca lento y acelera: lo que
+                                               SE VA no se queda
+
+     Las dos son `--ease-*`: ese namespace de Tailwind existe, así que el
+     markup puede pedir `ease-enter` / `ease-exit`. Las duraciones NO tienen
+     namespace en Tailwind v4 (`--duration-*` no compila): por eso además hay
+     tres `@utility duration-*` más abajo, que escriben `--tw-duration` (la
+     misma variable que usan `transition-colors` y compañía).
+
+     ─────────────────────────────────────────────────────────────────────────
+     LAS TRECE ANIMACIONES
+     ─────────────────────────────────────────────────────────────────────────
+     Las duraciones y las curvas, en el `@theme`, sólo existen para que las
+     animaciones las consuman — y para que `prefers-reduced-motion` pueda
+     llevarlas a 0 en un solo lugar (`--motion-duration-*`). Las animaciones:
+
+       fade-in / fade-out            el velo (opacidad sola: un velo no se
+                                     escala, se funde)
+       fade-scale-in / fade-scale-out  todo overlay CENTRADO: modal, menú,
+                                     paleta y aviso. Escala leve (0,96 → 1):
+                                     sugiere profundidad sin mover el texto.
+       sheet-in/out-{left,right,top,bottom}  el panel lateral del teléfono:
+                                     entra desde su borde.
+       toast-in                    el mismo `fade-scale-in`, con la duración
+                                     `slow`: el aviso nace mientras leés.
+
+     `fade-scale-in` la comparten el diálogo, el menú y la paleta A PROPÓSITO:
+     una sola animación para todos los overlays centrados es la garantía de
+     que no aparezca «una segunda» con otra curva (era el riesgo de esta
+     fase).
+
+     `both` en el shorthand: el estado inicial se aplica ANTES del primer
+     frame (nada de un flash del modal en opacity 1) y el final queda fijo
+     mientras Radix mantiene el nodo montado durante la salida. Es lo que hace
+     que la salida «espere el cierre»: Radix escucha `animationend` sobre el
+     nodo con `data-state="closed"` y recién ahí lo desmonta.
+
+     ─────────────────────────────────────────────────────────────────────────
+     POR QUÉ `scale` Y NO `transform: scale(...)`
+     ─────────────────────────────────────────────────────────────────────────
+     `DialogContent` se centra con `-translate-x-1/2 -translate-y-1/2`, y en
+     Tailwind v4 esas utilidades escriben la propiedad `translate` (no
+     `transform`). Animar `scale` —otra propiedad individual— deja el
+     centrado intacto. Con `transform: scale(...)` en los keyframes el modal
+     saldría disparado a la esquina en cada apertura.
+
+     Lo mismo con los menús de Radix, que escriben `transform` EN LÍNEA para
+     posicionarse: `scale` no les toca el `transform`.
+
+     ─────────────────────────────────────────────────────────────────────────
+     LO QUE **NO** SE ANIMA
+     ─────────────────────────────────────────────────────────────────────────
+     Montos, listas, tablas y números: un número que se mueve mientras lo
+     leés es una mentira (y en esta app los montos se comparan de un vistazo).
+     El movimiento es de CONTENEDORES, no de datos. */
+  --ease-enter: var(--motion-ease-enter);
+  --ease-exit: var(--motion-ease-exit);
+
+  --animate-fade-in: fade-in var(--motion-duration-normal) var(--ease-enter) both;
+  --animate-fade-out: fade-out var(--motion-duration-fast) var(--ease-exit) both;
+  --animate-fade-scale-in: fade-scale-in var(--motion-duration-normal) var(--ease-enter) both;
+  --animate-fade-scale-out: fade-scale-out var(--motion-duration-fast) var(--ease-exit) both;
+  --animate-sheet-in-left: sheet-in-left var(--motion-duration-normal) var(--ease-enter) both;
+  --animate-sheet-out-left: sheet-out-left var(--motion-duration-fast) var(--ease-exit) both;
+  --animate-sheet-in-right: sheet-in-right var(--motion-duration-normal) var(--ease-enter) both;
+  --animate-sheet-out-right: sheet-out-right var(--motion-duration-fast) var(--ease-exit) both;
+  --animate-sheet-in-top: sheet-in-top var(--motion-duration-normal) var(--ease-enter) both;
+  --animate-sheet-out-top: sheet-out-top var(--motion-duration-fast) var(--ease-exit) both;
+  --animate-sheet-in-bottom: sheet-in-bottom var(--motion-duration-normal) var(--ease-enter) both;
+  --animate-sheet-out-bottom: sheet-out-bottom var(--motion-duration-fast) var(--ease-exit) both;
+  --animate-toast-in: fade-scale-in var(--motion-duration-slow) var(--ease-enter) both;
+
+  /* Los keyframes viven ACÁ, en el `@theme`, porque son configuración del
+     sistema (Tailwind v4 es donde los busca un `--animate-*`) y no estilo de
+     un componente. `scripts/check-css-puro.mjs` los admite sólo en este
+     lugar: un `@keyframes` suelto en el nivel superior sigue siendo una
+     falla.
+
+     ─────────────────────────────────────────────────────────────────────────
+     LOS DE SALIDA SOLO DECLARAN EL `to` (y es a propósito)
+     ─────────────────────────────────────────────────────────────────────────
+     Un keyframe sin `from` arranca desde el valor COMPUTADO en ese momento.
+     Eso es lo que hace que cerrar un modal DURANTE su entrada no dé un salto:
+     medido con el `from { opacity: 1 }` explícito, un Escape a los 30 ms de la
+     apertura saltaba de 0,948 a 1,000 antes de fundirse. Con el `from`
+     implícito, la salida sigue desde donde iba (0,948 → 0) y no hay parpadeo.
+     Los de ENTRADA sí declaran el `from` (es el estado del que vienen). */
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes fade-scale-in {
+    from {
+      opacity: 0;
+      scale: 0.96;
+    }
+    to {
+      opacity: 1;
+      scale: 1;
+    }
+  }
+
+  @keyframes fade-scale-out {
+    to {
+      opacity: 0;
+      scale: 0.96;
+    }
+  }
+
+  @keyframes sheet-in-left {
+    from {
+      translate: -100% 0;
+    }
+    to {
+      translate: 0 0;
+    }
+  }
+
+  @keyframes sheet-out-left {
+    to {
+      translate: -100% 0;
+    }
+  }
+
+  @keyframes sheet-in-right {
+    from {
+      translate: 100% 0;
+    }
+    to {
+      translate: 0 0;
+    }
+  }
+
+  @keyframes sheet-out-right {
+    to {
+      translate: 100% 0;
+    }
+  }
+
+  @keyframes sheet-in-top {
+    from {
+      translate: 0 -100%;
+    }
+    to {
+      translate: 0 0;
+    }
+  }
+
+  @keyframes sheet-out-top {
+    to {
+      translate: 0 -100%;
+    }
+  }
+
+  @keyframes sheet-in-bottom {
+    from {
+      translate: 0 100%;
+    }
+    to {
+      translate: 0 0;
+    }
+  }
+
+  @keyframes sheet-out-bottom {
+    to {
+      translate: 0 100%;
+    }
+  }
+
   /* Superficies (de fondo a elevada) */
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
@@ -305,6 +518,17 @@
     --warning: #a44c08;
     --transfer: #0369a1;
     --focus: #c2410c;
+
+    /* ── El movimiento ────────────────────────────────────────────────────
+       Los VALORES de los tokens de arriba. Viven acá (y no en el `@theme`)
+       por la misma razón que los colores: `prefers-reduced-motion` los pisa
+       sin tocar una sola clase del markup, y así el cambio de «animar» a
+       «no animar» es cambiar tres números en un lugar. */
+    --motion-duration-fast: 120ms;
+    --motion-duration-normal: 180ms;
+    --motion-duration-slow: 240ms;
+    --motion-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+    --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   }
 
   /* El esquema «Noche»: el que eligió la persona (2026-10-21). */
@@ -364,6 +588,67 @@
       min-width: 44px;
     }
   }
+}
+
+/* ── `prefers-reduced-motion: reduce` ──────────────────────────────────────
+   Tres líneas y listo: las TRES duraciones a 0 ms. Todo lo que el sistema
+   anima (modal, menú, paleta, hoja, aviso) las consume, así que no hay que
+   apagar animación por animación.
+
+   ─────────────────────────────────────────────────────────────────────────
+   POR QUÉ 0 ms Y NO `animation: none`
+   ─────────────────────────────────────────────────────────────────────────
+   `animation: none` es la salida rápida y es un bug: Radix Presence decide
+   cuándo desmontar mirando `animationName`. Con `none` el diálogo se
+   desmonta ANTES de que se aplique el estado final (el cierre «parpadea») y
+   el nodo del velo desaparece en el mismo frame. Con `animation-duration:
+   0s` la animación SIGUE declarada: el `to` del keyframe (que es el estado
+   final, con `fill-mode: both`) se aplica igual y `animationend` se dispara
+   en el frame siguiente, así que el cierre sigue el camino normal y el foco
+   vuelve al disparador.
+
+   La verificación en Chrome de que esto funciona (abrir, cerrar y la vuelta
+   del foco con `Emulation.setEmulatedMedia` en `reduce`) está en §6.1 del
+   design system: no se cree, se mide.
+
+   ─────────────────────────────────────────────────────────────────────────
+   QUÉ **NO** SE APAGA (decisión)
+   ─────────────────────────────────────────────────────────────────────────
+   Las transiciones de COLOR (`transition-colors` de los botones y del foco)
+   NO son movimiento: son el cambio de un tinte, no el desplazamiento de un
+   objeto. `--default-transition-duration` (150 ms) se queda como está: un
+   botón que cambia de color en 150 ms no marea a nadie y apagarlo hace que
+   la interfaz se sienta rota, no quieta. */
+@layer base {
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --motion-duration-fast: 0ms;
+      --motion-duration-normal: 0ms;
+      --motion-duration-slow: 0ms;
+    }
+  }
+}
+
+/* ── Las utilidades de duración ─────────────────────────────────────────────
+   Tailwind v4 NO tiene un namespace `--duration-*`: `duration-fast` a secas
+   no compila (verificado). Las tres duraciones del sistema se exponen como
+   utilidad escribiendo `--tw-duration`, que es la MISMA variable que leen
+   `transition-colors` y compañía: así `transition-colors duration-fast`
+   funciona y el valor sigue saliendo del `:root` (o sea, sigue respondiendo
+   a `prefers-reduced-motion`).
+
+   Las curvas NO necesitan esto: `--ease-*` es un namespace real de Tailwind,
+   así que `ease-enter` / `ease-exit` salen del `@theme` solas. */
+@utility duration-fast {
+  --tw-duration: var(--motion-duration-fast);
+}
+
+@utility duration-normal {
+  --tw-duration: var(--motion-duration-normal);
+}
+
+@utility duration-slow {
+  --tw-duration: var(--motion-duration-slow);
 }
 
 /* ── Utilidades propias ──────────────────────────────────────────────────────

@@ -10,6 +10,8 @@
 > una fuente fuera del tema, un `dark:` en un color o un **cuerpo de letra
 > fuera de la escala**; y comprueba que el `@theme` declare los quince tokens,
 > la familia elegida (Archivo / IBM Plex Mono) y los cinco pasos tipográficos.
+> El del **movimiento** es `lib/motion.test.ts` (§6.1): tokens, presupuesto de
+> 250 ms, `prefers-reduced-motion` y cero duraciones sueltas en el markup.
 
 ---
 
@@ -210,6 +212,107 @@ superficies):
 | Claro | `--transfer` sobre su tinte al 10 % de `--surface` | `rgb(226, 236, 238)` | 4,92:1 | 4,5 | ✔ |
 | Claro | `--transfer` sobre su tinte al 10 % de `--surface-2` | `rgb(230, 240, 246)` | 5,13:1 | 4,5 | ✔ |
 | Claro | `--transfer` sobre su tinte al 10 % de `--surface-3` | `rgb(220, 228, 229)` | 4,61:1 | 4,5 | ✔ |
+
+### 1.5 · Los tokens de movimiento (F3a)
+
+Igual que los colores: los **nombres** viven en el `@theme` y los **valores** en
+el `:root`. No hay una duración ni una curva escrita en una clase.
+
+**Las cinco piezas base**
+
+| Token | Valor | Para qué |
+|---|---|---|
+| `--motion-duration-fast` | 120 ms | la **salida** de un overlay y el feedback chico (hover, foco) |
+| `--motion-duration-normal` | 180 ms | la **entrada** de un modal, un menú o la paleta |
+| `--motion-duration-slow` | 240 ms | el aviso persistente y el llenado de una barra de progreso (nada que tape un tap) |
+| `--motion-ease-enter` | `cubic-bezier(0.22, 1, 0.36, 1)` | lo que APARECE: arranca rápido y frena |
+| `--motion-ease-exit` | `cubic-bezier(0.4, 0, 1, 1)` | lo que SE VA: no se queda |
+
+La entrada es más larga que la salida a propósito. Y **ningún modal pasa de
+250 ms**: más que eso y el tap se siente trabado (el usuario ya tocó otra cosa
+cuando el modal todavía está entrando).
+
+**Las animaciones** (consumen siempre esos tokens, nunca un número)
+
+| Token | Keyframes | Duración / curva | Dónde |
+|---|---|---|---|
+| `animate-fade-in` | `fade-in` (opacidad) | normal · enter | el velo del diálogo y de la hoja |
+| `animate-fade-out` | `fade-out` | fast · exit | ídem, al cerrar |
+| `animate-fade-scale-in` | `fade-scale-in` (opacidad + escala 0,96 → 1) | normal · enter | `DialogContent`, menú, `Select`, paleta y aviso |
+| `animate-fade-scale-out` | `fade-scale-out` | fast · exit | `DialogContent`, menú, `Select` |
+| `animate-sheet-in-{left,right,top,bottom}` | `sheet-in-*` (translate desde su borde) | normal · enter | `SheetContent` |
+| `animate-sheet-out-{left,right,top,bottom}` | `sheet-out-*` | fast · exit | `SheetContent` |
+| `animate-toast-in` | `fade-scale-in` | slow · enter | el aviso «Movimiento guardado» |
+
+`fade-scale-in` la comparten el diálogo, el menú, el `Select`, la paleta y el
+aviso **a propósito**: una sola animación para todos los overlays centrados es
+la garantía de que no aparezca «una segunda» con otra curva.
+
+> **La paleta entra animada y cierra sin animación** (diferido declarado). A
+> diferencia de los overlays de Radix, `CommandPalette` es un `div` propio que
+> se desmonta en el mismo render en que `paletteOpen` pasa a `false`: no hay
+> `Presence` que espere un `animationend`. Su **entrada** usa `fade-scale-in`
+> con los mismos tokens (lo que pedía la fase: no inventar una segunda curva).
+> Animar la salida exige un estado de presencia propio (mantener el nodo
+> montado y cerrar en `onAnimationEnd`), que esta fase no agrega: una paleta
+> que se queda abierta porque el `animationend` no llegó es peor que un cierre
+> seco. El aviso «Movimiento guardado» tampoco tiene salida: lo reemplaza el
+> siguiente o lo cierra el usuario.
+
+**Cómo se usan en el markup**
+
+```tsx
+// Los overlays de Radix: entrada y salida por estado, sin `useEffect`.
+<DialogPrimitive.Content className="data-[state=open]:animate-fade-scale-in data-[state=closed]:animate-fade-scale-out" />
+
+// Una transición de color con la duración del sistema.
+<button className="transition-colors duration-fast" />
+
+// Una curva del sistema (namespace real de Tailwind: `--ease-*`).
+<div className="transition-colors ease-enter" />
+```
+
+- Las duraciones **no tienen namespace** en Tailwind v4 (`--duration-*` no
+  compila): por eso hay tres utilidades `duration-fast` / `duration-normal` /
+  `duration-slow` que escriben `--tw-duration`, la misma variable que usa
+  `transition-colors`. Las curvas sí (`--ease-*` → `ease-enter` / `ease-exit`).
+- Los `@keyframes` viven **dentro del `@theme`**, junto a su `--animate-*`
+  (es la forma documentada de Tailwind v4). `check:css` los admite sólo ahí: un
+  `@keyframes` suelto en el nivel superior o dentro de un `@utility` sigue
+  siendo una falla.
+- `scale` y no `transform: scale(...)`: `-translate-x-1/2` escribe la propiedad
+  `translate` en Tailwind v4, y Radix escribe `transform` en línea para
+  posicionar los menús. Animar `scale` —otra propiedad— deja las dos intactas.
+  Con `transform` el modal saldría disparado a la esquina en cada apertura.
+- `both` en el shorthand: el estado inicial se aplica antes del primer frame
+  (nada de un flash en opacidad 1) y el final queda fijo mientras Radix
+  mantiene el nodo montado durante la salida.
+
+**`prefers-reduced-motion: reduce`**
+
+Una sola regla global (`@layer base`) lleva las **tres duraciones a 0 ms**:
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-fast: 0ms;
+    --motion-duration-normal: 0ms;
+    --motion-duration-slow: 0ms;
+  }
+}
+```
+
+- **0 ms y no `animation: none`**: Radix Presence decide cuándo desmontar
+  mirando `animationName`. Con `none` el diálogo se desmonta antes de aplicar el
+  estado final; con 0 ms la animación sigue declarada, el `to` del keyframe (el
+  estado final, con `fill-mode: both`) se aplica igual y `animationend` se
+  dispara igual, así que el cierre recorre el mismo camino.
+- **Las transiciones de color no se apagan** (decisión): son un cambio de tinte,
+  no el desplazamiento de un objeto. Un botón que cambia de color en 150 ms no
+  marea a nadie; apagarlo hace que la interfaz se sienta rota, no quieta.
+- **Lo que no se anima nunca**: montos, listas, tablas y números. Un número que
+  se mueve mientras lo leés es una mentira, y en esta app los montos se comparan
+  de un vistazo. El movimiento es de contenedores, no de datos.
 
 ---
 
@@ -551,12 +654,42 @@ es `#0C1B2C` de noche y `#FFFFFF` de día.
 
 ---
 
+### 5.9 · No pongas una duración, una curva ni un keyframe en el markup
+
+```tsx
+// ANTES
+<div className="transition-all duration-300" />
+<div className="animate-[fade_.3s_ease]" />
+<div className="ease-[cubic-bezier(.2,0,0,1)]" />
+
+// DESPUÉS
+<div className="transition-colors duration-normal" />
+<div className="animate-fade-scale-in" />
+<div className="transition-colors ease-enter" />
+```
+
+Una duración suelta es un número que nadie eligió y que no se puede cambiar
+desde el sistema: `duration-300` en un componente y `duration-150` en otro
+hacen que la app se sienta hecha de parches. Las curvas de fábrica
+(`ease-in`, `ease-out`, `ease-in-out`, `linear`) y los valores arbitrarios
+están prohibidos por la misma razón: la escala es `ease-enter` / `ease-exit`
+(§1.5). El candado es `lib/motion.test.ts`: falla si aparece una duración
+literal, un retardo, una curva arbitraria o una animación arbitraria.
+
+> **Un caso real que este candado encontró en F3a**: la barra de un presupuesto
+> tenía `transition-all duration-300` (el único valor de movimiento suelto del
+> repo). Pasó a `duration-slow` (240 ms): el mismo gesto, con un número del
+> sistema.
+
+---
+
 ## 6 · Cómo se verifica
 
 ```powershell
 npm run check:estilo     # el candado de «cero default» (exit 1 si hay una violación)
 npm run check:css        # el candado de «cero CSS a mano»
 npm run typecheck
+npm test                 # incluye el candado del movimiento: lib/motion.test.ts
 ```
 
 El gate de estilo falla si aparece **una sola** clase de la paleta de fábrica
@@ -578,6 +711,57 @@ Los números de la tipografía (avances, márgenes, el factor de cada monto) se
 miden con `node scripts/medir-fuente.mjs --candidatas` (antes de elegir) y
 `node scripts/medir-fuente.mjs --url http://127.0.0.1:3101` (la fuente real
 que sirve el build).
+
+### 6.1 · El movimiento
+
+`lib/motion.test.ts` es el candado de la configuración (corre en `npm test`):
+
+- el `@theme` declara las cinco piezas y **todas** tienen valor en el `:root`,
+  con la escala exacta (120/180/240 ms y las dos curvas);
+- cada `--animate-*` consume un token de duración y una curva del sistema, sin
+  `ms` literales;
+- el presupuesto de 250 ms se **calcula** desde los valores reales;
+- la regla de `reduce` existe, lleva las tres duraciones a `0ms` y no contiene
+  `animation: none`;
+- ninguna clase del markup lleva duración, retardo, curva o animación suelta;
+- el diálogo, la hoja y los menús animan **el cierre** (`data-state=closed`) y
+  no sólo la entrada;
+- la paleta y el aviso usan la animación de los modales (no hay una segunda).
+
+Lo que el test **no** puede saber —que la animación se vea, cuánto dura de
+verdad y que `reduce` no rompa el cierre— se mide en Chrome con CDP
+(`scripts/tester-fase7/cdp.mjs`). La sonda completa, con los números medidos en
+la ronda F3a:
+
+| Qué | Modo normal | `prefers-reduced-motion: reduce` |
+|---|---|---|
+| `DialogContent` al abrir | `fade-scale-in` · **0,18 s** · `cubic-bezier(0.22, 1, 0.36, 1)` · opacidad 0 → 1 · escala 0,96 → 1 · `translate: -50% -50%` intacto | `fade-scale-in` · **0 s** · opacidad 1 · escala 1 (nace asentado) |
+| `DialogContent` al cerrar | a +20 ms: `data-state="closed"` con el nodo **todavía montado** · `fade-scale-out` · **0,12 s**; a +420 ms ya no existe | el nodo ya está desmontado a +20 ms |
+| `SheetContent` (menú del teléfono) | `sheet-in-left` 0,18 s · `sheet-out-left` 0,12 s · `translate` −10 % → 0 | 0 s las dos; a +20 ms ya está desmontado |
+| Paleta (`#command-palette`) | `fade-scale-in` 0,18 s | 0 s |
+| `--motion-duration-{fast,normal,slow}` en `:root` | `.12s / .18s / .24s` | `0s / 0s / 0s` |
+| Foco | al abrir entra al overlay (textarea del diálogo / botón de la hoja) | igual |
+| Foco al cerrar | la **hoja** lo devuelve a `#nav-toggle` | igual |
+
+```js
+// El emulado, sin creerle al sistema operativo (si Windows tiene «reducir
+// animaciones», Chrome reporta `reduce` SIEMPRE y la medición «normal» sería
+// mentira: hay que forzar los dos valores).
+await ui.send("Emulation.setEmulatedMedia", {
+  features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+});
+await ui.send("Emulation.setEmulatedMedia", {
+  features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+});
+```
+
+> **Deuda declarada (no es de esta fase)**: el diálogo de carga por voz
+> devuelve el foco a `<body>`, no a su disparador. La causa es estructural: su
+> disparador es un `<button onClick>` cualquiera, no un `DialogTrigger`, así
+> que Radix no tiene a quién devolvérselo. Se midió tres veces —normal,
+> `reduce` y con `*,*::before,*::after{animation:none!important}` inyectado— y
+> en las tres el foco cae en `<body>`: el destino del foco **no** depende del
+> movimiento. La hoja de `Nav` sí lo devuelve a `#nav-toggle` en los dos modos.
 
 ---
 
@@ -628,8 +812,10 @@ outline y los cuatro estados con su tinte al 10 % y borde al 40 %) ·
 - **Foco:** `focus-visible:ring-2 ring-ring ring-offset-2
   ring-offset-background` (el anillo es `--focus`).
 - **`dark:` en colores:** ninguno. El alias ya resuelve por esquema.
-- **Sin animaciones de entrada** (son F3): sólo `transition-colors` y
-  `data-[state=…]`. Nada de `tw-animate-css`.
+- **Sin animaciones de entrada de fábrica**: la entrada y la salida salen de los
+  tokens de §1.5 (`data-[state=open]:animate-…` / `data-[state=closed]:…`), no
+  de `tw-animate-css`. El cierre lo espera Radix Presence (`animationend`), así
+  que la salida no corta en seco.
 - **Targets táctiles:** no se declaran en las variantes. La capa base fuerza
   44 px en `button`/`input`/`select`/`textarea` con `any-pointer: coarse`;
   `h-9` fija `height`, no `min-height`, así que el piso sigue ganando en un

@@ -284,7 +284,7 @@ export function BudgetsSection({ month }: { month: string }) {
                 {/* Barra de progreso */}
                 <div className="w-full h-2 rounded-full bg-surface-3 overflow-hidden">
                   <div
-                    className={`h-full transition-all duration-300 ${
+                    className={`h-full transition-all duration-slow ${
                       isExceeded
                         ? "bg-brand-error"
                         : isWarning

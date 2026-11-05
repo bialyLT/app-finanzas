@@ -272,6 +272,27 @@ export function analizarCss(css, archivo = "(css)") {
             });
           }
         }
+        // ── `@keyframes` dentro de `@theme` (F3a) ─────────────────────────
+        // Tailwind v4 define una animación con nombre así: `--animate-*` en el
+        // `@theme` y sus `@keyframes` EN EL MISMO BLOQUE (es configuración del
+        // sistema, no el estilo de un componente). Sin esta excepción, el
+        // proyecto no puede declarar una animación sin salirse de la regla.
+        //
+        // La excepción es ANGOSTA a propósito: sólo dentro de `@theme` (el
+        // nivel superior sigue rechazando un `@keyframes` suelto, y dentro de
+        // `@utility` también) y sus pasos (`from`, `to`, `50%`) no se juzgan
+        // como selectores de componente: son fotogramas de una animación.
+        const esKeyframesEnTheme =
+          nombre === "keyframes" && contextoDe(pila) === "theme";
+        if (esKeyframesEnTheme) {
+          // Nada que reportar: es la forma documentada de Tailwind.
+        } else if (nombre === "keyframes" && pila.length > 0) {
+          problema(
+            "`@keyframes` sólo se admite dentro de `@theme` (con su `--animate-*`)",
+            texto,
+            preludioLinea,
+          );
+        }
         pila.push({ tipo: "atrule", nombre, params });
         if (enBloqueDeTokens(pila.slice(0, -1))) {
           problema(
@@ -286,6 +307,15 @@ export function analizarCss(css, archivo = "(css)") {
         }
         // Un SELECTOR. Depende del contexto en el que vive:
         const contexto = contextoDe(pila);
+        // Los pasos de una animación (`from`, `to`, `50%`) NO son selectores de
+        // componente: son fotogramas. Se aceptan tal cual dentro del
+        // `@keyframes` que ya validó el bloque de arriba.
+        if (pila.some((c) => c.tipo === "atrule" && c.nombre === "keyframes")) {
+          pila.push({ tipo: "rule", selector: texto });
+          preludio = "";
+          i += 1;
+          continue;
+        }
         if (contexto === "ninguno") {
           if (esBloqueDeTokens(texto)) {
             // Un bloque de tokens en el nivel superior ES configuración. Se

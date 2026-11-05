@@ -24,9 +24,16 @@ import { cn } from "@/lib/utils";
  * El pie queda FUERA del área scrolleable y el tap siempre llega. En F2 se
  * migran los modales con esta estructura; en F1 la primitiva queda lista.
  *
- * Sin animaciones de entrada: las micro-interacciones son F3. El overlay es
- * `bg-black/60` (el velo; `black` es la única excepción de la paleta, igual
- * que en los modales actuales).
+ * El overlay es `bg-black/60` (el velo; `black` es la única excepción de la
+ * paleta, igual que en los modales actuales).
+ *
+ * Sin animaciones "de fábrica": la entrada y la salida son las del sistema
+ * (F3a): `fade-scale-in` / `fade-scale-out` sobre `data-state`, con los mismos
+ * tokens de duración y curva que el resto de los overlays. El velo se funde
+ * con `fade-in` / `fade-out`. Las tres duraciones caen a 0 ms con
+ * `prefers-reduced-motion: reduce`, así que el modal aparece y desaparece sin
+ * animación y el cierre sigue funcionando igual (Radix espera el
+ * `animationend`, que con 0 ms se dispara igual).
  */
 function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
@@ -57,7 +64,14 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
-      className={cn("fixed inset-0 z-50 bg-black/60", className)}
+      className={cn(
+        "fixed inset-0 z-50 bg-black/60",
+        // El velo se funde (no se escala: un velo no tiene profundidad). La
+        // salida usa `data-state=closed`, que Radix pone ANTES de desmontar:
+        // Presence espera el `animationend` y recién ahí saca el nodo.
+        "data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out",
+        className,
+      )}
       {...props}
     />
   );
@@ -78,6 +92,14 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-hidden rounded-md border border-line bg-popover p-6 text-popover-foreground",
+          // Entrada y salida con LOS tokens del sistema (fade + escala leve,
+          // 180 ms para entrar y 120 ms para salir). El `scale` del keyframe
+          // no pisa el centrado: `-translate-*` escribe la propiedad
+          // `translate` y esto la `scale` (ver globals.css).
+          //
+          // El pie y el scroll NO cambian: la animación es del contenedor y
+          // no toca `overflow` ni el flex de `DialogBody`/`DialogFooter`.
+          "data-[state=open]:animate-fade-scale-in data-[state=closed]:animate-fade-scale-out",
           className,
         )}
         {...props}
@@ -86,7 +108,7 @@ function DialogContent({
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-lg text-fg-subtle transition-colors outline-none hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring"
+            className="absolute top-3 right-3 inline-flex size-9 items-center justify-center rounded-lg text-fg-subtle transition-colors duration-fast outline-none hover:bg-surface-3 hover:text-fg focus-visible:ring-2 focus-visible:ring-ring"
           >
             <X className="size-4" aria-hidden />
             <span className="sr-only">Cerrar</span>

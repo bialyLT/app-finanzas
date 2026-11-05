@@ -53,6 +53,10 @@ function DropdownMenuContent({
         sideOffset={sideOffset}
         className={cn(
           "z-50 max-h-96 min-w-36 overflow-y-auto rounded-md border border-line bg-popover p-1 text-popover-foreground",
+          // La MISMA animación que el diálogo (no una segunda): el menú es un
+          // overlay centrado en su disparador. El `scale` del keyframe no toca
+          // el `transform` que Radix escribe para posicionarse.
+          "data-[state=open]:animate-fade-scale-in data-[state=closed]:animate-fade-scale-out",
           className,
         )}
         {...props}
@@ -250,6 +254,7 @@ function DropdownMenuSubContent({
       data-slot="dropdown-menu-sub-content"
       className={cn(
         "z-50 min-w-36 overflow-y-auto rounded-md border border-line bg-popover p-1 text-popover-foreground",
+        "data-[state=open]:animate-fade-scale-in data-[state=closed]:animate-fade-scale-out",
         className,
       )}
       {...props}
