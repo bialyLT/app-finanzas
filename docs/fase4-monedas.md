@@ -1,6 +1,26 @@
 # Fase 4 · Monedas habilitadas: diseño de la migración
 
-Estado: **diseño, sin aplicar**. Fecha: 2026-11-04.
+Estado: **implementada y en producción** (2026-11-05). Este documento es el diseño
+aprobado; el detalle de lo que se desvió está en §5.1 y en los commits.
+
+## Estado de implementación
+
+| Fase | Qué quedó | Commit |
+|---|---|---|
+| F4.1 | Enum, `Account.currency`, `Movement.toAmount`, `Budget.currency`, `AppSettings`; 3 CHECK + 2 triggers | `f715b92` |
+| F4.2 | Scoping por moneda en las 10 funciones de agregación, `getNetWorth` por moneda, `AccountDTO.currency` | `9ab1d8d` |
+| F4.3 | Alta/edición de cuentas con moneda, `toAmount` en API y batch, CSV sólo-ARS | `aa8c1ae` |
+| F4.4a | `formatMoney` por moneda, selector en el alta, segundo monto en transferencias | `8bedca1` |
+| F4.4b | `/api/settings`, patrimonio por moneda en el panel, selector global, modal de monedas | `414da11` |
+| F4.5 | Motor de voz con monedas habilitadas | `20e3a7f` |
+| F4.1b | Migración de concurrencia: locking reads en ambos triggers | `aa8c1ae` |
+
+**Diferido**: F4.6 (`toAmount` en `RecurrenceRule`/`FavoriteTemplate`), importación CSV
+en otras monedas, y pago de resumen/cuota entre monedas (la base lo rechaza con 400
+legible).
+
+---
+
 
 ---
 
