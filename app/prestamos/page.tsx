@@ -103,6 +103,35 @@ const INSTALLMENT_STATE_CLASS: Record<InstallmentState, string> = {
 /** El bloque abierto de la pantalla: uno solo a la vez, como en `/tarjetas`. */
 type BlockKind = "pay" | "cancel" | "disburse";
 
+/** La foto que pide la pantalla, ya parseada. Sin estado: sólo datos. */
+interface LoansPageData {
+  loans: LoanViewDTO[];
+  accounts: AccountBalanceDTO[];
+}
+
+/**
+ * Pide préstamos y cuentas. No toca estado: los `setState` viven en las
+ * continuaciones de quien llama, nunca en el cuerpo síncrono de un efecto
+ * (regla `react-hooks/set-state-in-effect`).
+ */
+async function fetchLoansPage(archived: boolean): Promise<LoansPageData> {
+  const [loansRes, accountsRes] = await Promise.all([
+    fetch(`/api/loans${archived ? "" : "?includeArchived=false"}`),
+    fetch("/api/accounts"),
+  ]);
+
+  if (!loansRes.ok || !accountsRes.ok) {
+    throw new Error("Alguno de los pedidos falló.");
+  }
+
+  const loansData = (await loansRes.json()) as LoansResponse;
+  const accountsData = (await accountsRes.json()) as {
+    accounts: AccountBalanceDTO[];
+  };
+
+  return { loans: loansData.loans, accounts: accountsData.accounts };
+}
+
 export default function LoansPage() {
   const [loans, setLoans] = useState<LoanViewDTO[]>([]);
   const [accounts, setAccounts] = useState<AccountBalanceDTO[]>([]);
@@ -128,61 +157,53 @@ export default function LoansPage() {
   const [blockDate, setBlockDate] = useState("");
   const [blockExtra, setBlockExtra] = useState("");
   const [blockError, setBlockError] = useState("");
-  const [cashId, setCashId] = useState<string | null>(null);
+  /**
+   * La cuenta de dinero ELEGIDA por la persona (o `null` si todavía no eligió).
+   * El id vigente se deriva abajo, cuando ya se conocen las cuentas.
+   */
+  const [pickedCashId, setPickedCashId] = useState<string | null>(null);
 
   const today = todayCalendar();
 
-  const load = useCallback(async (options: { archived: boolean }) => {
-    setLoading(true);
-    setLoadError("");
-
-    try {
-      const [loansRes, accountsRes] = await Promise.all([
-        fetch(`/api/loans${options.archived ? "" : "?includeArchived=false"}`),
-        fetch("/api/accounts"),
-      ]);
-
-      if (!loansRes.ok || !accountsRes.ok) {
-        throw new Error("Alguno de los pedidos falló.");
-      }
-
-      const loansData = (await loansRes.json()) as LoansResponse;
-      const accountsData = (await accountsRes.json()) as {
-        accounts: AccountBalanceDTO[];
-      };
-
-      setLoans(loansData.loans);
-      setAccounts(accountsData.accounts);
-    } catch {
-      setLoadError(
-        "No se pudieron cargar los préstamos. Revisá que la base esté levantada y recargá.",
-      );
-    } finally {
-      setLoading(false);
-    }
+  /** Aplica la foto que llegó. Se llama desde la continuación de la promesa. */
+  const applyData = useCallback((data: LoansPageData) => {
+    setLoans(data.loans);
+    setAccounts(data.accounts);
+    setLoading(false);
   }, []);
 
-  useEffect(() => {
-    load({ archived: false });
-  }, [load]);
+  /**
+   * Carga la vista sin encender el indicador.
+   *
+   * Es la que dispara el efecto: sus `setState` viven en las continuaciones de
+   * la promesa, no en el cuerpo síncrono del efecto (regla
+   * `react-hooks/set-state-in-effect`).
+   */
+  const fetchAndApply = useCallback(
+    (options: { archived: boolean }) =>
+      fetchLoansPage(options.archived).then(applyData, () => {
+        setLoadError(
+          "No se pudieron cargar los préstamos. Revisá que la base esté levantada y recargá.",
+        );
+        setLoading(false);
+      }),
+    [applyData],
+  );
 
-  // La cuenta por defecto del selector: la primera de banco. Se elige una vez
-  // que las cuentas llegan, y se respeta la que la persona ya haya elegido.
-  useEffect(() => {
-    const origins = accounts.filter(
-      (account) =>
-        !account.archived &&
-        (account.kind === "CASH" || account.kind === "BANK"),
-    );
-    if (origins.length === 0) return;
+  /** La usan los handlers: enciende el indicador y delega en `fetchAndApply`. */
+  const load = useCallback(
+    (options: { archived: boolean }) => {
+      setLoading(true);
+      setLoadError("");
+      return fetchAndApply(options);
+    },
+    [fetchAndApply],
+  );
 
-    setCashId((current) =>
-      current && origins.some((account) => account.id === current)
-        ? current
-        : (origins.find((account) => account.kind === "BANK")?.id ??
-          origins[0].id),
-    );
-  }, [accounts]);
+  useEffect(() => {
+    // La carga inicial ya arranca con `loading = true`: no hace falta encenderlo.
+    void fetchAndApply({ archived: false });
+  }, [fetchAndApply]);
 
   function showFlash(message: string, isError = false) {
     setFlash(message);
@@ -219,6 +240,21 @@ export default function LoansPage() {
       !account.archived &&
       (account.kind === "CASH" || account.kind === "BANK"),
   );
+
+  /**
+   * La cuenta de dinero vigente para esta pantalla.
+   *
+   * Se deriva de las cuentas: la elegida si sigue existiendo, o la primera de
+   * banco. Antes la resolvía un efecto que escribía el estado después de cada
+   * carga; derivarla evita el render en cascada, y el mismo id sigue valiendo
+   * para los tres bloques (pago, cancelación y desembolso).
+   */
+  const cashId =
+    pickedCashId && payOrigins.some((account) => account.id === pickedCashId)
+      ? pickedCashId
+      : (payOrigins.find((account) => account.kind === "BANK")?.id ??
+        payOrigins[0]?.id ??
+        null);
 
   const loanDebts = loans.filter((loan) => loan.kind === "LOAN");
   const receivables = loans.filter((loan) => loan.kind === "RECEIVABLE");
@@ -816,7 +852,7 @@ export default function LoansPage() {
                     <select
                       id={`loan-disburse-cash-${loan.id}`}
                       value={cashId ?? ""}
-                      onChange={(e) => setCashId(e.target.value)}
+                      onChange={(e) => setPickedCashId(e.target.value)}
                       className="mt-1 w-full rounded-md border border-warning/40 bg-surface-2 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus"
                     >
                       {payOrigins.map((account) => (
@@ -977,7 +1013,7 @@ export default function LoansPage() {
               </label>
               <Select
                 value={cashId ?? ""}
-                onValueChange={(v) => setCashId(v || null)}
+                onValueChange={(v) => setPickedCashId(v || null)}
               >
                 <SelectTrigger
                   id={`loan-pay-account-${loan.id}`}
@@ -1090,7 +1126,7 @@ export default function LoansPage() {
                 </label>
                 <Select
                   value={cashId ?? ""}
-                  onValueChange={(v) => setCashId(v || null)}
+                  onValueChange={(v) => setPickedCashId(v || null)}
                 >
                   <SelectTrigger
                     id={`loan-cancel-account-${loan.id}`}

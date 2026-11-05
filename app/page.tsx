@@ -28,6 +28,7 @@ import {
   MOVEMENT_KIND_LABEL,
   type AccountBalanceDTO,
   type CategoryDTO,
+  type CurrencyDTO,
   type DebtReportDTO,
   type FavoriteDTO,
   type FavoritesResponse,
@@ -124,6 +125,151 @@ function claseMontoLargo(texto: string): string {
   return montoLargo(texto) ? " min-w-0 break-all" : "";
 }
 
+/** La foto completa del panel, ya parseada. Sin estado: sólo datos. */
+interface DashboardData {
+  movements: MovementDTO[];
+  truncated: boolean;
+  totals: PeriodTotalsDTO;
+  categories: CategoryDTO[];
+  accounts: AccountBalanceDTO[];
+  netWorthByCurrency: NetWorthByCurrencyDTO[];
+  netWorthSeries: NetWorthPointDTO[];
+  reconciliation: ReconciliationDTO;
+  debtReport: DebtReportDTO;
+  pendingCount: number;
+  /** `null` = el pedido de plantillas falló; se conservan las que ya había. */
+  favorites: FavoriteDTO[] | null;
+  favoritesMax: number | null;
+}
+
+/** Lo que devuelve la carga del panel: el aviso del generador y la foto. */
+interface DashboardResult {
+  /** Aviso del generador ("" si corrió bien). */
+  recurrenceRunError: string;
+  /** La foto, o `null` si algún pedido crítico falló. */
+  data: DashboardData | null;
+}
+
+/**
+ * Corre el generador de recurrencia y pide todo lo que muestra el panel.
+ *
+ * No toca estado y no lanza por fallos esperables: los devuelve como datos. Los
+ * `setState` viven en las continuaciones de `fetchAndApply` (regla
+ * `react-hooks/set-state-in-effect`).
+ */
+async function fetchDashboard(params: {
+  from: string;
+  to: string;
+  currency: CurrencyDTO;
+}): Promise<DashboardResult> {
+  const { from, to, currency } = params;
+
+  // ── El generador de recurrencia corre PRIMERO ─────────────────────────
+  //
+  // Materializa las fechas vencidas desde la última corrida; las reglas
+  // AUTO postean sus movimientos ahí. Tiene que ir ANTES de los pedidos de
+  // abajo: si corriera después, los totales del panel (que se suman en la
+  // base) no incluirían lo recién materializado y el panel mostraría
+  // números viejos con cara de nuevos.
+  //
+  // Su fallo NO bloquea el panel: un generador caído no puede dejar sin
+  // ver tus movimientos. Se avisa y se sigue.
+  let recurrenceRunError = "";
+  try {
+    const runRes = await fetch("/api/recurrence/run", { method: "POST" });
+    if (!runRes.ok) {
+      const data = (await runRes.json().catch(() => ({}))) as { error?: string };
+      recurrenceRunError =
+        data.error ?? "No se pudo correr el generador de recurrencia.";
+    }
+  } catch {
+    recurrenceRunError = "No se pudo correr el generador de recurrencia.";
+  }
+
+  // El mes de los reportes (reconciliación y deudas) sale del rango que se
+  // está pidiendo y no del estado `month` directo, así la URL siempre
+  // describe el MISMO mes que la lista y los totales de esta carga.
+  const shownMonth = from.slice(0, 7);
+
+  try {
+    const [
+      movementsRes,
+      categoriesRes,
+      accountsRes,
+      reconciliationRes,
+      debtRes,
+      recurrenceRes,
+      favoritesRes,
+    ] = await Promise.all([
+      fetch(`/api/transactions?from=${from}&to=${to}&currency=${currency}`),
+      fetch("/api/categories"),
+      fetch(`/api/accounts?includeArchived=false&currency=${currency}`),
+      fetch(`/api/reconciliation?month=${shownMonth}&currency=${currency}`),
+      fetch(`/api/debts?month=${shownMonth}&currency=${currency}`),
+      // Sólo para el banner de pendientes. Con `catch` propio: un fallo de
+      // ESTE pedido no puede tumbar un panel que por lo demás cargó bien.
+      fetch("/api/recurrence").catch(() => null),
+      // Las plantillas tampoco son críticas para el panel: si fallan, la
+      // pantalla sigue mostrando movimientos y el formulario normal.
+      fetch("/api/favorites").catch(() => null),
+    ]);
+
+    if (
+      !movementsRes.ok ||
+      !categoriesRes.ok ||
+      !accountsRes.ok ||
+      !reconciliationRes.ok ||
+      !debtRes.ok
+    ) {
+      throw new Error("Alguno de los pedidos falló.");
+    }
+
+    const movementsData = (await movementsRes.json()) as MovementsResponse;
+    const categoriesData = (await categoriesRes.json()) as {
+      categories: CategoryDTO[];
+    };
+    const accountsData = (await accountsRes.json()) as {
+      accounts: AccountBalanceDTO[];
+      netWorthByCurrency: NetWorthByCurrencyDTO[];
+      netWorthSeries: NetWorthPointDTO[];
+    };
+    const reconciliationData = (await reconciliationRes.json()) as {
+      reconciliation: ReconciliationDTO;
+    };
+    const debtData = (await debtRes.json()) as {
+      debtReport: DebtReportDTO;
+    };
+    const recurrenceData =
+      recurrenceRes && recurrenceRes.ok
+        ? ((await recurrenceRes.json()) as { pending: unknown[] })
+        : null;
+    const favoritesData =
+      favoritesRes && favoritesRes.ok
+        ? ((await favoritesRes.json()) as FavoritesResponse)
+        : null;
+
+    return {
+      recurrenceRunError,
+      data: {
+        movements: movementsData.movements,
+        truncated: movementsData.truncated,
+        totals: movementsData.totals,
+        categories: categoriesData.categories,
+        accounts: accountsData.accounts,
+        netWorthByCurrency: accountsData.netWorthByCurrency ?? [],
+        netWorthSeries: accountsData.netWorthSeries,
+        reconciliation: reconciliationData.reconciliation,
+        debtReport: debtData.debtReport,
+        pendingCount: recurrenceData?.pending.length ?? 0,
+        favorites: favoritesData?.favorites ?? null,
+        favoritesMax: favoritesData?.max ?? null,
+      },
+    };
+  } catch {
+    return { recurrenceRunError, data: null };
+  }
+}
+
 export default function Home() {
   const [month, setMonth] = useState(() => todayCalendar().slice(0, 7));
 
@@ -175,7 +321,13 @@ export default function Home() {
    */
   const [serverTotals, setServerTotals] = useState<PeriodTotalsDTO>(EMPTY_TOTALS);
 
-  const [loading, setLoading] = useState(true);
+  /**
+   * La combinación (mes, moneda) de la última carga que terminó. El indicador
+   * se DERIVA de compararla con la vigente: cambiar de mes o de moneda vuelve a
+   * mostrar la carga sin un efecto que apague el estado (regla
+   * `react-hooks/set-state-in-effect`).
+   */
+  const [settledKey, setSettledKey] = useState<string | null>(null);
   const [loadError, setLoadError] = useState("");
   /** Identifica la carga vigente; una respuesta de una carga vieja se descarta. */
   const loadToken = useRef(0);
@@ -298,132 +450,88 @@ export default function Home() {
     [range],
   );
 
-  const load = useCallback(async () => {
-    // Token de la carga: cambiar de moneda dispara dos cargas (la resuelta al
-    // hidratar y la de la preferencia guardada). Sin esto, la respuesta VIEJA
-    // puede llegar después de la nueva y pisar los totales de la moneda que la
-    // persona está mirando.
-    const token = ++loadToken.current;
-    setLoading(true);
-    setLoadError("");
-    try {
-      // ── El generador de recurrencia corre PRIMERO ─────────────────────────
-      //
-      // Materializa las fechas vencidas desde la última corrida; las reglas
-      // AUTO postean sus movimientos ahí. Tiene que ir ANTES de los pedidos de
-      // abajo: si corriera después, los totales del panel (que se suman en la
-      // base) no incluirían lo recién materializado y el panel mostraría
-      // números viejos con cara de nuevos.
-      //
-      // Su fallo NO bloquea el panel: un generador caído no puede dejar sin
-      // ver tus movimientos. Se avisa y se sigue.
-      try {
-        const runRes = await fetch("/api/recurrence/run", { method: "POST" });
-        if (runRes.ok) {
-          setRecurrenceRunError("");
-        } else {
-          const data = (await runRes.json().catch(() => ({}))) as { error?: string };
-          setRecurrenceRunError(
-            data.error ?? "No se pudo correr el generador de recurrencia.",
-          );
-        }
-      } catch {
-        setRecurrenceRunError("No se pudo correr el generador de recurrencia.");
-      }
+  /**
+   * La clave del pedido vigente: (mes, moneda). Cambia con `shiftMonth` o con
+   * el selector de moneda, y `loading` sale de compararla con la última carga
+   * que terminó.
+   */
+  const requestKey = `${range.from}|${range.to}|${currency}`;
+  const loading = settledKey !== requestKey;
 
-      // El mes de los reportes (reconciliación y deudas) sale del rango que se
-      // está pidiendo y no del estado `month` directo, así la URL siempre
-      // describe el MISMO mes que la lista y los totales de esta carga.
-      const shownMonth = range.from.slice(0, 7);
-      const [
-        movementsRes,
-        categoriesRes,
-        accountsRes,
-        reconciliationRes,
-        debtRes,
-        recurrenceRes,
-        favoritesRes,
-      ] = await Promise.all([
-        fetch(
-          `/api/transactions?from=${range.from}&to=${range.to}&currency=${currency}`,
-        ),
-        fetch("/api/categories"),
-        fetch(`/api/accounts?includeArchived=false&currency=${currency}`),
-        fetch(
-          `/api/reconciliation?month=${shownMonth}&currency=${currency}`,
-        ),
-        fetch(`/api/debts?month=${shownMonth}&currency=${currency}`),
-        // Sólo para el banner de pendientes. Con `catch` propio: un fallo de
-        // ESTE pedido no puede tumbar un panel que por lo demás cargó bien.
-        fetch("/api/recurrence").catch(() => null),
-        // Las plantillas tampoco son críticas para el panel: si fallan, la
-        // pantalla sigue mostrando movimientos y el formulario normal.
-        fetch("/api/favorites").catch(() => null),
-      ]);
-
-      if (
-        !movementsRes.ok ||
-        !categoriesRes.ok ||
-        !accountsRes.ok ||
-        !reconciliationRes.ok ||
-        !debtRes.ok
-      ) {
-        throw new Error("Alguno de los pedidos falló.");
-      }
-
-      const movementsData = (await movementsRes.json()) as MovementsResponse;
-      const categoriesData = (await categoriesRes.json()) as {
-        categories: CategoryDTO[];
-      };
-      const accountsData = (await accountsRes.json()) as {
-        accounts: AccountBalanceDTO[];
-        netWorthByCurrency: NetWorthByCurrencyDTO[];
-        netWorthSeries: NetWorthPointDTO[];
-      };
-      const reconciliationData = (await reconciliationRes.json()) as {
-        reconciliation: ReconciliationDTO;
-      };
-      const debtData = (await debtRes.json()) as {
-        debtReport: DebtReportDTO;
-      };
-      const recurrenceData =
-        recurrenceRes && recurrenceRes.ok
-          ? ((await recurrenceRes.json()) as { pending: unknown[] })
-          : null;
-      const favoritesData =
-        favoritesRes && favoritesRes.ok
-          ? ((await favoritesRes.json()) as FavoritesResponse)
-          : null;
-
-      if (token !== loadToken.current) return;
-
-      setMovements(movementsData.movements);
-      setTruncated(movementsData.truncated);
-      setServerTotals(movementsData.totals);
-      setCategories(categoriesData.categories);
-      setAccounts(accountsData.accounts);
-      setNetWorthByCurrency(accountsData.netWorthByCurrency ?? []);
-      setNetWorthSeries(accountsData.netWorthSeries);
-      setReconciliation(reconciliationData.reconciliation);
-      setDebtReport(debtData.debtReport);
-      setPendingCount(recurrenceData?.pending.length ?? 0);
-      if (favoritesData) {
-        setFavorites(favoritesData.favorites);
-        setFavoritesMax(favoritesData.max);
-      }
-    } catch {
-      if (token !== loadToken.current) return;
+  /** Aplica la foto del panel. Se llama desde la continuación de la promesa. */
+  const applyData = useCallback((key: string, result: DashboardResult) => {
+    setRecurrenceRunError(result.recurrenceRunError);
+    const data = result.data;
+    if (!data) {
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
       );
-    } finally {
-      if (token === loadToken.current) setLoading(false);
+      setSettledKey(key);
+      return;
     }
-  }, [range.from, range.to, currency]);
+
+    setMovements(data.movements);
+    setTruncated(data.truncated);
+    setServerTotals(data.totals);
+    setCategories(data.categories);
+    setAccounts(data.accounts);
+    setNetWorthByCurrency(data.netWorthByCurrency);
+    setNetWorthSeries(data.netWorthSeries);
+    setReconciliation(data.reconciliation);
+    setDebtReport(data.debtReport);
+    setPendingCount(data.pendingCount);
+    if (data.favorites) {
+      setFavorites(data.favorites);
+      if (data.favoritesMax !== null) setFavoritesMax(data.favoritesMax);
+    }
+    setLoadError("");
+    setSettledKey(key);
+  }, []);
+
+  /**
+   * Carga el panel sin encender el indicador.
+   *
+   * Es la que dispara el efecto: sus `setState` viven en las continuaciones de
+   * la promesa, no en el cuerpo síncrono del efecto (regla
+   * `react-hooks/set-state-in-effect`). El token descarta la respuesta vieja:
+   * cambiar de moneda dispara dos cargas (la resuelta al hidratar y la de la
+   * preferencia guardada) y, sin esto, la que llega tarde pisa los totales de
+   * la moneda que la persona está mirando.
+   */
+  const fetchAndApply = useCallback(() => {
+    const token = ++loadToken.current;
+    const key = `${range.from}|${range.to}|${currency}`;
+    return fetchDashboard({
+      from: range.from,
+      to: range.to,
+      currency,
+    }).then(
+      (result) => {
+        if (token !== loadToken.current) return;
+        applyData(key, result);
+      },
+      () => {
+        if (token !== loadToken.current) return;
+        setLoadError(
+          "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
+        );
+        setSettledKey(key);
+      },
+    );
+  }, [range.from, range.to, currency, applyData]);
+
+  /** La usan los handlers: vuelve a mostrar la carga y delega. */
+  const load = useCallback(() => {
+    setLoadError("");
+    setSettledKey(null);
+    return fetchAndApply();
+  }, [fetchAndApply]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    // Al montar (o al cambiar mes/moneda) la clave vigente no es la última
+    // terminada: el indicador ya está encendido por derivación.
+    void fetchAndApply();
+  }, [fetchAndApply]);
 
   /**
    * Abre el formulario, opcionalmente precargado con una plantilla.

@@ -112,8 +112,16 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
   const [total, setTotal] = useState("");
   /** El campo de la tasa (para seleccionarlo al cambiar de modo). */
   const tnaRef = useRef<HTMLInputElement>(null);
-  /** Hay que seleccionar el texto del campo de la tasa (tras cambiar de modo). */
-  const [seleccionarTna, setSeleccionarTna] = useState(false);
+  /**
+   * Pedidos de "seleccionar la tasa" (uno por cambio de modo al modo RATE).
+   *
+   * Es un contador y no un booleano para que el efecto que hace foco no tenga
+   * que apagar el flag con un `setState` (regla
+   * `react-hooks/set-state-in-effect`): cada pedido tiene un número, el efecto
+   * recuerda el último que atendió y no se repite.
+   */
+  const [focusTnaRequest, setFocusTnaRequest] = useState(0);
+  const lastFocusTnaRequest = useRef(0);
   /**
    * El número de pedido de la vista previa.
    *
@@ -174,22 +182,31 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
   // El cálculo NO se hace acá: si el formulario reimplementara la fórmula,
   // podría mostrar una cuota distinta a la que después guarda la app (ver
   // `app/api/loans/preview/route.ts`).
-  useEffect(() => {
-    if (step !== "form") return;
+  //
+  // Cada modo necesita su propio dato: la tasa, la cuota o el total.
+  const faltaElDato =
+    mode === "RATE"
+      ? tna.trim() === ""
+      : mode === "PAYMENT"
+        ? payment.trim() === ""
+        : total.trim() === "";
+  const previewReady =
+    step === "form" && principalRaw !== "" && !faltaElDato && count.trim() !== "";
 
-    // Cada modo necesita su propio dato: la tasa, la cuota o el total.
-    const faltaElDato =
-      mode === "RATE"
-        ? !tna.trim()
-        : mode === "PAYMENT"
-          ? !payment.trim()
-          : !total.trim();
-
-    if (!principalRaw || faltaElDato || !count.trim()) {
+  // Sin los datos completos no hay vista previa: se descarta en el MISMO render
+  // (patrón de la doc de React: «adjusting some state when a prop changes»), en
+  // vez de un `setState` síncrono dentro del efecto.
+  const [wasPreviewReady, setWasPreviewReady] = useState(previewReady);
+  if (wasPreviewReady !== previewReady) {
+    setWasPreviewReady(previewReady);
+    if (!previewReady) {
       setPreview(null);
       setPreviewError("");
-      return;
     }
+  }
+
+  useEffect(() => {
+    if (!previewReady) return;
 
     const timer = setTimeout(async () => {
       // El número de ESTE pedido: si mientras tanto los datos cambiaron (o
@@ -240,7 +257,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
       previewSeq.current += 1;
     };
   }, [
-    step,
+    previewReady,
     principalRaw,
     mode,
     tna,
@@ -269,27 +286,33 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
       setTna(tnaDerivada);
     }
     setMode("RATE");
-    setSeleccionarTna(true);
+    setFocusTnaRequest((current) => current + 1);
   }
 
   /** Cambiar de modo (el botón del selector): mismo criterio que el campo. */
   function cambiarModo(nuevo: TermsMode) {
     if (nuevo === mode) return;
     setMode(nuevo);
-    if (nuevo === "RATE") setSeleccionarTna(true);
+    if (nuevo === "RATE") setFocusTnaRequest((current) => current + 1);
   }
 
-  // El texto del campo de la tasa queda seleccionado al cambiar de modo: lo
-  // que se escriba después REEMPLAZA el número, no se le pega al final.
+  /**
+   * El texto del campo de la tasa queda seleccionado al cambiar de modo: lo
+   * que se escriba después REEMPLAZA el número, no se le pega al final.
+   *
+   * Se atiende cada pedido UNA sola vez (el contador contra el ref), así el
+   * efecto no necesita apagar el flag con un `setState`.
+   */
   useEffect(() => {
-    if (!seleccionarTna) return;
+    if (focusTnaRequest === lastFocusTnaRequest.current) return;
+    lastFocusTnaRequest.current = focusTnaRequest;
+
     const campo = tnaRef.current;
     if (campo) {
       campo.focus();
       campo.select();
     }
-    setSeleccionarTna(false);
-  }, [seleccionarTna]);
+  }, [focusTnaRequest]);
 
   const kind: "LOAN" | "RECEIVABLE" = direction === "I_OWE" ? "LOAN" : "RECEIVABLE";
   const verb = direction === "I_OWE" ? "pagar" : "cobrar";

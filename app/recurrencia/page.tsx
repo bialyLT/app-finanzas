@@ -77,6 +77,87 @@ function ruleFlow(item: {
     : `Sale de ${source}${category}`;
 }
 
+/** Lo que la pantalla pide: la corrida (si se pidió) y la vista leída. */
+interface RecurrencePageData {
+  /** Resultado de la corrida, o `null` si esta carga no la pidió. */
+  runResult: { data: RecurrenceRunDTO | null; error: string } | null;
+  /** La vista leída, o `null` si la lectura falló. */
+  view: {
+    rules: RecurrenceRuleDTO[];
+    pending: PendingOccurrenceDTO[];
+    truncated: boolean;
+    accounts: AccountBalanceDTO[];
+    categories: CategoryDTO[];
+  } | null;
+}
+
+/**
+ * Corre el generador (si se pidió) y lee la vista. No toca estado: los
+ * `setState` viven en las continuaciones de quien llama, nunca en el cuerpo
+ * síncrono de un efecto (regla `react-hooks/set-state-in-effect`).
+ *
+ * Los dos fallos se separan a propósito, igual que antes: el del generador NO
+ * bloquea la vista (se devuelve como `runResult.error`) y el de lectura sí
+ * (`view: null`).
+ */
+async function fetchRecurrencePage(options: {
+  run: boolean;
+  archived: boolean;
+}): Promise<RecurrencePageData> {
+  let runResult: RecurrencePageData["runResult"] = null;
+
+  if (options.run) {
+    runResult = { data: null, error: "" };
+    try {
+      const runRes = await fetch("/api/recurrence/run", { method: "POST" });
+      if (runRes.ok) {
+        runResult = { data: (await runRes.json()) as RecurrenceRunDTO, error: "" };
+      } else {
+        const data = (await runRes.json().catch(() => ({}))) as { error?: string };
+        runResult = {
+          data: null,
+          error: data.error ?? "No se pudo correr el generador.",
+        };
+      }
+    } catch {
+      runResult = { data: null, error: "No se pudo correr el generador." };
+    }
+  }
+
+  try {
+    const [overviewRes, accountsRes, categoriesRes] = await Promise.all([
+      fetch(`/api/recurrence${options.archived ? "?includeArchived=1" : ""}`),
+      fetch("/api/accounts?includeArchived=true"),
+      fetch("/api/categories"),
+    ]);
+
+    if (!overviewRes.ok || !accountsRes.ok || !categoriesRes.ok) {
+      throw new Error("Alguno de los pedidos falló.");
+    }
+
+    const overview = (await overviewRes.json()) as RecurrenceResponse;
+    const accountsData = (await accountsRes.json()) as {
+      accounts: AccountBalanceDTO[];
+    };
+    const categoriesData = (await categoriesRes.json()) as {
+      categories: CategoryDTO[];
+    };
+
+    return {
+      runResult,
+      view: {
+        rules: overview.rules,
+        pending: overview.pending,
+        truncated: overview.truncated,
+        accounts: accountsData.accounts,
+        categories: categoriesData.categories,
+      },
+    };
+  } catch {
+    return { runResult, view: null };
+  }
+}
+
 export default function RecurrencePage() {
   const [rules, setRules] = useState<RecurrenceRuleDTO[]>([]);
   const [pending, setPending] = useState<PendingOccurrenceDTO[]>([]);
@@ -113,58 +194,55 @@ export default function RecurrencePage() {
    * El fallo del generador NO bloquea la vista: si lo que falla es la corrida,
    * se avisa en su tarjeta y se sigue con el GET, que no escribe y muestra lo
    * que haya. Un error de lectura sí corta, porque no hay nada que mostrar.
+   *
+   * El pedido vive fuera del componente: acá sólo se aplica el resultado, en
+   * las continuaciones de la promesa (nunca en el cuerpo síncrono del efecto).
    */
-  const load = useCallback(async (options: { run: boolean; archived: boolean }) => {
-    setLoading(true);
-    setLoadError("");
-
-    if (options.run) {
-      try {
-        const runRes = await fetch("/api/recurrence/run", { method: "POST" });
-        if (runRes.ok) {
-          setRun((await runRes.json()) as RecurrenceRunDTO);
-          setRunError("");
-        } else {
-          const data = (await runRes.json().catch(() => ({}))) as { error?: string };
-          setRunError(data.error ?? "No se pudo correr el generador.");
-        }
-      } catch {
-        setRunError("No se pudo correr el generador.");
-      }
+  const applyData = useCallback((data: RecurrencePageData) => {
+    if (data.runResult) {
+      if (data.runResult.data) setRun(data.runResult.data);
+      setRunError(data.runResult.error);
     }
 
-    try {
-      const [overviewRes, accountsRes, categoriesRes] = await Promise.all([
-        fetch(`/api/recurrence${options.archived ? "?includeArchived=1" : ""}`),
-        fetch("/api/accounts?includeArchived=true"),
-        fetch("/api/categories"),
-      ]);
-
-      if (!overviewRes.ok || !accountsRes.ok || !categoriesRes.ok) {
-        throw new Error("Alguno de los pedidos falló.");
-      }
-
-      const overview = (await overviewRes.json()) as RecurrenceResponse;
-      const accountsData = (await accountsRes.json()) as { accounts: AccountBalanceDTO[] };
-      const categoriesData = (await categoriesRes.json()) as { categories: CategoryDTO[] };
-
-      setRules(overview.rules);
-      setPending(overview.pending);
-      setTruncated(overview.truncated);
-      setAccounts(accountsData.accounts);
-      setCategories(categoriesData.categories);
-    } catch {
+    if (!data.view) {
       setLoadError(
         "No se pudieron cargar los datos. Revisá que la base esté levantada y recargá.",
       );
-    } finally {
       setLoading(false);
+      return;
     }
+
+    setRules(data.view.rules);
+    setPending(data.view.pending);
+    setTruncated(data.view.truncated);
+    setAccounts(data.view.accounts);
+    setCategories(data.view.categories);
+    setLoading(false);
   }, []);
 
+  /**
+   * Carga la vista sin encender el indicador. Es la que dispara el efecto.
+   */
+  const fetchAndApply = useCallback(
+    (options: { run: boolean; archived: boolean }) =>
+      fetchRecurrencePage(options).then(applyData),
+    [applyData],
+  );
+
+  /** La usan los handlers: enciende el indicador y delega en `fetchAndApply`. */
+  const load = useCallback(
+    (options: { run: boolean; archived: boolean }) => {
+      setLoading(true);
+      setLoadError("");
+      return fetchAndApply(options);
+    },
+    [fetchAndApply],
+  );
+
   useEffect(() => {
-    load({ run: true, archived: false });
-  }, [load]);
+    // La carga inicial ya arranca con `loading = true`: no hace falta encenderlo.
+    void fetchAndApply({ run: true, archived: false });
+  }, [fetchAndApply]);
 
   function showFlash(message: string, isError = false) {
     setFlash(message);

@@ -59,6 +59,46 @@ function shortMonthLabel(year: number, month: number): string {
 
 type Modal = { type: "config"; cardId: string } | { type: "plan"; cardId: string };
 
+/** La foto que pide la pantalla, ya parseada. Sin estado: sólo datos. */
+interface CardsPageData {
+  cards: CardViewDTO[];
+  truncated: boolean;
+  accounts: AccountBalanceDTO[];
+  categories: CategoryDTO[];
+}
+
+/**
+ * Pide tarjetas, cuentas y categorías. No toca estado: los `setState` viven en
+ * las continuaciones de quien llama, nunca en el cuerpo síncrono de un efecto
+ * (regla `react-hooks/set-state-in-effect`).
+ */
+async function fetchCardsPage(archived: boolean): Promise<CardsPageData> {
+  const [cardsRes, accountsRes, categoriesRes] = await Promise.all([
+    fetch(`/api/cards${archived ? "" : "?includeArchived=false"}`),
+    fetch("/api/accounts"),
+    fetch("/api/categories"),
+  ]);
+
+  if (!cardsRes.ok || !accountsRes.ok || !categoriesRes.ok) {
+    throw new Error("Alguno de los pedidos falló.");
+  }
+
+  const cardsData = (await cardsRes.json()) as CardsResponse;
+  const accountsData = (await accountsRes.json()) as {
+    accounts: AccountBalanceDTO[];
+  };
+  const categoriesData = (await categoriesRes.json()) as {
+    categories: CategoryDTO[];
+  };
+
+  return {
+    cards: cardsData.cards,
+    truncated: cardsData.truncated,
+    accounts: accountsData.accounts,
+    categories: categoriesData.categories,
+  };
+}
+
 export default function CardsPage() {
   const [cards, setCards] = useState<CardViewDTO[]>([]);
   const [accounts, setAccounts] = useState<AccountBalanceDTO[]>([]);
@@ -91,45 +131,47 @@ export default function CardsPage() {
    * se piden para el selector de "desde qué cuenta se paga" y las categorías
    * para el datalist del alta de cuotas.
    */
-  const load = useCallback(async (options: { archived: boolean }) => {
-    setLoading(true);
-    setLoadError("");
-
-    try {
-      const [cardsRes, accountsRes, categoriesRes] = await Promise.all([
-        fetch(`/api/cards${options.archived ? "" : "?includeArchived=false"}`),
-        fetch("/api/accounts"),
-        fetch("/api/categories"),
-      ]);
-
-      if (!cardsRes.ok || !accountsRes.ok || !categoriesRes.ok) {
-        throw new Error("Alguno de los pedidos falló.");
-      }
-
-      const cardsData = (await cardsRes.json()) as CardsResponse;
-      const accountsData = (await accountsRes.json()) as {
-        accounts: AccountBalanceDTO[];
-      };
-      const categoriesData = (await categoriesRes.json()) as {
-        categories: CategoryDTO[];
-      };
-
-      setCards(cardsData.cards);
-      setTruncated(cardsData.truncated);
-      setAccounts(accountsData.accounts);
-      setCategories(categoriesData.categories);
-    } catch {
-      setLoadError(
-        "No se pudieron cargar las tarjetas. Revisá que la base esté levantada y recargá.",
-      );
-    } finally {
-      setLoading(false);
-    }
+  /** Aplica la foto que llegó. Se llama desde la continuación de la promesa. */
+  const applyData = useCallback((data: CardsPageData) => {
+    setCards(data.cards);
+    setTruncated(data.truncated);
+    setAccounts(data.accounts);
+    setCategories(data.categories);
+    setLoading(false);
   }, []);
 
+  /**
+   * Carga la vista sin encender el indicador.
+   *
+   * Es la que dispara el efecto: sus `setState` viven en las continuaciones de
+   * la promesa, no en el cuerpo síncrono del efecto (regla
+   * `react-hooks/set-state-in-effect`).
+   */
+  const fetchAndApply = useCallback(
+    (options: { archived: boolean }) =>
+      fetchCardsPage(options.archived).then(applyData, () => {
+        setLoadError(
+          "No se pudieron cargar las tarjetas. Revisá que la base esté levantada y recargá.",
+        );
+        setLoading(false);
+      }),
+    [applyData],
+  );
+
+  /** La usan los handlers: enciende el indicador y delega en `fetchAndApply`. */
+  const load = useCallback(
+    (options: { archived: boolean }) => {
+      setLoading(true);
+      setLoadError("");
+      return fetchAndApply(options);
+    },
+    [fetchAndApply],
+  );
+
   useEffect(() => {
-    load({ archived: false });
-  }, [load]);
+    // La carga inicial ya arranca con `loading = true`: no hace falta encenderlo.
+    void fetchAndApply({ archived: false });
+  }, [fetchAndApply]);
 
   function showFlash(message: string, isError = false) {
     setFlash(message);

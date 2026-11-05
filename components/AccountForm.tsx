@@ -119,12 +119,27 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
   // El cálculo NO se hace acá. Ver app/api/loans/preview/route.ts: si el
   // formulario reimplementara la fórmula, podría mostrar una cuota distinta a la
   // que después guarda la app.
-  useEffect(() => {
-    if (!isLoan || !principal.trim() || !tnaPercent.trim() || !installmentCount.trim()) {
+  const previewReady =
+    isLoan &&
+    principal.trim() !== "" &&
+    tnaPercent.trim() !== "" &&
+    installmentCount.trim() !== "";
+
+  // Si el formulario deja de tener los datos completos, la vista previa se
+  // descarta EN EL MISMO render (patrón de la doc de React: «adjusting some
+  // state when a prop changes»). Antes lo hacía el efecto, y ese `setState`
+  // síncrono encadenaba un render (regla `react-hooks/set-state-in-effect`).
+  const [wasPreviewReady, setWasPreviewReady] = useState(previewReady);
+  if (wasPreviewReady !== previewReady) {
+    setWasPreviewReady(previewReady);
+    if (!previewReady) {
       setPreview(null);
       setPreviewError("");
-      return;
     }
+  }
+
+  useEffect(() => {
+    if (!previewReady) return;
 
     const timer = setTimeout(async () => {
       try {
@@ -155,7 +170,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
     // una consulta vieja puede llegar DESPUÉS de una nueva y sobrescribirla con
     // datos obsoletos.
     return () => clearTimeout(timer);
-  }, [isLoan, principal, tnaPercent, installmentCount]);
+  }, [previewReady, principal, tnaPercent, installmentCount]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();

@@ -62,15 +62,25 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
   );
 
   // ── Vista previa (con el mismo debounce que el formulario de préstamos) ─────
-  useEffect(() => {
-    const total = totalAmount.trim();
-    const count = installments.trim();
+  const previewReady = totalAmount.trim() !== "" && installments.trim() !== "";
 
-    if (total === "" || count === "") {
+  // Sin los dos datos no hay nada que previsualizar: se descarta en el MISMO
+  // render, sin un efecto que apague el estado (regla
+  // `react-hooks/set-state-in-effect`).
+  const [wasPreviewReady, setWasPreviewReady] = useState(previewReady);
+  if (wasPreviewReady !== previewReady) {
+    setWasPreviewReady(previewReady);
+    if (!previewReady) {
       setPreview(null);
       setPreviewError("");
-      return;
     }
+  }
+
+  useEffect(() => {
+    if (!previewReady) return;
+
+    const total = totalAmount.trim();
+    const count = installments.trim();
 
     const timer = setTimeout(async () => {
       try {
@@ -100,7 +110,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
     // cumpla el tiempo: sin esto, una respuesta lenta de una consulta vieja
     // puede llegar DESPUÉS de una nueva y sobrescribirla.
     return () => clearTimeout(timer);
-  }, [totalAmount, installments, cashPrice]);
+  }, [previewReady, totalAmount, installments, cashPrice]);
 
   const totalPreview = formatAmountInput(totalAmount);
 

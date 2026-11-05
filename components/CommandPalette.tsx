@@ -36,6 +36,20 @@ function favoriteBlocked(favorite: FavoriteDTO): boolean {
 }
 
 /**
+ * Descarga un export.
+ *
+ * La navegación vive FUERA del componente a propósito: asignar
+ * `window.location.href` desde el cuerpo de un componente o hook es una
+ * mutación de un valor externo durante el render (regla
+ * `react-hooks/immutability`). Acá sólo se ejecuta al hacer clic, y el efecto
+ * es exactamente el mismo: el navegador descarga el archivo y no recarga la
+ * pantalla actual.
+ */
+function downloadExport(format: "csv" | "json") {
+  window.location.href = `/api/export?format=${format}`;
+}
+
+/**
  * Paleta global de comandos (`Ctrl+K` / `Cmd+K`).
  *
  * El componente sólo dibuja y ejecuta; el filtrado, el orden y el wrap-around
@@ -102,7 +116,7 @@ export default function CommandPalette({
         group: "Acciones",
         keywords: "csv exportar descargar backup guardar archivo",
         run: closeAndRun(() => {
-          window.location.href = "/api/export?format=csv";
+          downloadExport("csv");
         }),
       },
       {
@@ -112,7 +126,7 @@ export default function CommandPalette({
         group: "Acciones",
         keywords: "json exportar descargar backup guardar datos",
         run: closeAndRun(() => {
-          window.location.href = "/api/export?format=json";
+          downloadExport("json");
         }),
       },
       {
@@ -193,17 +207,18 @@ export default function CommandPalette({
   }, []);
 
   // El índice activo siempre apunta a algo visible. Al cambiar la búsqueda se
-  // vuelve al primero, como en cualquier combobox.
-  useEffect(() => {
-    setActive(filtered.length > 0 ? 0 : -1);
-  }, [filtered]);
+  // vuelve al primero (eso pasa en el `onChange` del campo, que es el evento
+  // que la cambia) y acá se acota para que nunca apunte a una fila que no
+  // existe, sin un efecto que apague el estado después del commit.
+  const activeIndex =
+    filtered.length === 0 ? -1 : Math.min(active, filtered.length - 1);
 
   useEffect(() => {
-    if (active < 0) return;
+    if (activeIndex < 0) return;
     document
-      .getElementById(`palette-item-${active}`)
+      .getElementById(`palette-item-${activeIndex}`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+  }, [activeIndex]);
 
   // Escape y trampa de foco. Tab cicla por los elementos focusables del
   // diálogo; sin esto el foco se iría al panel de atrás (que sigue visible).
@@ -275,13 +290,18 @@ export default function CommandPalette({
             ref={inputRef}
             id="palette-input"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              // Cambió la búsqueda: el activo vuelve al primero, como en
+              // cualquier combobox.
+              setActive(0);
+            }}
             onKeyDown={(event) => {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();
-                setActive((current) =>
+                setActive(
                   movePaletteIndex(
-                    current,
+                    activeIndex,
                     event.key === "ArrowDown" ? 1 : -1,
                     filtered.length,
                   ),
@@ -290,14 +310,16 @@ export default function CommandPalette({
               }
               if (event.key === "Enter") {
                 event.preventDefault();
-                const action = filtered[active];
+                const action = filtered[activeIndex];
                 if (action) run(action);
               }
             }}
             role="combobox"
             aria-expanded="true"
             aria-controls="palette-listbox"
-            aria-activedescendant={active >= 0 ? `palette-item-${active}` : undefined}
+            aria-activedescendant={
+              activeIndex >= 0 ? `palette-item-${activeIndex}` : undefined
+            }
             aria-autocomplete="list"
             placeholder="Buscar acciones, pantallas o plantillas…"
             autoComplete="off"
@@ -333,14 +355,14 @@ export default function CommandPalette({
                 variant="ghost"
                 size="sm"
                 role="option"
-                aria-selected={active === index}
+                aria-selected={activeIndex === index}
                 aria-disabled={action.disabled}
                 disabled={action.disabled}
                 onMouseDown={(event) => event.preventDefault()}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => run(action)}
                 className={`w-full justify-between px-4 py-2 text-left ${
-                  active === index
+                  activeIndex === index
                     ? "bg-surface-3 "
                     : "hover:bg-surface-3 hover:bg-surface-3/60"
                 } ${action.disabled ? "opacity-40 cursor-not-allowed" : ""}`}

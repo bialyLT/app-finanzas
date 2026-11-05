@@ -322,18 +322,14 @@ export default function TransactionForm({
     description.trim() !== "";
 
   useEffect(() => {
-    if (suggestionDismissed) {
-      setDescriptionSuggestions([]);
-      setActiveSuggestion(-1);
-      return;
-    }
-
     const query = description.trim();
-    if (query.length < 2) {
-      setDescriptionSuggestions([]);
-      setActiveSuggestion(-1);
-      return;
-    }
+
+    // Sin texto suficiente o con el desplegable descartado no hay nada que
+    // pedir. La lista se limpia en los EVENTOS que la descartan (aceptar,
+    // Escape, cambiar de tipo) y en el `onChange` de la nota cuando el texto
+    // deja de alcanzar: un `setState` síncrono acá encadenaría un render
+    // (regla `react-hooks/set-state-in-effect`).
+    if (suggestionDismissed || query.length < 2) return;
 
     // AbortController + debounce: tipear rápido no dispara un pedido por tecla
     // ni deja que una respuesta vieja pise a la nueva.
@@ -792,7 +788,14 @@ export default function TransactionForm({
             // Prioridad: mientras el autocompletado de descripción está en
             // juego, la ayuda de categoría se colapsa. Tipear en categoría la
             // reabre (ver `onChange` de ese campo).
-            if (value.trim().length >= 2) setCategoryDismissed(true);
+            if (value.trim().length >= 2) {
+              setCategoryDismissed(true);
+            } else {
+              // Con menos de dos caracteres no hay sugerencias que ofrecer, y
+              // la que esté en pantalla ya no corresponde a lo escrito.
+              setDescriptionSuggestions([]);
+              setActiveSuggestion(-1);
+            }
           }}
           onFocus={() => setDescriptionFocused(true)}
           onBlur={() => setDescriptionFocused(false)}

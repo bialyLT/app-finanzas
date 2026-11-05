@@ -25,10 +25,56 @@ interface CategoryOption {
   name: string;
 }
 
+/** Lo que devuelve la carga: la lista del mes y, si se pudo, las categorías. */
+interface BudgetsData {
+  budgets: BudgetViewItem[];
+  /** `null` = el pedido de categorías falló: se conservan las que ya había. */
+  categories: CategoryOption[] | null;
+}
+
+/**
+ * Pide los presupuestos del mes y las categorías de gasto. No toca estado: los
+ * `setState` viven en las continuaciones de quien llama, nunca en el cuerpo
+ * síncrono de un efecto (regla `react-hooks/set-state-in-effect`).
+ */
+async function fetchBudgets(month: string): Promise<BudgetsData> {
+  const [resBudgets, resCategories] = await Promise.all([
+    fetch(`/api/budgets?month=${encodeURIComponent(month)}`),
+    fetch("/api/categories?kind=EXPENSE"),
+  ]);
+
+  if (!resBudgets.ok) {
+    throw new Error("No se pudieron cargar los presupuestos.");
+  }
+
+  const dataBudgets = (await resBudgets.json()) as {
+    budgets?: BudgetViewItem[] | null;
+  };
+  const dataCats = resCategories.ok
+    ? ((await resCategories.json()) as { id: string; name: string }[] | null)
+    : null;
+
+  return {
+    budgets: dataBudgets.budgets || [],
+    categories: dataCats
+      ? dataCats.map((category) => ({
+          id: category.id,
+          name: category.name,
+        }))
+      : null,
+  };
+}
+
 export function BudgetsSection({ month }: { month: string }) {
   const [budgets, setBudgets] = useState<BudgetViewItem[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
-  const [loading, setLoading] = useState(true);
+  /**
+   * El mes de la última carga terminada. El indicador se DERIVA de compararlo
+   * con el mes pedido: cambiar de mes vuelve a mostrar "cargando" sin un efecto
+   * que apague el estado (regla `react-hooks/set-state-in-effect`).
+   */
+  const [loadedMonth, setLoadedMonth] = useState<string | null>(null);
+  const loading = loadedMonth !== month;
   const [error, setError] = useState<string | null>(null);
 
   // Formulario nuevo / edición
@@ -36,40 +82,40 @@ export function BudgetsSection({ month }: { month: string }) {
   const [amountStr, setAmountStr] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [resBudgets, resCategories] = await Promise.all([
-        fetch(`/api/budgets?month=${encodeURIComponent(month)}`),
-        fetch("/api/categories?kind=EXPENSE"),
-      ]);
+  /**
+   * Carga los datos del mes sin encender el indicador. Es la que dispara el
+   * efecto; su `setState` vive en las continuaciones de la promesa.
+   */
+  const fetchAndApply = useCallback(
+    (targetMonth: string) =>
+      fetchBudgets(targetMonth).then(
+        (data) => {
+          setBudgets(data.budgets);
+          if (data.categories) setCategories(data.categories);
+          setError(null);
+          setLoadedMonth(targetMonth);
+        },
+        (err: unknown) => {
+          setError(
+            err instanceof Error ? err.message : "Error al cargar presupuestos",
+          );
+          setLoadedMonth(targetMonth);
+        },
+      ),
+    [],
+  );
 
-      if (!resBudgets.ok) {
-        throw new Error("No se pudieron cargar los presupuestos.");
-      }
-      const dataBudgets = await resBudgets.json();
-      setBudgets(dataBudgets.budgets || []);
-
-      if (resCategories.ok) {
-        const dataCats = await resCategories.json();
-        setCategories(
-          (dataCats || []).map((c: { id: string; name: string }) => ({
-            id: c.id,
-            name: c.name,
-          })),
-        );
-      }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error al cargar presupuestos");
-    } finally {
-      setLoading(false);
-    }
-  }, [month]);
+  /** La usan los handlers: vuelve a mostrar "cargando" y delega. */
+  const loadData = useCallback(() => {
+    setLoadedMonth(null);
+    return fetchAndApply(month);
+  }, [fetchAndApply, month]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    // Al montar (o al cambiar el mes) `loadedMonth` todavía no es el pedido: el
+    // indicador ya está encendido por derivación.
+    void fetchAndApply(month);
+  }, [fetchAndApply, month]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,7 +215,7 @@ export function BudgetsSection({ month }: { month: string }) {
         </p>
       )}
 
-      {error && (
+      {!loading && error && (
         <p className="text-xs text-brand-error">
           {error}
         </p>

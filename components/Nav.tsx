@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import LogoutButton from "./LogoutButton";
@@ -67,14 +67,23 @@ const LINKS: NavDestination[] = [
 ];
 
 export default function Nav() {
-  const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
-  // Navegar con el menú abierto lo deja abierto: el panel taparía la vista
-  // nueva sin que nadie lo pidiera.
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
+  /**
+   * Menú abierto + la ruta en la que se abrió.
+   *
+   * Navegar tiene que cerrarlo, y volver a la ruta donde se abrió NO tiene que
+   * reabrirlo (antes lo cerraba un efecto al cambiar `pathname`). Se ajusta el
+   * estado en el render cuando la ruta cambió: es el patrón de React para
+   * responder a un cambio de prop sin un efecto que apague estado después del
+   * commit (regla `react-hooks/set-state-in-effect`).
+   */
+  const [open, setOpen] = useState(false);
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (lastPathname !== pathname) {
+    setLastPathname(pathname);
+    if (open) setOpen(false);
+  }
 
   return (
     <>
