@@ -48,6 +48,16 @@ export const ParsedMovementSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, "La fecha debe tener formato AAAA-MM-DD."),
   description: z.string().max(200),
+  /**
+   * Código de moneda propuesto por el modelo (p. ej. "ARS" / "USD").
+   *
+   * Es `string` y no el enum `Currency` a propósito: el LLM puede devolver
+   * una divisa que la app no conoce ("EUR", "BRL"). Rechazar el lote entero
+   * por eso perdería el movimiento; `resolveBatch` la convierte en una
+   * aclaración `currency` con las monedas habilitadas. `null` = no se pudo
+   * determinar, y ahí se completa desde la cuenta resuelta.
+   */
+  currency: z.string().nullable().default(null),
   categoryName: z.string().nullable(),
   accountName: z.string().nullable(),
   fromAccountName: z.string().nullable(),

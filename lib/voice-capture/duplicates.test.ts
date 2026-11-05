@@ -26,6 +26,7 @@ describe("voice-capture / duplicates detection", () => {
     const candidate: ResolvedMovement = {
       kind: "EXPENSE",
       amount: 4500,
+      currency: "ARS",
       date: "2026-10-22",
       description: "Coto",
       accountName: "Galicia",
@@ -51,6 +52,7 @@ describe("voice-capture / duplicates detection", () => {
     const candidateDiffAccount: ResolvedMovement = {
       kind: "EXPENSE",
       amount: 4500,
+      currency: "ARS",
       date: "2026-10-22",
       description: "Coto",
       accountName: "Efectivo",

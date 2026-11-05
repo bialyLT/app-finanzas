@@ -8,6 +8,7 @@ import {
 const sampleInput: ParseInput = {
   text: "gasté 4500 en el súper con la Galicia",
   today: "2026-10-22",
+  currencies: ["ARS"],
   accounts: [{ name: "Galicia", kind: "BANK" }],
   categories: [{ name: "Supermercado", kind: "EXPENSE" }],
 };

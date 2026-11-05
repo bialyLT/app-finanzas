@@ -1,11 +1,36 @@
 import { NextResponse } from "next/server";
 import { assertSameOrigin } from "@/lib/auth/csrf";
 import { requireApiSession, unauthorized } from "@/lib/auth/dal";
+import { DEFAULT_CURRENCY } from "@/lib/currency";
 import { todayCalendar } from "@/lib/dates";
 import { prisma } from "@/lib/prisma";
 import { getAiProvider } from "@/lib/voice-capture/provider";
 import { parseRateLimiter } from "@/lib/voice-capture/rate-limit";
 import { resolveBatch } from "@/lib/voice-capture/resolve";
+
+/**
+ * Lee las monedas habilitadas del singleton de configuración.
+ *
+ * Nunca devuelve una lista vacía: si la fila no existe (base a medio migrar) o
+ * la lectura falla, cae al default de la app. Un prompt sin monedas haría que el
+ * modelo invente una unidad, que es exactamente lo que F4.5 quiere impedir.
+ */
+async function loadEnabledCurrencies(): Promise<string[]> {
+  try {
+    const settings = await prisma.appSettings.findUnique({
+      where: { id: 1 },
+      select: { enabledCurrencies: true },
+    });
+    const currencies = settings?.enabledCurrencies ?? [];
+    return currencies.length > 0 ? currencies : [DEFAULT_CURRENCY];
+  } catch (error: unknown) {
+    console.warn(
+      "[api/parse] No se pudo leer enabledCurrencies; se usa el default.",
+      error,
+    );
+    return [DEFAULT_CURRENCY];
+  }
+}
 
 export async function POST(req: Request) {
   if (!(await requireApiSession())) return unauthorized();
@@ -106,15 +131,16 @@ export async function POST(req: Request) {
   }
 
   try {
-    const [accounts, categories] = await Promise.all([
+    const [accounts, categories, currencies] = await Promise.all([
       prisma.account.findMany({
-        select: { id: true, name: true, kind: true },
+        select: { id: true, name: true, kind: true, currency: true },
         orderBy: { name: "asc" },
       }),
       prisma.category.findMany({
         select: { id: true, name: true, kind: true },
         orderBy: { name: "asc" },
       }),
+      loadEnabledCurrencies(),
     ]);
 
     const today = todayCalendar();
@@ -123,6 +149,7 @@ export async function POST(req: Request) {
     const rawResult = await provider.parseMovements({
       text,
       today,
+      currencies,
       accounts,
       categories,
       image,
@@ -130,6 +157,7 @@ export async function POST(req: Request) {
 
     const resolvedBatch = resolveBatch(rawResult, {
       today,
+      currencies,
       accounts,
       categories,
     });

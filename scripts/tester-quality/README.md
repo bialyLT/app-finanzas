@@ -11,6 +11,8 @@ abiertos. No reformatea nada y no commitea.
 | `01-delta-f42.mjs` | Delta de F4.2: tsc, suite, lint de los tocados, las dos patas de la conversión, `?currency=` validado, `any` nuevo, costo documentado | sí (suite) |
 | `02-lock-settings.mjs` | El `pg_advisory_xact_lock` de `PATCH /api/settings`: ¿toma?, ¿excluye?, ¿colisiona con el del CSV?, ¿se libera al commit y al rollback?, y la invariante "ninguna cuenta en una moneda apagada" (carrera modelada + camino determinista) | sí (`finanzas_test`) |
 | `03-duplicacion-y-muertos.mjs` | Duplicación entre archivos del delta (8 y 12 líneas), exports agregados sin consumidor, `any` nuevo, dueño único de cada advisory lock | no |
+| `04-f45-monedas.mjs` | Delta F4.5: tsc, suite de voz, sondas de contrato, cobertura útil del bloque de monedas y del fallback, 10 mutantes y complejidad | no (cobertura opcional: `@vitest/coverage-v8`) |
+| `f45-monedas.probe.ts` + `vitest.f45.config.mts` | Sondas de la prioridad de aclaraciones y de las listas vacías (fuera de `npm test`) | no |
 | `settings.repro.ts` | Repro **contra la ruta real** de: PATCH idempotente, GET con la fila singleton ausente y el cambio de moneda de una cuenta a una moneda apagada | sí (`finanzas_test`) |
 | `vitest.repro.config.mts` | Config propia para que los repros **no** entren en `npm test` (dos archivos de integración se pelearían por la base) | — |
 
@@ -23,6 +25,9 @@ npm run db:test:setup
 
 # Estático (1 s, sin base)
 node scripts/tester-quality/03-duplicacion-y-muertos.mjs
+
+# Delta de monedas de voz: tsc + tests + cobertura + mutantes (sin base)
+node scripts/tester-quality/04-f45-monedas.mjs
 
 # Con base: lock, carrera e invariante
 node scripts/tester-quality/02-lock-settings.mjs

@@ -25,6 +25,12 @@ export interface ParseCategoryContext {
 export interface ParseInput {
   text: string;
   today: string; // AAAA-MM-DD
+  /**
+   * Monedas habilitadas (`AppSettings.enabledCurrencies`). Es la lista cerrada
+   * que el prompt puede ofrecer: una moneda fuera de acá no se propone, se
+   * pide aclaración.
+   */
+  currencies: string[];
   accounts: ParseAccountContext[];
   categories: ParseCategoryContext[];
   image?: { base64: string; mimeType: string };

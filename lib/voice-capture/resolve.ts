@@ -13,10 +13,15 @@
  *    - Categoría en conflicto con el tipo de movimiento genera aclaración.
  *    - Fecha posterior a hoy genera aclaración.
  *    - Cuota de préstamo sin desglose genera aclaración loanSplit.
+ *    - Moneda nula se completa desde la cuenta; una moneda no habilitada, una
+ *      distinta de la cuenta o una transferencia entre monedas genera
+ *      aclaración currency (la voz no puede expresar el segundo monto).
  */
 
+import type { Currency } from "@prisma/client";
 import { categoryKindConflicts } from "../category-kind";
 import { cleanName, normalizeCategoryName } from "../finance";
+import { currencyNoun, isCurrency } from "../currency";
 import {
   ParsedBatchSchema,
   type Clarification,
@@ -28,6 +33,7 @@ export interface AccountLookup {
   id: string;
   name: string;
   kind: string; // CASH | BANK | CREDIT_CARD | LOAN | RECEIVABLE
+  currency: Currency;
 }
 
 export interface CategoryLookup {
@@ -38,6 +44,8 @@ export interface CategoryLookup {
 
 export interface ResolveContext {
   today: string; // AAAA-MM-DD
+  /** Monedas habilitadas en la app; una fuera de esta lista pide aclaración. */
+  currencies: string[];
   accounts: AccountLookup[];
   categories: CategoryLookup[];
 }
@@ -86,6 +94,17 @@ function findCategory(
   );
 }
 
+/**
+ * El nombre de una moneda para un mensaje, tolerando un código desconocido.
+ *
+ * El LLM puede devolver "EUR": no hay que romper el lote (perdería el
+ * movimiento) ni inventar una traducción. Para un código conocido se usa el
+ * nombre llano; para el resto, el código tal cual.
+ */
+function currencyName(code: string): string {
+  return isCurrency(code) ? currencyNoun(code) : code;
+}
+
 export function resolveBatch(
   rawInput: unknown,
   context: ResolveContext,
@@ -110,6 +129,7 @@ export function resolveBatch(
     let fromAccountName = item.fromAccountName ? cleanName(item.fromAccountName) : null;
     let toAccountName = item.toAccountName ? cleanName(item.toAccountName) : null;
     let categoryName = item.categoryName ? cleanName(item.categoryName) : null;
+    let currency: string | null = item.currency;
 
     let accountId: string | null = null;
     let fromAccountId: string | null = null;
@@ -241,6 +261,82 @@ export function resolveBatch(
       }
     }
 
+    // ── MONEDAS ──
+    // La cuenta que define la unidad del `amount`: en una transferencia es la
+    // de origen (el monto es lo que SALE); en INCOME/EXPENSE, la única.
+    const sourceAccount =
+      kind === "TRANSFER"
+        ? context.accounts.find((a) => a.id === fromAccountId) ?? null
+        : context.accounts.find((a) => a.id === accountId) ?? null;
+    const targetAccount =
+      kind === "TRANSFER" && toAccountId
+        ? context.accounts.find((a) => a.id === toAccountId) ?? null
+        : null;
+
+    // Una sola aclaración de moneda por movimiento: si el modelo ya marcó una,
+    // se respeta; si dos reglas aplican a la vez (p. ej. moneda no habilitada y
+    // distinta de la cuenta), la primera —la más accionable— gana.
+    const clarifyCurrency = (reason: string, options?: string[]) => {
+      const existing = clarifications.find((c) => c.field === "currency");
+      if (existing) {
+        // Si el modelo ya marcó la moneda pero no ofreció opciones, las
+        // habilitadas son la respuesta accionable: se completan sin pisar su
+        // motivo.
+        if (options && !existing.options?.length) existing.options = options;
+        return;
+      }
+      clarifications.push(
+        options
+          ? { field: "currency", reason, options }
+          : { field: "currency", reason },
+      );
+    };
+
+    // 1. Sin moneda declarada: la unidad la define la cuenta resuelta. Un
+    //    movimiento no puede quedar en una unidad desconocida si hay cuenta.
+    if (currency === null && sourceAccount) {
+      currency = sourceAccount.currency;
+    }
+
+    // 2. Moneda fuera de las habilitadas: ofrecer la lista cerrada. Es la más
+    //    accionable, así que va primero (y `clarifyCurrency` dedupe).
+    if (currency !== null && !context.currencies.includes(currency)) {
+      const habilitadas = context.currencies;
+      clarifyCurrency(
+        habilitadas.length > 0
+          ? `La moneda "${currencyName(currency)}" no está habilitada en la app. Monedas habilitadas: ${habilitadas.join(", ")}.`
+          : `La moneda "${currencyName(currency)}" no está habilitada en la app y no hay monedas configuradas.`,
+        habilitadas.length > 0 ? [...habilitadas] : undefined,
+      );
+    }
+
+    // 3. Transferencia entre monedas distintas: la voz no puede expresar el
+    //    segundo monto (D7 del diseño), así que se carga a mano. Va ANTES de
+    //    "distinta de la cuenta": cuando el modelo declara la moneda de
+    //    destino, la acción que importa es cargar el segundo monto a mano, no
+    //    confirmar la cuenta.
+    if (
+      kind === "TRANSFER" &&
+      sourceAccount &&
+      targetAccount &&
+      sourceAccount.currency !== targetAccount.currency
+    ) {
+      clarifyCurrency(
+        `Es una transferencia entre ${currencyNoun(sourceAccount.currency)} y ${currencyNoun(targetAccount.currency)}: la carga por voz no puede expresar cuánto llega a la cuenta de destino. Cargala a mano.`,
+      );
+    }
+
+    // 4. La cuenta resolvió a otra unidad: no se cambia la cuenta sola.
+    if (
+      currency !== null &&
+      sourceAccount &&
+      currency !== sourceAccount.currency
+    ) {
+      clarifyCurrency(
+        `La cuenta "${sourceAccount.name}" está en ${currencyNoun(sourceAccount.currency)} y el movimiento quedó en ${currencyName(currency)}. Confirmá la cuenta o la moneda.`,
+      );
+    }
+
     // ── FECHA EN EL FUTURO ──
     if (item.date > context.today) {
       clarifications.push({
@@ -252,6 +348,7 @@ export function resolveBatch(
     resolvedMovements.push({
       ...item,
       kind,
+      currency,
       accountName,
       fromAccountName,
       toAccountName,

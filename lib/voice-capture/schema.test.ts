@@ -132,6 +132,33 @@ describe("voice-capture / schema", () => {
     expect(ParsedMovementSchema.safeParse(zeroAmount).success).toBe(false);
   });
 
+  it("acepta currency nula/ausente y conserva un código presente", () => {
+    const base = {
+      kind: "EXPENSE" as const,
+      amount: 100,
+      date: "2026-10-22",
+      description: "Test",
+      categoryName: null,
+      accountName: "Efectivo",
+      fromAccountName: null,
+      toAccountName: null,
+      installments: null,
+      sourceText: "100 en efectivo",
+      clarifications: [],
+    };
+
+    const sinMoneda = ParsedMovementSchema.safeParse(base);
+    expect(sinMoneda.success).toBe(true);
+    if (sinMoneda.success) expect(sinMoneda.data.currency).toBeNull();
+
+    const conMoneda = ParsedMovementSchema.safeParse({ ...base, currency: "USD" });
+    expect(conMoneda.success).toBe(true);
+    if (conMoneda.success) expect(conMoneda.data.currency).toBe("USD");
+
+    const hostil = ParsedMovementSchema.safeParse({ ...base, currency: 123 });
+    expect(hostil.success).toBe(false);
+  });
+
   it("valida un ParsedBatch con múltiples movimientos y unparsedText", () => {
     const batch = {
       movements: [

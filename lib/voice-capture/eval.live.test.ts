@@ -33,17 +33,18 @@ const today = new Intl.DateTimeFormat("en-CA", {
 
 const context: ResolveContext = {
   today,
+  currencies: ["ARS"],
   accounts: [
-    { id: "acc-1", name: "Galicia", kind: "BANK" },
-    { id: "acc-2", name: "Efectivo", kind: "CASH" },
-    { id: "acc-3", name: "Mercado Pago", kind: "BANK" },
-    { id: "acc-4", name: "BBVA", kind: "BANK" },
-    { id: "acc-5", name: "Santander", kind: "BANK" },
-    { id: "acc-6", name: "Macro", kind: "BANK" },
-    { id: "acc-7", name: "Visa Galicia", kind: "CREDIT_CARD" },
-    { id: "acc-8", name: "Visa", kind: "CREDIT_CARD" },
-    { id: "acc-9", name: "Prestamo Banco", kind: "LOAN" },
-    { id: "acc-10", name: "Banco", kind: "BANK" },
+    { id: "acc-1", name: "Galicia", kind: "BANK", currency: "ARS" },
+    { id: "acc-2", name: "Efectivo", kind: "CASH", currency: "ARS" },
+    { id: "acc-3", name: "Mercado Pago", kind: "BANK", currency: "ARS" },
+    { id: "acc-4", name: "BBVA", kind: "BANK", currency: "ARS" },
+    { id: "acc-5", name: "Santander", kind: "BANK", currency: "ARS" },
+    { id: "acc-6", name: "Macro", kind: "BANK", currency: "ARS" },
+    { id: "acc-7", name: "Visa Galicia", kind: "CREDIT_CARD", currency: "ARS" },
+    { id: "acc-8", name: "Visa", kind: "CREDIT_CARD", currency: "ARS" },
+    { id: "acc-9", name: "Prestamo Banco", kind: "LOAN", currency: "ARS" },
+    { id: "acc-10", name: "Banco", kind: "BANK", currency: "ARS" },
   ],
   categories: [
     { id: "cat-1", name: "Supermercado", kind: "EXPENSE" },
@@ -69,6 +70,7 @@ describe.skipIf(!enabled)("voice-capture / evaluación en vivo del motor", () =>
           const raw = await provider.parseMovements({
             text: item.input,
             today,
+            currencies: ["ARS"],
             accounts: context.accounts.map(({ name, kind }) => ({ name, kind })),
             categories: context.categories.map(({ name, kind }) => ({ name, kind })),
           });

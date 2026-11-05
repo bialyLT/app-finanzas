@@ -2287,7 +2287,7 @@ export default function Home() {
           open={reviewModalOpen}
           onOpenChange={setReviewModalOpen}
           batch={voiceParsedBatch}
-          accounts={accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind }))}
+          accounts={accounts.map((a) => ({ id: a.id, name: a.name, kind: a.kind, currency: a.currency }))}
           categories={categories.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
           existingMovements={movements.map((m) => ({
             id: m.id,

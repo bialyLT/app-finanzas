@@ -2,22 +2,24 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { resolveBatch } from "./resolve";
+import type { ResolveContext } from "./resolve";
 
 const DATASET_PATH = resolve(__dirname, "dataset.json");
 const dataset = JSON.parse(readFileSync(DATASET_PATH, "utf-8"));
 
-const mockContext = {
+const mockContext: ResolveContext = {
   today: "2026-10-22",
+  currencies: ["ARS"],
   accounts: [
-    { id: "acc-1", name: "Galicia", kind: "BANK" },
-    { id: "acc-2", name: "Efectivo", kind: "CASH" },
-    { id: "acc-3", name: "Mercado Pago", kind: "BANK" },
-    { id: "acc-4", name: "BBVA", kind: "BANK" },
-    { id: "acc-5", name: "Santander", kind: "BANK" },
-    { id: "acc-6", name: "Macro", kind: "BANK" },
-    { id: "acc-7", name: "Visa Galicia", kind: "CREDIT_CARD" },
-    { id: "acc-8", name: "Visa", kind: "CREDIT_CARD" },
-    { id: "acc-9", name: "Préstamo Banco", kind: "LOAN" },
+    { id: "acc-1", name: "Galicia", kind: "BANK", currency: "ARS" },
+    { id: "acc-2", name: "Efectivo", kind: "CASH", currency: "ARS" },
+    { id: "acc-3", name: "Mercado Pago", kind: "BANK", currency: "ARS" },
+    { id: "acc-4", name: "BBVA", kind: "BANK", currency: "ARS" },
+    { id: "acc-5", name: "Santander", kind: "BANK", currency: "ARS" },
+    { id: "acc-6", name: "Macro", kind: "BANK", currency: "ARS" },
+    { id: "acc-7", name: "Visa Galicia", kind: "CREDIT_CARD", currency: "ARS" },
+    { id: "acc-8", name: "Visa", kind: "CREDIT_CARD", currency: "ARS" },
+    { id: "acc-9", name: "Préstamo Banco", kind: "LOAN", currency: "ARS" },
   ],
   categories: [
     { id: "cat-1", name: "Supermercado", kind: "EXPENSE" },

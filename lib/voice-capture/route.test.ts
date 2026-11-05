@@ -3,7 +3,7 @@ import { POST } from "@/app/api/parse/route";
 import * as csrfModule from "@/lib/auth/csrf";
 import * as dalModule from "@/lib/auth/dal";
 import { prisma } from "@/lib/prisma";
-import { MockProvider, setAiProvider } from "./provider";
+import { MockProvider, setAiProvider, type ParseInput } from "./provider";
 import { parseRateLimiter } from "./rate-limit";
 
 vi.mock("@/lib/auth/dal", () => ({
@@ -17,10 +17,13 @@ vi.mock("@/lib/auth/csrf", () => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    appSettings: {
+      findUnique: vi.fn().mockResolvedValue({ enabledCurrencies: ["ARS"] }),
+    },
     account: {
       findMany: vi.fn().mockResolvedValue([
-        { id: "acc-1", name: "Banco Galicia", kind: "BANK" },
-        { id: "acc-2", name: "Efectivo", kind: "CASH" },
+        { id: "acc-1", name: "Banco Galicia", kind: "BANK", currency: "ARS" },
+        { id: "acc-2", name: "Efectivo", kind: "CASH", currency: "ARS" },
       ]),
     },
     category: {
@@ -102,6 +105,106 @@ describe("POST /api/parse", () => {
     expect(data.movements[0].accountId).toBe("acc-1");
     expect(data.movements[0].categoryId).toBe("cat-1");
     expect(data.movements[0].amount).toBe(4500);
+  });
+
+  it("pasa las monedas habilitadas de AppSettings al provider y al resolvedor", async () => {
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
+    vi.mocked(prisma.appSettings.findUnique).mockResolvedValueOnce({
+      enabledCurrencies: ["ARS", "USD"],
+    } as never);
+
+    let received: ParseInput | undefined;
+    setAiProvider(
+      new MockProvider((input: ParseInput) => {
+        received = input;
+        return { movements: [], unparsedText: null };
+      }),
+    );
+
+    const req = new Request("http://localhost:3000/api/parse", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "gasté 100 dólares" }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(received?.currencies).toEqual(["ARS", "USD"]);
+  });
+
+  it("usa ARS (no una lista vacía) si no puede leer las monedas habilitadas", async () => {
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
+    vi.mocked(prisma.appSettings.findUnique).mockRejectedValueOnce(
+      new Error("base caída"),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    let received: ParseInput | undefined;
+    setAiProvider(
+      new MockProvider((input: ParseInput) => {
+        received = input;
+        return { movements: [], unparsedText: null };
+      }),
+    );
+
+    const req = new Request("http://localhost:3000/api/parse", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "gasté 100 en el súper" }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(received?.currencies).toEqual(["ARS"]);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it("usa ARS si la fila de settings no existe (base a medio inicializar)", async () => {
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
+    vi.mocked(prisma.appSettings.findUnique).mockResolvedValueOnce(null);
+
+    let received: ParseInput | undefined;
+    setAiProvider(
+      new MockProvider((input: ParseInput) => {
+        received = input;
+        return { movements: [], unparsedText: null };
+      }),
+    );
+
+    const req = new Request("http://localhost:3000/api/parse", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "gasté 100 en el súper" }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(received?.currencies).toEqual(["ARS"]);
+  });
+
+  it("usa ARS si la fila existe pero la lista quedó vacía (drift)", async () => {
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({ v: 1, iat: 0, exp: 0 });
+    vi.mocked(prisma.appSettings.findUnique).mockResolvedValueOnce({
+      enabledCurrencies: [],
+    } as never);
+
+    let received: ParseInput | undefined;
+    setAiProvider(
+      new MockProvider((input: ParseInput) => {
+        received = input;
+        return { movements: [], unparsedText: null };
+      }),
+    );
+
+    const req = new Request("http://localhost:3000/api/parse", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "gasté 100 en el súper" }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    expect(received?.currencies).toEqual(["ARS"]);
   });
 
   it("devuelve 429 si se supera el rate limit", async () => {

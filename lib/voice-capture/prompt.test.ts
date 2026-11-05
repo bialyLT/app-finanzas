@@ -6,6 +6,7 @@ describe("voice-capture / buildPrompt", () => {
   const baseInput: ParseInput = {
     text: "gasté 20 lucas en el súper con Galicia",
     today: "2026-10-22",
+    currencies: ["ARS"],
     accounts: [
       { name: "Galicia", kind: "BANK" },
       { name: "Efectivo", kind: "CASH" },
@@ -58,9 +59,25 @@ describe("voice-capture / buildPrompt", () => {
     expect(prompt).toContain("mangos");
   });
 
-  it("incluye la advertencia de moneda única ARS", () => {
+  it("declara sólo las monedas habilitadas y no menciona las apagadas", () => {
     const prompt = buildPrompt(baseInput);
     expect(prompt).toContain("ARS");
     expect(prompt).toContain("pesos");
+    expect(prompt).not.toContain("USD");
+    expect(prompt).not.toContain("dólares");
+  });
+
+  it("declara las dos monedas cuando ambas están habilitadas", () => {
+    const prompt = buildPrompt({ ...baseInput, currencies: ["ARS", "USD"] });
+    expect(prompt).toContain("ARS");
+    expect(prompt).toContain("USD");
+    expect(prompt).toContain("pesos");
+    expect(prompt).toContain("dólares");
+  });
+
+  it("no menciona una moneda fuera de la lista habilitada como opción", () => {
+    const prompt = buildPrompt({ ...baseInput, currencies: ["USD"] });
+    expect(prompt).toContain("USD");
+    expect(prompt).not.toContain("ARS");
   });
 });

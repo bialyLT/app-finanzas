@@ -11,7 +11,25 @@
  * - Exigir salida en JSON estricto conforming al esquema de ParsedBatch.
  */
 
+import { isCurrency, currencyNoun } from "../currency";
 import type { ParseInput } from "./provider";
+
+/**
+ * La lista cerrada de monedas para el prompt.
+ *
+ * Sólo se nombran las habilitadas: si la app está en ARS, el prompt no debe
+ * mencionar USD ni siquiera como ejemplo, porque el modelo termina ofreciendo
+ * lo que ve. Una moneda habilitada se describe con su nombre llano ("pesos")
+ * para que el glosario no dependa de que el modelo entienda el código.
+ */
+function currenciesList(currencies: string[]): string {
+  if (currencies.length === 0) return "(ninguna moneda habilitada)";
+  return currencies
+    .map((code) =>
+      isCurrency(code) ? `- ${code} (${currencyNoun(code)})` : `- ${code}`,
+    )
+    .join("\n");
+}
 
 export function buildPrompt(input: ParseInput): string {
   const accountsList = input.accounts.length > 0
@@ -28,7 +46,14 @@ Tu tarea es interpretar el texto ingresado por el usuario (dictado por voz o esc
 ### CONTEXTO TEMPORAL Y REGIONAL
 - Fecha de referencia (hoy): ${input.today} (zona horaria America/Argentina/Cordoba).
 - Idioma y modismos: Español rioplatense (Argentina).
-- Moneda: La app opera EXCLUSIVAMENTE en pesos argentinos (ARS). Si la persona menciona dólares, USD, reales u otra divisa, marcá una aclaración en el campo "currency" indicando que la app opera solo en pesos.
+
+### MONEDAS HABILITADAS
+La app trabaja únicamente con estas monedas:
+${currenciesList(input.currencies)}
+- Expresá el campo "currency" con el código de una de esas monedas (el de la cuenta del movimiento), o null si no se puede determinar.
+- No inventes una moneda fuera de esa lista, no conviertas montos y no uses una moneda que no esté habilitada.
+- Si la persona menciona una moneda que NO está en la lista, no propongas el movimiento en esa moneda: agregá una aclaración con field="currency", un motivo legible y "options" con las monedas habilitadas.
+- Si no se menciona la moneda, usá la de la cuenta que corresponda. Si tampoco hay cuenta, dejá "currency" en null.
 
 ### GLOSARIO RIOPLATENSE DE MONTOS
 - "lucas", "luquitas" = miles (ej. 20 lucas = 20000).
@@ -85,6 +110,7 @@ Respondé ÚNICAMENTE un objeto JSON válido con esta estructura exacta, sin tex
     {
       "kind": "INCOME" | "EXPENSE" | "TRANSFER",
       "amount": number | null,
+      "currency": "código de una moneda habilitada" | null,
       "date": "YYYY-MM-DD",
       "description": "texto descriptivo breve",
       "categoryName": string | null,

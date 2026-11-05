@@ -13,10 +13,11 @@ import type { ResolveContext, ResolvedBatch, ResolvedMovement } from "./resolve"
 
 const context: ResolveContext = {
   today: "2026-10-22",
+  currencies: ["ARS"],
   accounts: [
-    { id: "acc-galicia", name: "Galicia", kind: "BANK" },
-    { id: "acc-visa-galicia", name: "Visa Galicia", kind: "CREDIT_CARD" },
-    { id: "acc-efectivo", name: "Efectivo", kind: "CASH" },
+    { id: "acc-galicia", name: "Galicia", kind: "BANK", currency: "ARS" },
+    { id: "acc-visa-galicia", name: "Visa Galicia", kind: "CREDIT_CARD", currency: "ARS" },
+    { id: "acc-efectivo", name: "Efectivo", kind: "CASH", currency: "ARS" },
   ],
   categories: [{ id: "cat-super", name: "Supermercado", kind: "EXPENSE" }],
 };
@@ -25,6 +26,7 @@ function movement(overrides: Partial<ResolvedMovement> = {}): ResolvedMovement {
   return {
     kind: "EXPENSE",
     amount: 1000,
+    currency: null,
     date: "2026-10-22",
     description: "",
     categoryName: null,
