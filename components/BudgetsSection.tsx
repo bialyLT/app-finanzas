@@ -3,8 +3,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { formatMoney } from "@/lib/format";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { Plus, Trash2, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, AlertCircle, CheckCircle2, Coins, PiggyBank } from "lucide-react";
 
 interface BudgetViewItem {
   id: string;
@@ -175,39 +176,56 @@ export function BudgetsSection({ month }: { month: string }) {
       </div>
 
       {/* Formulario de fijación rápida */}
-      <form onSubmit={handleSave} className="flex flex-wrap items-center gap-2">
-        <select
-          value={selectedCategory}
-          onChange={(e) => setSelectedCategory(e.target.value)}
-          aria-label="Elegir categoría para presupuestar"
-          className="rounded-md border border-line bg-surface-3 px-3 py-2 text-sm text-fg outline-none"
-        >
-          <option value="">Seleccionar categoría…</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-
-        <Input
-          type="number"
-          step="any"
-          placeholder="Monto presupuestado"
-          value={amountStr}
-          onChange={(e) => setAmountStr(e.target.value)}
-          className="w-44 text-sm"
+      {!loading && categories.length === 0 ? (
+        /*
+         * El selector de categorías VACÍO no es un `<select>` con una sola
+         * opción («Seleccionar categoría…»): es un estado vacío que explica de
+         * dónde salen las categorías. En esta app no hay una pantalla de
+         * categorías: nacen al cargar un movimiento, así que el único camino
+         * honesto es decirlo.
+         */
+        <EmptyState
+          id="budgets-categories-empty"
+          icon={Coins}
+          title="Todavía no hay categorías de gasto"
+          description="Cargá un gasto con su categoría y después vas a poder presupuestarla acá."
+          compact
         />
+      ) : (
+        <form onSubmit={handleSave} className="flex flex-wrap items-center gap-2">
+          <select
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            aria-label="Elegir categoría para presupuestar"
+            className="rounded-md border border-line bg-surface-3 px-3 py-2 text-sm text-fg outline-none focus:ring-2 focus:ring-focus"
+          >
+            <option value="">Seleccionar categoría…</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
 
-        <Button
-          type="submit"
-          disabled={submitting || !selectedCategory || !amountStr}
-          className="text-xs flex items-center gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Fijar presupuesto
-        </Button>
-      </form>
+          <Input
+            type="number"
+            step="any"
+            placeholder="Monto presupuestado"
+            value={amountStr}
+            onChange={(e) => setAmountStr(e.target.value)}
+            className="w-44 text-sm"
+          />
+
+          <Button
+            type="submit"
+            disabled={submitting || !selectedCategory || !amountStr}
+            className="text-xs flex items-center gap-1.5"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Fijar presupuesto
+          </Button>
+        </form>
+      )}
 
       {loading && (
         <p className="text-xs text-fg-muted animate-pulse">
@@ -216,15 +234,19 @@ export function BudgetsSection({ month }: { month: string }) {
       )}
 
       {!loading && error && (
-        <p className="text-xs text-brand-error">
+        <p className="text-xs text-brand-error" role="alert" aria-live="polite">
           {error}
         </p>
       )}
 
       {!loading && budgets.length === 0 && (
-        <p className="text-sm text-fg-muted italic">
-          No hay presupuestos fijados para este mes. Elegí una categoría arriba para empezar a monitorear gastos.
-        </p>
+        <EmptyState
+          id="budgets-empty"
+          icon={PiggyBank}
+          title="No hay presupuestos fijados para este mes"
+          description="Elegí una categoría arriba para empezar a monitorear gastos."
+          compact
+        />
       )}
 
       {/* Lista de presupuestos con barra de ejecución */}
@@ -274,9 +296,10 @@ export function BudgetsSection({ month }: { month: string }) {
                       type="button"
                       onClick={() => handleDelete(b.id)}
                       title="Eliminar presupuesto"
+                      aria-label={`Eliminar el presupuesto de ${b.categoryName}`}
                       className="text-fg-muted hover:text-brand-error transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-4 h-4" aria-hidden />
                     </button>
                   </div>
                 </div>

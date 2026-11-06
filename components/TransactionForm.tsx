@@ -293,6 +293,15 @@ export default function TransactionForm({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * A qué campo pertenece el error de validación que se acaba de mostrar.
+   * `null` = es un error del envío (la API o la red), no de un campo.
+   * Se usa para `aria-invalid` + `aria-describedby`: un error que se muestra
+   * al pie pero no se asocia al campo obliga a recorrer el modal entero.
+   */
+  const [errorField, setErrorField] = useState<
+    "amount" | "account" | "toAccount" | null
+  >(null);
 
   // ── Los dos avisos en línea (jamás `window.confirm`) ───────────────────────
   //
@@ -582,6 +591,7 @@ export default function TransactionForm({
 
     setKind(next);
     setError("");
+    setErrorField(null);
     setDuplicateWarning([]);
     // La plantilla era de OTRO tipo: usarla para este movimiento ya no es
     // "usar la plantilla". Se limpia la marca (lastUsedAt no se toca).
@@ -662,23 +672,28 @@ export default function TransactionForm({
     // campo puede disparar el submit igual.
     if (saving) return;
     setError("");
+    setErrorField(null);
 
     if (!amountPreview) {
       setError("Escribí un monto mayor a cero.");
+      setErrorField("amount");
       return;
     }
     if (!accountId) {
       setError("Elegí una cuenta.");
+      setErrorField("account");
       return;
     }
     if (isTransfer && !toAccountId) {
       setError("Elegí a qué cuenta va la plata.");
+      setErrorField("toAccount");
       return;
     }
     if (missingToAmount) {
       setError(
         "Escribí cuánto llega a la cuenta de destino: las cuentas están en monedas distintas.",
       );
+      setErrorField("toAccount");
       return;
     }
 
@@ -719,6 +734,7 @@ export default function TransactionForm({
   async function saveAnyway() {
     if (saving) return;
     setError("");
+    setErrorField(null);
     setDuplicateWarning([]);
     setSaving(true);
     try {
@@ -990,31 +1006,44 @@ export default function TransactionForm({
           </p>
         )}
 
-        {/* ── Tipo de movimiento ───────────────────────────────────────── */}
-        {/* Compacto a propósito: el modal tiene que seguir entrando en una
-            pantalla de 1018×597, donde "Nota" queda al borde del pie fijo. */}
-        <div
-          role="group"
-          aria-label="Tipo de movimiento"
-          className="grid grid-cols-3 gap-1 rounded-md bg-surface-3 p-1 mb-3"
-        >
-          {KIND_TABS.map((tab) => (
-            <Button
-              key={tab.kind}
-              id={tab.id}
-              variant="ghost"
-              size="sm"
-              onClick={() => switchKind(tab.kind)}
-              aria-pressed={kind === tab.kind}
-              className={`rounded-lg py-1.5 text-sm font-medium transition ${
-                kind === tab.kind
-                  ? KIND_STYLE[tab.kind].tab
-                  : "text-fg-muted hover:bg-surface-3/70 hover:bg-surface-3"
-              }`}
-            >
-              {tab.label}
-            </Button>
-          ))}
+        {/*
+          ── Tipo de movimiento ─────────────────────────────────────────────
+          Compacto a propósito: el modal tiene que seguir entrando en una
+          pantalla de 1018×597, donde "Nota" queda al borde del pie fijo.
+
+          EL GLIFO DE 320: "Transferencia" es la etiqueta más larga de la app
+          (86,1 px a 14 px) y la columna mide 83 px a 320. Centrada, el texto
+          se sale 1,5 px de cada lado y roza la pestaña vecina. El arreglo no
+          toca el cuerpo de la letra: la pestaña pierde el `px-3` de fábrica
+          (el ancho lo da la grilla, no el padding), y SOLO cuando la grilla
+          entra en modo angosto (`@container` < 24 rem) el `tracking-tight`
+          recupera los 4,5 px que faltan y el gap baja a 2 px. En escritorio
+          el texto se ve exactamente igual que antes.
+        */}
+        <div className="@container">
+          <div
+            role="group"
+            aria-label="Tipo de movimiento"
+            className="grid grid-cols-3 gap-1 angosta:gap-0.5 rounded-md bg-surface-3 p-1 mb-3"
+          >
+            {KIND_TABS.map((tab) => (
+              <Button
+                key={tab.kind}
+                id={tab.id}
+                variant="ghost"
+                size="sm"
+                onClick={() => switchKind(tab.kind)}
+                aria-pressed={kind === tab.kind}
+                className={`min-w-0 rounded-lg px-0 py-1.5 text-sm font-medium transition angosta:tracking-tight ${
+                  kind === tab.kind
+                    ? KIND_STYLE[tab.kind].tab
+                    : "text-fg-muted hover:bg-surface-3/70 hover:bg-surface-3"
+                }`}
+              >
+                {tab.label}
+              </Button>
+            ))}
+          </div>
         </div>
 
         {/* ── Panel de plantilla ─────────────────────────────────────────── */}
@@ -1033,11 +1062,15 @@ export default function TransactionForm({
               id="tx-favorite-name"
               value={favoriteName}
               onChange={(event) => setFavoriteName(event.target.value)}
+              aria-invalid={favoriteError ? true : undefined}
+              aria-describedby={
+                favoriteError ? "tx-favorite-error" : "tx-favorite-help"
+              }
               placeholder="Ej: Café de la mañana"
               maxLength={40}
               className={`w-full rounded-lg border-line-strong bg-surface-2 px-3 py-2 text-sm ${style.focus}`}
             />
-            <p className="text-xs text-fg-muted">
+            <p id="tx-favorite-help" className="text-xs text-fg-muted">
               Guarda tipo, monto, cuenta, categoría y nota. No crea un
               movimiento.
             </p>
@@ -1045,6 +1078,7 @@ export default function TransactionForm({
               <p
                 id="tx-favorite-error"
                 role="alert"
+                aria-live="polite"
                 className="text-xs rounded-lg bg-danger/10 text-danger px-2 py-1.5"
               >
                 {favoriteError}
@@ -1092,10 +1126,19 @@ export default function TransactionForm({
                 setAmount(e.target.value);
                 clearDuplicateWarning();
               }}
+              aria-invalid={
+                errorField === "amount" ||
+                (amount.trim() !== "" && !amountPreview)
+                  ? true
+                  : undefined
+              }
+              aria-describedby={
+                errorField === "amount" ? "tx-error" : "tx-amount-help"
+              }
               placeholder="0,00"
               className={`mt-1 w-full text-xl font-bold rounded-lg border-line-strong bg-transparent px-4 py-3 ${style.focus}`}
             />
-            <p className="mt-1 text-xs text-fg-muted h-4">
+            <p id="tx-amount-help" className="mt-1 text-xs text-fg-muted h-4">
               {amountPreview ? (
                 <>
                   Se guarda como <b>{amountPreview}</b>
@@ -1134,7 +1177,14 @@ export default function TransactionForm({
                 setToAccountId(pickDestinationAccount(accounts, value));
               }}
             >
-              <SelectTrigger id="tx-account" className={`mt-1 w-full ${style.focus}`}>
+              <SelectTrigger
+                id="tx-account"
+                aria-invalid={errorField === "account" ? true : undefined}
+                aria-describedby={
+                  errorField === "account" ? "tx-error" : undefined
+                }
+                className={`mt-1 w-full ${style.focus}`}
+              >
                 <SelectValue placeholder="Elegí una cuenta" />
               </SelectTrigger>
               <SelectContent>
@@ -1173,7 +1223,14 @@ export default function TransactionForm({
                   value={toAccountId}
                   onValueChange={setToAccountId}
                 >
-                  <SelectTrigger id="tx-to-account" className={`mt-1 w-full ${style.focus}`}>
+                  <SelectTrigger
+                    id="tx-to-account"
+                    aria-invalid={errorField === "toAccount" ? true : undefined}
+                    aria-describedby={
+                      errorField === "toAccount" ? "tx-error" : undefined
+                    }
+                    className={`mt-1 w-full ${style.focus}`}
+                  >
                     <SelectValue placeholder="Elegí la cuenta de destino" />
                   </SelectTrigger>
                   <SelectContent>
@@ -1214,10 +1271,19 @@ export default function TransactionForm({
                     setToAmount(e.target.value);
                     clearDuplicateWarning();
                   }}
+                  aria-invalid={
+                    errorField === "toAccount" ||
+                    (toAmount.trim() !== "" && !toAmountPreview)
+                      ? true
+                      : undefined
+                  }
+                  aria-describedby={
+                    errorField === "toAccount" ? "tx-error" : "tx-to-amount-help"
+                  }
                   placeholder="0,00"
                   className={`mt-1 w-full text-xl font-bold rounded-lg border-line-strong bg-transparent px-4 py-3 ${style.focus}`}
                 />
-                <p className="mt-1 text-xs text-fg-muted">
+                <p id="tx-to-amount-help" className="mt-1 text-xs text-fg-muted">
                   {toAmountPreview ? (
                     <>
                       Entran <b>{toAmountPreview}</b> a{" "}
@@ -1399,7 +1465,9 @@ export default function TransactionForm({
         <div className="flex-none px-6 pb-3 pt-2 space-y-3 bg-surface-2 ">
             {error && (
               <p
+                id="tx-error"
                 role="alert"
+                aria-live="polite"
                 className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}
@@ -1447,6 +1515,7 @@ export default function TransactionForm({
               <div
                 id="tx-duplicate-warning"
                 role="alert"
+                aria-live="polite"
                 className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
               >
                 <p>

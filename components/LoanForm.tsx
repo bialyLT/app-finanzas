@@ -147,6 +147,8 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /** Campos a los que pertenece el error de validación del pie. */
+  const [errorFields, setErrorFields] = useState<string[]>([]);
   /**
    * Aviso de descarte: «Cancelar» no cierra en silencio.
    *
@@ -317,43 +319,78 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
   const kind: "LOAN" | "RECEIVABLE" = direction === "I_OWE" ? "LOAN" : "RECEIVABLE";
   const verb = direction === "I_OWE" ? "pagar" : "cobrar";
 
+  /** Liga un campo con el error de validación del pie. */
+  const fieldProps = (id: string) => ({
+    "aria-invalid": errorFields.includes(id) ? true : undefined,
+    "aria-describedby": errorFields.includes(id) ? "loanalta-error" : undefined,
+  });
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    setErrorFields([]);
 
     const missing: string[] = [];
-    if (!name.trim()) missing.push("el nombre");
-    if (!principalRaw) missing.push("el monto");
-    if (mode === "RATE" && !tna.trim()) missing.push("la tasa (TNA)");
-    if (mode === "PAYMENT" && !payment.trim()) missing.push("la cuota");
-    if (mode === "TOTAL" && !total.trim()) missing.push("el total a devolver");
-    if (!count.trim()) missing.push("la cantidad de cuotas");
-    if (!firstDate.trim()) missing.push("la fecha de la primera cuota");
+    const missingFields: string[] = [];
+    if (!name.trim()) {
+      missing.push("el nombre");
+      missingFields.push("loanalta-name");
+    }
+    if (!principalRaw) {
+      missing.push("el monto");
+      missingFields.push("loanalta-principal");
+    }
+    if (mode === "RATE" && !tna.trim()) {
+      missing.push("la tasa (TNA)");
+      missingFields.push("loanalta-tna");
+    }
+    if (mode === "PAYMENT" && !payment.trim()) {
+      missing.push("la cuota");
+      missingFields.push("loanalta-payment");
+    }
+    if (mode === "TOTAL" && !total.trim()) {
+      missing.push("el total a devolver");
+      missingFields.push("loanalta-total");
+    }
+    if (!count.trim()) {
+      missing.push("la cantidad de cuotas");
+      missingFields.push("loanalta-count");
+    }
+    if (!firstDate.trim()) {
+      missing.push("la fecha de la primera cuota");
+      missingFields.push("loanalta-first");
+    }
     if (missing.length > 0) {
       setError(`Faltan datos: ${missing.join(", ")}.`);
+      setErrorFields(missingFields);
       return;
     }
     if (formatAmountInput(principal) === null) {
       setError("El monto tiene que ser un número mayor a cero.");
+      setErrorFields(["loanalta-principal"]);
       return;
     }
     if (mode === "PAYMENT" && formatAmountInput(payment) === null) {
       setError("La cuota tiene que ser un número mayor a cero.");
+      setErrorFields(["loanalta-payment"]);
       return;
     }
     if (mode === "TOTAL" && formatAmountInput(total) === null) {
       setError("El total a devolver tiene que ser un número mayor a cero.");
+      setErrorFields(["loanalta-total"]);
       return;
     }
     const countNumber = Number(count.trim());
     if (!Number.isInteger(countNumber) || countNumber < 1 || countNumber > 600) {
       setError("La cantidad de cuotas tiene que ser un entero entre 1 y 600.");
+      setErrorFields(["loanalta-count"]);
       return;
     }
     if (cashAccounts.length === 0 || !cashId) {
       setError(
         "Necesitás una cuenta de banco o efectivo (no archivada): el alta registra el desembolso entre cuentas.",
       );
+      setErrorFields(["loanalta-cash"]);
       return;
     }
 
@@ -528,6 +565,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                     id="loanalta-name"
                     autoFocus
                     autoComplete="off"
+                    {...fieldProps("loanalta-name")}
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="Ej: Préstamo del banco"
@@ -583,6 +621,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       type="text"
                       inputMode="decimal"
                       autoComplete="off"
+                      {...fieldProps("loanalta-principal")}
                       value={principal}
                       onChange={(e) => setPrincipal(e.target.value)}
                       placeholder="500.000"
@@ -604,9 +643,15 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       type="text"
                       inputMode="decimal"
                       autoComplete="off"
+                      {...fieldProps("loanalta-tna")}
                       value={mode === "RATE" ? tna : (tnaDerivada ?? "")}
                       readOnly={mode !== "RATE"}
-                      onFocus={activarModoTasa}
+                      // `onClick` y NO `onFocus`: con `onFocus`, tabular desde
+                      // «Monto» hasta la TNA cambiaba el modo a «Por %» y el
+                      // campo «Cuota por mes» DESAPARECÍA del DOM (medido con
+                      // Tab: la cuota quedaba inalcanzable por teclado). Un
+                      // foco no es una intención: la intención es el clic (o
+                      // el botón «Por %», que también es alcanzable).
                       onClick={activarModoTasa}
                       onChange={(e) => setTna(e.target.value)}
                       placeholder="60"
@@ -647,6 +692,9 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       type="text"
                       inputMode="decimal"
                       autoComplete="off"
+                      {...fieldProps(
+                        mode === "PAYMENT" ? "loanalta-payment" : "loanalta-total",
+                      )}
                       value={mode === "PAYMENT" ? payment : total}
                       onChange={(e) =>
                         mode === "PAYMENT"
@@ -690,6 +738,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       type="text"
                       inputMode="numeric"
                       autoComplete="off"
+                      {...fieldProps("loanalta-count")}
                       value={count}
                       onChange={(e) => setCount(e.target.value)}
                       placeholder="12"
@@ -703,6 +752,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                     <Input
                       id="loanalta-first"
                       type="date"
+                      {...fieldProps("loanalta-first")}
                       value={firstDate}
                       onChange={(e) => {
                         setFirstDate(e.target.value);
@@ -767,7 +817,11 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                       value={cashId}
                       onValueChange={setCashId}
                     >
-                      <SelectTrigger id="loanalta-cash" className="mt-1 w-full">
+                      <SelectTrigger
+                        id="loanalta-cash"
+                        {...fieldProps("loanalta-cash")}
+                        className="mt-1 w-full"
+                      >
                         <SelectValue placeholder="Cuenta de dinero" />
                       </SelectTrigger>
                       <SelectContent>
@@ -875,6 +929,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 <p
                   id="loanalta-preview-error"
                   role="alert"
+                  aria-live="polite"
                   className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
                 >
                   {previewError}
@@ -885,6 +940,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 <p
                   id="loanalta-error"
                   role="alert"
+                  aria-live="polite"
                   className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
                 >
                   {error}
@@ -1014,6 +1070,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
                 <p
                   id="loanalta-error"
                   role="alert"
+                  aria-live="polite"
                   className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
                 >
                   {error}

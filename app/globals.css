@@ -553,6 +553,32 @@
   }
 }
 
+/* ── Foco visible: el piso de TODOS los controles ──────────────────────────
+   Los controles de `components/ui` declaran su anillo (`focus-visible:ring-2`)
+   en su componente, pero la app también tiene `<button>`, `<select>` y
+   `<input>` sueltos (los de las vistas migradas, los formularios viejos y los
+   ítems de menú propios). Sin un default, el foco de esos controles dependía
+   de que alguien se acordara de agregarle una clase: en la auditoría de F3b
+   había controles que se podían alcanzar con Tab y no mostraban dónde estaban.
+   
+   Este es un DEFAULT DE ELEMENTO (la capa base sólo admite selectores de
+   tipo): cualquier cosa que reciba foco por teclado muestra el anillo del
+   sistema (`--focus`, 10,48:1 sobre el fondo y 9,61:1 sobre la tarjeta en
+   Noche; 4,96:1 y 5,18:1 en Claro). Las utilidades de Tailwind siguen ganando
+   —un `outline-none` explícito es una decisión del autor— y los controles que
+   ya tienen su anillo de `box-shadow` no cambian: el outline cae en el mismo
+   lugar que el ring, con el mismo color.
+   
+   `outline-offset: 2px` separa el anillo del borde del control para que se
+   lea también sobre un fondo del mismo tono (un botón `bg-primary` con foco
+   `--focus` no se distinguiría sin la separación). */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+}
+
 /* ── Objetivo táctil mínimo (44×44 px) ─────────────────────────────────────
    En un teléfono, 36 px de alto es un blunder de dedo: la guía de Apple (y
    las WCAG 2.5.5) piden 44×44 px.

@@ -55,16 +55,20 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /** El error de los días pertenece a los dos campos, no al pie. */
+  const [errorField, setErrorField] = useState<"days" | null>(null);
 
   const limitPreview = formatAmountInput(creditLimit);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    setErrorField(null);
 
     const daysError = cardDaysError(closingDay, dueDay);
     if (daysError) {
       setError(daysError);
+      setErrorField("days");
       return;
     }
 
@@ -162,6 +166,8 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 inputMode="numeric"
                 autoComplete="off"
                 autoFocus
+                aria-invalid={errorField === "days" ? true : undefined}
+                aria-describedby={errorField === "days" ? "cardconf-error" : undefined}
                 value={closingDay}
                 onChange={(e) => setClosingDay(e.target.value)}
                 placeholder="15"
@@ -177,6 +183,8 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
                 type="text"
                 inputMode="numeric"
                 autoComplete="off"
+                aria-invalid={errorField === "days" ? true : undefined}
+                aria-describedby={errorField === "days" ? "cardconf-error" : undefined}
                 value={dueDay}
                 onChange={(e) => setDueDay(e.target.value)}
                 placeholder="5"
@@ -226,6 +234,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
               <p
                 id="cardconf-error"
                 role="alert"
+                aria-live="polite"
                 className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}

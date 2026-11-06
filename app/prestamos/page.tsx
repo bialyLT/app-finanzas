@@ -29,6 +29,7 @@ import {
 import type { InstallmentState, LoanStatus } from "@/lib/loan-ui";
 import { Handshake, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -534,6 +535,8 @@ export default function LoansPage() {
         <p
           id="loans-flash"
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
           className={`rounded-md px-3 py-2 text-sm ${
             flashError
               ? "bg-danger/10 text-danger "
@@ -626,12 +629,18 @@ export default function LoansPage() {
             </div>
 
             {loanDebts.length === 0 && (
-              <div className="bg-surface-2 rounded-md px-4 py-8 text-center text-fg-muted shadow-sm">
-                <p className="font-medium text-fg">No tenés préstamos que debas cargados</p>
-                <p className="text-sm text-fg-muted mt-1">
-                  Podés registrar uno nuevo usando el botón <b>＋ Nuevo préstamo</b> arriba.
-                </p>
-              </div>
+              <EmptyState
+                id="loans-debts-empty"
+                icon={ArrowUpRight}
+                title="No tenés préstamos que debas cargados"
+                description={
+                  <>
+                    Podés registrar uno nuevo usando el botón{" "}
+                    <b>＋ Nuevo préstamo</b> arriba.
+                  </>
+                }
+                className="bg-surface-2 rounded-md px-4 py-8 shadow-sm"
+              />
             )}
 
             {loanDebts.map(renderLoan)}
@@ -650,12 +659,18 @@ export default function LoansPage() {
             </div>
 
             {receivables.length === 0 && (
-              <div className="bg-surface-2 rounded-md px-4 py-8 text-center text-fg-muted shadow-sm">
-                <p className="font-medium text-fg">No tenés préstamos que te deban cargados</p>
-                <p className="text-sm text-fg-muted mt-1">
-                  Si prestaste plata a alguien, podés registrarlo desde <b>＋ Nuevo préstamo</b> seleccionando que te deben.
-                </p>
-              </div>
+              <EmptyState
+                id="loans-receivables-empty"
+                icon={ArrowDownLeft}
+                title="No tenés préstamos que te deban cargados"
+                description={
+                  <>
+                    Si prestaste plata a alguien, podés registrarlo desde{" "}
+                    <b>＋ Nuevo préstamo</b> seleccionando que te deben.
+                  </>
+                }
+                className="bg-surface-2 rounded-md px-4 py-8 shadow-sm"
+              />
             )}
 
             {receivables.map(renderLoan)}

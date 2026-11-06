@@ -11,6 +11,8 @@ import { Input } from "./input";
 import { Label } from "./label";
 import { Separator } from "./separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
+import { EmptyState } from "./empty-state";
+import { Coins, Search } from "lucide-react";
 
 /**
  * Las primitivas de F1, probadas sin jsdom.
@@ -75,8 +77,55 @@ function htmlDePrimitivas(): string {
         </TableBody>
       </Table>,
     ),
+    renderToStaticMarkup(
+      <EmptyState
+        icon={Coins}
+        title="Sin movimientos este mes"
+        description="Cargá el primero y va a aparecer acá."
+        action={<Button>Nuevo gasto</Button>}
+      />,
+    ),
   ].join("\n");
 }
+
+describe("EmptyState", () => {
+  it("compone icono decorativo, título, explicación y acción", () => {
+    const html = renderToStaticMarkup(
+      <EmptyState
+        icon={Search}
+        title="Sin movimientos con esos filtros"
+        description="Probá con otra categoría o limpiá la búsqueda."
+        action={<Button variant="link">Limpiar filtros</Button>}
+      />,
+    );
+    expect(html).toContain('data-slot="empty-state"');
+    expect(html).toContain("Sin movimientos con esos filtros");
+    expect(html).toContain("Probá con otra categoría o limpiá la búsqueda.");
+    expect(html).toContain("Limpiar filtros");
+    // El icono es decorativo: el título ya dice qué es.
+    expect(html).toMatch(/<svg[^>]*aria-hidden/);
+  });
+
+  it("la variante compacta usa un icono más chico sin cambiar el texto del título", () => {
+    const normal = renderToStaticMarkup(
+      <EmptyState icon={Coins} title="Sin nada" />,
+    );
+    const compact = renderToStaticMarkup(
+      <EmptyState icon={Coins} title="Sin nada" compact />,
+    );
+    expect(normal).toContain("size-8");
+    expect(compact).toContain("size-5");
+    expect(normal).toContain("text-base");
+    expect(compact).toContain("text-sm");
+  });
+
+  it("conserva el id estable para los flows", () => {
+    const html = renderToStaticMarkup(
+      <EmptyState id="rec-rules-empty" icon={Coins} title="No hay reglas todavía" />,
+    );
+    expect(html).toContain('id="rec-rules-empty"');
+  });
+});
 
 describe("cn", () => {
   it("resuelve conflictos de Tailwind con la ÚLTIMA clase", () => {

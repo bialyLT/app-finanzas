@@ -209,6 +209,8 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
           <div
             id="csv-result"
             role="status"
+            aria-live="polite"
+            aria-atomic="true"
             className="rounded-md bg-success/10 text-success px-4 py-3 text-sm"
           >
             <p className="font-bold">

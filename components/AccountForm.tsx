@@ -98,6 +98,13 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * Los campos a los que pertenece el error de validación. Se usa para
+   * `aria-invalid` + `aria-describedby`: el error se muestra al pie, pero el
+   * campo que lo causó tiene que poder encontrarse (y anunciarse) sin recorrer
+   * el modal entero.
+   */
+  const [errorFields, setErrorFields] = useState<string[]>([]);
 
   const isLoan = kind === "LOAN";
   const isCard = kind === "CREDIT_CARD";
@@ -175,9 +182,11 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    setErrorFields([]);
 
     if (!name.trim()) {
       setError("Poné un nombre para reconocer la cuenta.");
+      setErrorFields(["acc-name"]);
       return;
     }
 
@@ -185,14 +194,28 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
     // no hay nada que validar de ellos.
     if (!editing && isLoan) {
       const missing: string[] = [];
-      if (!principal.trim()) missing.push("el monto prestado");
-      if (!tnaPercent.trim()) missing.push("la tasa (TNA)");
-      if (!installmentCount.trim()) missing.push("la cantidad de cuotas");
+      const fields: string[] = [];
+      if (!principal.trim()) {
+        missing.push("el monto prestado");
+        fields.push("loan-principal");
+      }
+      if (!tnaPercent.trim()) {
+        missing.push("la tasa (TNA)");
+        fields.push("loan-tna");
+      }
+      if (!installmentCount.trim()) {
+        missing.push("la cantidad de cuotas");
+        fields.push("loan-count");
+      }
       // La fecha dejó de ser opcional con la Fase 4: sin ella no se puede
       // materializar el cronograma (la API la exige con un 400).
-      if (!firstInstallmentDate.trim()) missing.push("la fecha de la primera cuota");
+      if (!firstInstallmentDate.trim()) {
+        missing.push("la fecha de la primera cuota");
+        fields.push("loan-first");
+      }
       if (missing.length > 0) {
         setError(`Falta ${missing.join(", ")}.`);
+        setErrorFields(fields);
         return;
       }
     }
@@ -201,6 +224,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
       const daysError = cardDaysError(closingDay, dueDay);
       if (daysError) {
         setError(daysError);
+        setErrorFields(["acc-card-closing", "acc-card-due"]);
         return;
       }
     }
@@ -275,6 +299,17 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
   const openingPreview = formatAmountInput(openingBalance, currency);
   const limitPreview = formatAmountInput(creditLimit, currency);
 
+  /**
+   * Los atributos que ligan un campo con el error de validación del pie.
+   * `aria-invalid` marca el campo y `aria-describedby` lo apunta al mensaje:
+   * juntos, el lector de pantalla anuncia el motivo al llegar al campo (y no
+   * sólo cuando el foco está en el pie).
+   */
+  const fieldProps = (id: string) => ({
+    "aria-invalid": errorFields.includes(id) ? true : undefined,
+    "aria-describedby": errorFields.includes(id) ? "acc-error" : undefined,
+  });
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
@@ -320,6 +355,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
               id="acc-name"
               autoFocus
               autoComplete="off"
+              {...fieldProps("acc-name")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Ej: Banco Galicia, Efectivo, Visa Santander"
@@ -399,6 +435,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
                   type="text"
                   inputMode="decimal"
                   autoComplete="off"
+                  {...fieldProps("loan-principal")}
                   value={principal}
                   onChange={(e) => setPrincipal(e.target.value)}
                   placeholder="500.000"
@@ -416,6 +453,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
                     type="text"
                     inputMode="decimal"
                     autoComplete="off"
+                    {...fieldProps("loan-tna")}
                     value={tnaPercent}
                     onChange={(e) => setTnaPercent(e.target.value)}
                     placeholder="60"
@@ -431,6 +469,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
                     type="text"
                     inputMode="numeric"
                     autoComplete="off"
+                    {...fieldProps("loan-count")}
                     value={installmentCount}
                     onChange={(e) => setInstallmentCount(e.target.value)}
                     placeholder="12"
@@ -446,6 +485,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
                 <Input
                   id="loan-first"
                   type="date"
+                  {...fieldProps("loan-first")}
                   value={firstInstallmentDate}
                   onChange={(e) => {
                     setFirstInstallmentDate(e.target.value);
@@ -516,6 +556,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
                         type="text"
                         inputMode="numeric"
                         autoComplete="off"
+                        {...fieldProps("acc-card-closing")}
                         value={closingDay}
                         onChange={(e) => setClosingDay(e.target.value)}
                         placeholder="15"
@@ -531,6 +572,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
                         type="text"
                         inputMode="numeric"
                         autoComplete="off"
+                        {...fieldProps("acc-card-due")}
                         value={dueDay}
                         onChange={(e) => setDueDay(e.target.value)}
                         placeholder="5"
@@ -674,7 +716,9 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
         <div className="flex-none px-6 pb-6 pt-4 space-y-3 bg-surface-2 ">
             {error && (
               <p
+                id="acc-error"
                 role="alert"
+                aria-live="polite"
                 className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}

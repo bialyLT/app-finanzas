@@ -56,6 +56,10 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
   const [previewError, setPreviewError] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /** A qué campo pertenece el error de validación (ver `aria-invalid`). */
+  const [errorField, setErrorField] = useState<
+    "plan-label" | "plan-total" | "plan-installments" | "plan-category" | null
+  >(null);
 
   const expenseCategories = categories.filter(
     (category) => category.kind === "EXPENSE",
@@ -114,16 +118,25 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
 
   const totalPreview = formatAmountInput(totalAmount);
 
+  /** Liga el campo con el error del pie (`aria-invalid` + `aria-describedby`). */
+  const fieldProps = (id: string) => ({
+    "aria-invalid": errorField === id ? true : undefined,
+    "aria-describedby": errorField === id ? "plan-error" : undefined,
+  });
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
+    setErrorField(null);
 
     if (!label.trim()) {
       setError("La compra necesita una descripción (ej: Heladera).");
+      setErrorField("plan-label");
       return;
     }
     if (!totalPreview) {
       setError("El total de la compra tiene que ser un monto mayor a cero.");
+      setErrorField("plan-total");
       return;
     }
     const count = Number(installments.trim());
@@ -131,12 +144,14 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
       setError(
         "La cantidad de cuotas tiene que ser un número entero mayor a cero.",
       );
+      setErrorField("plan-installments");
       return;
     }
     if (!categoryName.trim()) {
       setError(
         "La compra necesita una categoría de gasto para poder contarla en los reportes.",
       );
+      setErrorField("plan-category");
       return;
     }
 
@@ -242,6 +257,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                   id="plan-label"
                   autoFocus
                   autoComplete="off"
+                  {...fieldProps("plan-label")}
                   value={label}
                   onChange={(e) => setLabel(e.target.value)}
                   placeholder="Ej: Heladera"
@@ -260,6 +276,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     type="text"
                     inputMode="decimal"
                     autoComplete="off"
+                    {...fieldProps("plan-total")}
                     value={totalAmount}
                     onChange={(e) => setTotalAmount(e.target.value)}
                     placeholder="120.000"
@@ -278,6 +295,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                     type="text"
                     inputMode="numeric"
                     autoComplete="off"
+                    {...fieldProps("plan-installments")}
                     value={installments}
                     onChange={(e) => setInstallments(e.target.value)}
                     placeholder="12"
@@ -334,6 +352,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
                 <Input
                   id="plan-category"
                   autoComplete="off"
+                  {...fieldProps("plan-category")}
                   value={categoryName}
                   onChange={(e) => setCategoryName(e.target.value)}
                   placeholder="Ej: Tecnología"
@@ -353,6 +372,8 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
               {previewError && (
                 <p
                   id="plan-preview-error"
+                  role="status"
+                  aria-live="polite"
                   className="text-sm rounded-lg bg-warning/10 text-warning px-3 py-2"
                 >
                   {previewError}
@@ -422,6 +443,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
               <p
                 id="plan-error"
                 role="alert"
+                aria-live="polite"
                 className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}

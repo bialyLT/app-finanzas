@@ -220,6 +220,40 @@ export default function RecurrenceRuleForm({
   // parece una decisión obligatoria.
   const anchorHint = startDate.length === 10 ? Number(startDate.slice(8, 10)) : null;
 
+  /**
+   * El campo al que pertenece el error de validación del pie.
+   *
+   * Los mensajes de este formulario son de campo (nombre, monto, cuenta,
+   * categoría, intervalo, fechas, ocurrencias), y el error se muestra al pie
+   * porque el pie es pegajoso. Sin esta asociación, un lector de pantalla lee
+   * «Poné un nombre para la regla» lejos del campo que lo causó.
+   */
+  function fieldForError(message: string): string | null {
+    if (message.startsWith("Poné un nombre")) return "rec-title";
+    if (message.startsWith("Escribí un monto")) return "rec-amount";
+    if (message.startsWith("Elegí la cuenta") || message.startsWith("Elegí una cuenta"))
+      return "rec-account";
+    if (message.startsWith("Elegí a qué cuenta")) return "rec-to-account";
+    if (
+      message.startsWith("Escribí de dónde viene") ||
+      message.startsWith("Escribí en qué se gasta") ||
+      message.startsWith("“")
+    )
+      return "rec-category";
+    if (message.startsWith("El intervalo")) return "rec-interval";
+    if (message.startsWith("El día del mes")) return "rec-day-of-month";
+    if (message.startsWith("Elegí una fecha de inicio")) return "rec-start-date";
+    if (message.startsWith("La fecha de fin")) return "rec-end-date";
+    if (message.startsWith("La cantidad de ocurrencias")) return "rec-count";
+    return null;
+  }
+
+  const errorField = error ? fieldForError(error) : null;
+  const fieldProps = (id: string) => ({
+    "aria-invalid": errorField === id ? true : undefined,
+    "aria-describedby": errorField === id ? "rec-form-error" : undefined,
+  });
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError("");
@@ -426,6 +460,7 @@ export default function RecurrenceRuleForm({
               id="rec-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
+              {...fieldProps("rec-title")}
               placeholder="Ej: Alquiler, Sueldo, Netflix…"
               maxLength={200}
               autoComplete="off"
@@ -468,6 +503,7 @@ export default function RecurrenceRuleForm({
               type="text"
               inputMode="decimal"
               autoComplete="off"
+              {...fieldProps("rec-amount")}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0,00"
@@ -517,6 +553,7 @@ export default function RecurrenceRuleForm({
                 type="number"
                 min={1}
                 max={365}
+                {...fieldProps("rec-interval")}
                 value={interval}
                 onChange={(e) => setInterval(e.target.value)}
                 className="w-20 rounded-md border-line-strong bg-transparent px-3 py-2 text-sm"
@@ -545,6 +582,7 @@ export default function RecurrenceRuleForm({
                 type="number"
                 min={1}
                 max={31}
+                {...fieldProps("rec-day-of-month")}
                 value={dayOfMonth}
                 onChange={(e) => setDayOfMonth(e.target.value)}
                 placeholder={anchorHint ? `Vacío = día ${anchorHint}` : "Vacío = día de inicio"}
@@ -575,7 +613,11 @@ export default function RecurrenceRuleForm({
                 value={effectiveAccountId}
                 onValueChange={setAccountId}
               >
-                <SelectTrigger id="rec-account" className="mt-1 w-full py-3">
+                <SelectTrigger
+                  id="rec-account"
+                  {...fieldProps("rec-account")}
+                  className="mt-1 w-full py-3"
+                >
                   <SelectValue placeholder="Cuenta" />
                 </SelectTrigger>
                 <SelectContent>
@@ -604,7 +646,11 @@ export default function RecurrenceRuleForm({
                   value={effectiveToAccountId}
                   onValueChange={setToAccountId}
                 >
-                  <SelectTrigger id="rec-to-account" className="mt-1 w-full py-3">
+                  <SelectTrigger
+                    id="rec-to-account"
+                    {...fieldProps("rec-to-account")}
+                    className="mt-1 w-full py-3"
+                  >
                     <SelectValue placeholder="Cuenta de destino" />
                   </SelectTrigger>
                   <SelectContent>
@@ -633,6 +679,7 @@ export default function RecurrenceRuleForm({
                 id="rec-category"
                 value={categoryName}
                 onChange={(e) => setCategoryName(e.target.value)}
+                {...fieldProps("rec-category")}
                 placeholder={
                   isIncome ? "Ej: Sueldo, Alquiler cobrado…" : "Ej: Vivienda, Internet…"
                 }
@@ -724,6 +771,7 @@ export default function RecurrenceRuleForm({
               <Input
                 id="rec-start-date"
                 type="date"
+                {...fieldProps("rec-start-date")}
                 value={startDate}
                 onChange={(e) => {
                   setStartDate(e.target.value);
@@ -739,6 +787,7 @@ export default function RecurrenceRuleForm({
               <Input
                 id="rec-end-date"
                 type="date"
+                {...fieldProps("rec-end-date")}
                 value={endDate}
                 onChange={(e) => {
                   setEndDate(e.target.value);
@@ -759,6 +808,7 @@ export default function RecurrenceRuleForm({
               type="number"
               min={1}
               max={10000}
+              {...fieldProps("rec-count")}
               value={count}
               onChange={(e) => setCount(e.target.value)}
               placeholder="Vacío = para siempre"
@@ -802,6 +852,7 @@ export default function RecurrenceRuleForm({
               <p
                 id="rec-form-error"
                 role="alert"
+                aria-live="polite"
                 className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2"
               >
                 {error}

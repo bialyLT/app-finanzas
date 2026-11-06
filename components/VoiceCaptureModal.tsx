@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import type { ResolvedBatch } from "@/lib/voice-capture/resolve";
 import { useSpeechCapture } from "@/lib/voice-capture/use-speech-capture";
+import { VOICE_CAPTURE_TRIGGER_ID } from "@/components/VoiceCaptureButton";
 
 interface Props {
   open: boolean;
@@ -21,9 +22,28 @@ interface Props {
 }
 
 export function VoiceCaptureModal({ open, onOpenChange, onParsed }: Props) {
+  /**
+   * El disparador NO es un `DialogTrigger` (vive en otra parte de la página,
+   * junto a las plantillas), así que Radix no tiene a quién devolverle el
+   * foco y el cierre caía en `<body>`: la persona que navega con teclado
+   * tenía que volver a tabular desde el principio del documento. Acá se
+   * devuelve explícitamente al botón «Carga por voz», el mismo patrón que
+   * usan los diálogos con `DialogTrigger`.
+   */
+  function returnFocusToTrigger() {
+    const trigger = document.getElementById(VOICE_CAPTURE_TRIGGER_ID);
+    trigger?.focus();
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent
+        className="max-w-lg"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocusToTrigger();
+        }}
+      >
         <VoiceCaptureDialogBody
           onParsed={onParsed}
           onClose={() => onOpenChange(false)}
@@ -191,8 +211,9 @@ function VoiceCaptureDialogBody({ onParsed, onClose }: BodyProps) {
                   onClick={() => setAttachedFile(null)}
                   className="h-6 w-6 text-fg-muted hover:text-danger"
                   title="Quitar archivo"
+                  aria-label="Quitar archivo adjunto"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-3.5 w-3.5" aria-hidden />
                 </Button>
               </div>
             ) : (
@@ -219,15 +240,24 @@ function VoiceCaptureDialogBody({ onParsed, onClose }: BodyProps) {
             )}
 
             {speechError && (
-              <div className="flex items-start gap-2 rounded-md bg-warning/10 p-2 text-xs text-warning">
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div
+                role="alert"
+                aria-live="polite"
+                className="flex items-start gap-2 rounded-md bg-warning/10 p-2 text-xs text-warning"
+              >
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
                 <span>{speechError}</span>
               </div>
             )}
 
             {parseError && (
-              <div className="flex items-start gap-2 rounded-md bg-danger/10 p-2 text-xs text-danger">
-                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div
+                id="voice-parse-error"
+                role="alert"
+                aria-live="polite"
+                className="flex items-start gap-2 rounded-md bg-danger/10 p-2 text-xs text-danger"
+              >
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
                 <span>{parseError}</span>
               </div>
             )}

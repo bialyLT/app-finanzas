@@ -38,6 +38,7 @@ import {
 } from "@/components/CurrencySelector";
 import { TriangleAlert, Search, ChartColumn, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { BudgetsSection } from "@/components/BudgetsSection";
@@ -465,7 +466,7 @@ export default function AnalisisPage() {
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
           aria-label="Filtrar por categoría"
-          className="flex-1 rounded-md border border-border bg-secondary px-3 py-2 text-sm outline-none [&>option]:bg-card [&>option]:text-fg [&>option]:bg-secondary "
+          className="flex-1 rounded-md border border-border bg-secondary px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus [&>option]:bg-card [&>option]:text-fg [&>option]:bg-secondary "
         >
           <option value="">Todas las categorías</option>
           {categories.map((category) => (
@@ -707,29 +708,34 @@ export default function AnalisisPage() {
             // filtros. Decir "No hay gastos en este período" sería culpar al
             // período —y mandar a cargar un gasto que existe—. Un estado vacío
             // honesto habla de los filtros y ofrece la salida.
-            <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8 text-center text-fg-muted">
-              <p className="mb-2"><Search className="size-8 inline-block" aria-hidden /></p>
-              <p className="font-medium">No hay gastos con esos filtros</p>
-              <Button
-                variant="link"
-                size="sm"
-                onClick={() => {
-                  setCategoryId("");
-                  setSearch("");
-                }}
-                className="text-sm mt-2 text-success underline"
-              >
-                Limpiar filtros
-              </Button>
-            </div>
+            <EmptyState
+              id="analisis-filtered-empty"
+              icon={Search}
+              title="No hay gastos con esos filtros"
+              description="El período sí tiene gastos: probá con otra categoría o limpiá la búsqueda."
+              action={
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => {
+                    setCategoryId("");
+                    setSearch("");
+                  }}
+                  className="text-sm text-success underline"
+                >
+                  Limpiar filtros
+                </Button>
+              }
+              className="rounded-lg border bg-card text-card-foreground shadow-sm p-8"
+            />
           ) : (
-            <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8 text-center text-fg-muted">
-              <p className="mb-2"><ChartColumn className="size-8 inline-block" aria-hidden /></p>
-              <p className="font-medium">No hay gastos en este período</p>
-              <p className="text-sm mt-1">
-                Cargá un gasto para ver el desglose por categoría.
-              </p>
-            </div>
+            <EmptyState
+              id="analisis-period-empty"
+              icon={ChartColumn}
+              title="No hay gastos en este período"
+              description="Cargá un gasto para ver el desglose por categoría."
+              className="rounded-lg border bg-card text-card-foreground shadow-sm p-8"
+            />
           )}
 
           {/* ── Burn mensualizado (ROADMAP §5.3 #9) ──────────────────────── */}
@@ -755,7 +761,7 @@ export default function AnalisisPage() {
                 value={burnSelected ? burnId : ""}
                 onChange={(event) => setBurnId(event.target.value)}
                 aria-label="Elegir un gasto para el burn mensualizado"
-                className="rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
+                className="rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
               >
                 <option value="">Elegí un gasto…</option>
                 {burnCandidates.map((candidate) => (

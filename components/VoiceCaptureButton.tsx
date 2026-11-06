@@ -3,6 +3,9 @@
 import { Mic } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+/** Id estable del disparador: el modal de voz lo usa para devolver el foco. */
+export const VOICE_CAPTURE_TRIGGER_ID = "btn-voice-capture";
+
 interface Props {
   onClick: () => void;
   className?: string;
@@ -11,6 +14,7 @@ interface Props {
 export function VoiceCaptureButton({ onClick, className }: Props) {
   return (
     <Button
+      id={VOICE_CAPTURE_TRIGGER_ID}
       type="button"
       variant="outline"
       onClick={onClick}

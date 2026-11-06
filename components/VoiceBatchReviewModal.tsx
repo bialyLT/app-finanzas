@@ -198,8 +198,9 @@ export function VoiceBatchReviewModal({
                         onClick={() => removeItem(idx)}
                         className="h-8 w-8 text-fg-muted hover:text-danger"
                         title="Eliminar este movimiento"
+                        aria-label={`Eliminar el movimiento ${idx + 1} del lote`}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4" aria-hidden />
                       </Button>
                     </div>
 

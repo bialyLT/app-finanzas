@@ -21,6 +21,7 @@ import {
 import { formatMoney } from "@/lib/format";
 import { Banknote, Receipt, ArrowLeftRight, RefreshCw, TriangleAlert, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 
 /** Cómo se ve cada tipo en la bandeja y en la lista de reglas. */
 const KIND_STYLE: Record<MovementKindDTO, { icon: LucideIcon; text: string }> = {
@@ -424,6 +425,8 @@ export default function RecurrencePage() {
         <p
           id="rec-flash"
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
           className={`rounded-md px-3 py-2 text-sm ${
             flashError
               ? "bg-danger/10 text-danger "
@@ -568,9 +571,13 @@ export default function RecurrencePage() {
 
             <div className="p-4 flex flex-col gap-2">
               {pending.length === 0 && (
-                <p id="rec-pending-empty" className="text-center text-fg-muted py-6">
-                  No hay nada pendiente. La bandeja está al día.
-                </p>
+                <EmptyState
+                  id="rec-pending-empty"
+                  icon={RefreshCw}
+                  title="No hay nada pendiente"
+                  description="La bandeja está al día: las reglas no tienen ocurrencias esperando decisión."
+                  compact
+                />
               )}
 
               {pending.map((occurrence) => {
@@ -654,13 +661,17 @@ export default function RecurrencePage() {
 
             <div className="p-4 flex flex-col gap-3">
               {rules.length === 0 && (
-                <div id="rec-rules-empty" className="text-center text-fg-muted py-6">
-                  <p className="mb-1"><RefreshCw className="size-8 inline-block" aria-hidden /></p>
-                  <p className="font-medium">No hay reglas todavía</p>
-                  <p className="text-sm mt-1">
-                    Tocá <b>＋ Nueva regla</b> para crear la primera.
-                  </p>
-                </div>
+                <EmptyState
+                  id="rec-rules-empty"
+                  icon={RefreshCw}
+                  title="No hay reglas todavía"
+                  description={
+                    <>
+                      Tocá <b>＋ Nueva regla</b> para crear la primera.
+                    </>
+                  }
+                  compact
+                />
               )}
 
               {rules.map((rule) => {

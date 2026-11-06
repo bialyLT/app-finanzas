@@ -16,8 +16,9 @@ import type {
   StatementPayResponseDTO,
 } from "@/lib/finance";
 import { formatLiability, formatMoney, formatPercent } from "@/lib/format";
-import { CreditCard, Settings, Play } from "lucide-react";
+import { CreditCard, Receipt, Settings, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -401,6 +402,8 @@ export default function CardsPage() {
         <p
           id="cards-flash"
           role="status"
+          aria-live="polite"
+          aria-atomic="true"
           className={`rounded-md px-3 py-2 text-sm ${
             flashError
               ? "bg-danger/10 text-danger "
@@ -437,20 +440,26 @@ export default function CardsPage() {
       )}
 
       {!loading && !loadError && cards.length === 0 && (
-        <div className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-10 text-center shadow-sm">
-          <p className="mb-1"><CreditCard className="size-8 inline-block" aria-hidden /></p>
-          <p className="font-medium">No hay tarjetas de crédito cargadas</p>
-          <p className="text-sm text-fg-muted mt-1">
-            Creá una desde el panel: <b>Nueva cuenta</b> → tipo{" "}
-            <b>Tarjeta de crédito</b>.
-          </p>
-          <Link
-            href="/"
-            className="inline-flex items-center justify-center touch:min-h-11 mt-3 rounded-lg bg-primary text-primary-fg px-4 py-2 font-bold"
-          >
-            Ir al panel
-          </Link>
-        </div>
+        <EmptyState
+          id="cards-empty"
+          icon={CreditCard}
+          title="No hay tarjetas de crédito cargadas"
+          description={
+            <>
+              Creá una desde el panel: <b>Nueva cuenta</b> → tipo{" "}
+              <b>Tarjeta de crédito</b>.
+            </>
+          }
+          action={
+            <Link
+              href="/"
+              className="inline-flex items-center justify-center touch:min-h-11 rounded-lg bg-primary text-primary-fg px-4 py-2 font-bold"
+            >
+              Ir al panel
+            </Link>
+          }
+          className="rounded-lg border bg-card text-card-foreground shadow-sm px-4 py-10"
+        />
       )}
 
       {/* ── Cada tarjeta ─────────────────────────────────────────────────── */}
@@ -548,12 +557,14 @@ export default function CardsPage() {
                 </p>
 
                 {card.statements.length === 0 ? (
-                  <p
+                  <EmptyState
                     id={`card-statements-empty-${card.id}`}
-                    className="text-sm text-fg-muted mt-2"
-                  >
-                    Todavía no hay resúmenes emitidos.
-                  </p>
+                    icon={CreditCard}
+                    title="Todavía no hay resúmenes emitidos"
+                    description="Corré el cierre cuando termine el período y el resumen va a aparecer acá."
+                    compact
+                    className="mt-2"
+                  />
                 ) : (
                   <div className="mt-2 flex flex-col gap-2">
                     {card.statements.map((statement) => {
@@ -714,12 +725,14 @@ export default function CardsPage() {
                 )}
 
                 {card.closingDay !== null && card.plans.length === 0 && (
-                  <p
+                  <EmptyState
                     id={`card-plans-empty-${card.id}`}
-                    className="text-sm text-fg-muted mt-2"
-                  >
-                    Sin compras en cuotas.
-                  </p>
+                    icon={Receipt}
+                    title="Sin compras en cuotas"
+                    description="Cuando cargues una, sus cuotas se van a repartir en los próximos resúmenes."
+                    compact
+                    className="mt-2"
+                  />
                 )}
 
                 {card.closingDay !== null && card.plans.length > 0 && (
@@ -840,12 +853,14 @@ export default function CardsPage() {
                     Sin día de cierre no hay proyección de cuotas.
                   </p>
                 ) : card.commitments.next12Months === "0.00" ? (
-                  <p
+                  <EmptyState
                     id={`card-commitments-empty-${card.id}`}
-                    className="text-sm text-fg-muted mt-2"
-                  >
-                    Sin cuotas comprometidas todavía.
-                  </p>
+                    icon={Receipt}
+                    title="Sin cuotas comprometidas todavía"
+                    description="Acá vas a ver lo que los próximos resúmenes ya tienen que cobrar."
+                    compact
+                    className="mt-2"
+                  />
                 ) : (
                   <div id={`card-commitments-${card.id}`} className="mt-2">
                     <p id={`commitments-6-${card.id}`} className="text-sm">

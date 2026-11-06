@@ -268,7 +268,7 @@ export default function CurrencySettingsModal({ onClose }: Props) {
 
         <div className="flex-none border-t border-line px-6 py-4 flex flex-col gap-2">
           {error && (
-            <p className="text-xs rounded-md bg-danger/10 text-danger px-3 py-2" role="alert">
+            <p className="text-xs rounded-md bg-danger/10 text-danger px-3 py-2" role="alert" aria-live="polite">
               {error}
             </p>
           )}

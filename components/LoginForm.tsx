@@ -64,6 +64,8 @@ export default function LoginForm({ next }: { next: string }) {
           autoComplete="current-password"
           autoFocus
           required
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? "login-error" : undefined}
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           className="w-full rounded-md border border-line-strong bg-surface-2 px-4 py-3 text-base outline-none focus:ring-2 focus:ring-focus focus:border-transparent"
@@ -73,7 +75,9 @@ export default function LoginForm({ next }: { next: string }) {
 
       {error && (
         <p
+          id="login-error"
           role="alert"
+          aria-live="polite"
           className="rounded-md border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger "
         >
           {error}

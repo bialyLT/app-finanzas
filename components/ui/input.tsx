@@ -22,7 +22,13 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
         "flex h-9 w-full min-w-0 rounded-md border border-line-strong bg-transparent px-3 py-1 text-base text-fg transition-colors outline-none",
         "placeholder:text-fg-subtle selection:bg-primary selection:text-primary-fg",
         "file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-fg",
-        "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40",
+        "focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring",
+        // Los inputs de fecha (`type="date"`) mueven el foco entre sus
+        // segmentos DENTRO del shadow DOM: `:focus-visible` se apaga en algunos
+        // de esos pasos, pero `:focus-within` sigue encendido. Sin esto, el
+        // día/mes/año enfocado no tenía el anillo del sistema (medido con Tab:
+        // outline=none, boxShadow=none).
+        "focus-within:ring-2 focus-within:ring-ring",
         "aria-invalid:border-danger",
         "disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
         className,

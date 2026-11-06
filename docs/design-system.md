@@ -807,10 +807,21 @@ componente y el alias queda para las piezas que todavía no pasaron por F2.
 sm/default/lg/icon) · `input` · `label` · `card` · `badge` (default, secondary,
 outline y los cuatro estados con su tinte al 10 % y borde al 40 %) ·
 `separator` · `dialog` · `sheet` · `select` · `tabs` · `table` ·
-`dropdown-menu` · `tooltip`.
+`dropdown-menu` · `tooltip` · `empty-state`.
 
 - **Foco:** `focus-visible:ring-2 ring-ring ring-offset-2
-  ring-offset-background` (el anillo es `--focus`).
+  ring-offset-background` (el anillo es `--focus`). Además, la capa base
+  declara `:focus-visible { outline: 2px solid var(--focus); outline-offset:
+  2px }`: es el piso de los `<button>`/`<select>`/`<input>` sueltos que no
+  pasaron por una primitiva. Los inputs de fecha, que mueven el foco entre sus
+  segmentos dentro del shadow DOM, llevan `focus-within:ring-2` para que el
+  anillo no se apague en esos pasos.
+- **`empty-state` (F3b):** la única forma de decir «no hay nada». Icono del set
+  (32 px, `aria-hidden`), título, explicación corta y acción opcional; la
+  variante `compact` (20 px) vive dentro de una tarjeta. No es una región
+  `aria-live`: es el resultado de un render, no un mensaje posterior a una
+  acción. Sus textos están en español rioplatense y los flows de Maestro los
+  buscan por texto (`lib/empty-states.test.ts` sujeta los siete estados).
 - **`dark:` en colores:** ninguno. El alias ya resuelve por esquema.
 - **Sin animaciones de entrada de fábrica**: la entrada y la salida salen de los
   tokens de §1.5 (`data-[state=open]:animate-…` / `data-[state=closed]:…`), no

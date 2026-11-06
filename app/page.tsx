@@ -55,6 +55,7 @@ import {
 import { shortcutMovementKind } from "@/lib/quick-entry";
 import { currencyNoun } from "@/lib/currency";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { isPaletteShortcut } from "@/lib/command-palette";
 import { Banknote, Receipt, ArrowLeftRight, RefreshCw, Import, Coins, Search, StickyNote, Trash, Check, X, Pencil, type LucideIcon } from "lucide-react";
 
@@ -964,6 +965,7 @@ export default function Home() {
         <p
           id="rec-panel-run-error"
           role="alert"
+          aria-live="polite"
           className="text-xs rounded-md bg-danger/10 text-danger px-4 py-3"
         >
           No se pudo correr el generador de recurrencia: {recurrenceRunError} Los
@@ -1886,6 +1888,7 @@ export default function Home() {
           <p
             id="favorite-delete-notice"
             role="alert"
+            aria-live="polite"
             className="mt-2 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
           >
             {favoriteDeleteNotice}
@@ -2042,7 +2045,7 @@ export default function Home() {
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
             aria-label="Filtrar por categoría"
-            className="flex-1 rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
+            className="flex-1 rounded-md border border-line-strong bg-surface-3 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-focus [&>option]:bg-surface-2 [&>option]:text-fg [&>option]:bg-surface-3 "
           >
             <option value="">Todas las categorías</option>
             {visibleCategories.map((name) => (
@@ -2101,11 +2104,12 @@ export default function Home() {
           )}
 
           {!loading && !loadError && visible.length === 0 && movements.length === 0 && (
-            <div className="text-center py-10 text-fg-muted">
-              <p className="mb-2"><Coins className="size-10 inline-block" aria-hidden /></p>
-              <p className="font-medium">Sin movimientos este mes</p>
-              <p className="text-sm mt-1">
-                {accounts.length === 0 ? (
+            <EmptyState
+              id="movements-empty"
+              icon={Coins}
+              title="Sin movimientos este mes"
+              description={
+                accounts.length === 0 ? (
                   <>
                     Empezá creando una cuenta con{" "}
                     <b className="text-transfer">+ Agregar cuenta</b>.
@@ -2116,26 +2120,32 @@ export default function Home() {
                     <b className="text-danger">－ Gasto</b> o{" "}
                     <b className="text-transfer">⇄ Transferir</b>.
                   </>
-                )}
-              </p>
-            </div>
+                )
+              }
+            />
           )}
 
           {!loading && visible.length === 0 && movements.length > 0 && (
-            <div className="text-center py-10 text-fg-muted">
-              <p className="mb-2"><Search className="size-10 inline-block" aria-hidden /></p>
-              <p className="font-medium">Sin movimientos con esos filtros</p>
-              <button
-                onClick={() => {
-                  setFilter("ALL");
-                  setCategoryFilter("");
-                  setSearch("");
-                }}
-                className="text-sm mt-2 underline text-success"
-              >
-                Limpiar filtros
-              </button>
-            </div>
+            <EmptyState
+              id="movements-filtered-empty"
+              icon={Search}
+              title="Sin movimientos con esos filtros"
+              description="Probá con otra categoría o limpiá la búsqueda."
+              action={
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => {
+                    setFilter("ALL");
+                    setCategoryFilter("");
+                    setSearch("");
+                  }}
+                  className="text-sm text-success underline"
+                >
+                  Limpiar filtros
+                </Button>
+              }
+            />
           )}
 
           {visible.map((movement) => {
@@ -2293,6 +2303,7 @@ export default function Home() {
                   <p
                     id={`mov-delete-notice-${movement.id}`}
                     role="alert"
+                    aria-live="polite"
                     className="mt-2 text-xs rounded-lg bg-warning/10 text-warning px-3 py-2"
                   >
                     {notice.message}
@@ -2318,6 +2329,9 @@ export default function Home() {
         <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4 pointer-events-none">
           <div
             id="undo-toast"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
             className="pointer-events-auto rounded-md bg-primary text-primary-fg px-4 py-3 shadow-2xl text-sm animate-toast-in"
           >
             <div className="flex items-center gap-3">
