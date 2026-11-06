@@ -16,6 +16,7 @@ import {
 } from "@/lib/finance";
 import { formatAmountInput, formatLiability, formatMoney } from "@/lib/format";
 import { isCrossCurrencyTransfer } from "@/lib/currency";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import {
   browserStorage,
   canBeSourceAccount,
@@ -175,6 +176,8 @@ export default function TransactionForm({
   onClose,
   onSaved,
 }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>();
+
   // ── El tipo activo ─────────────────────────────────────────────────────────
   // Arranca con el del modal y se puede CAMBIAR acá adentro sin cerrar: los
   // datos ya escritos (monto, fecha, nota, categoría) no se pierden, y la
@@ -935,6 +938,7 @@ export default function TransactionForm({
         que no es el que la persona quiso tocar.
       */}
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={style.title}

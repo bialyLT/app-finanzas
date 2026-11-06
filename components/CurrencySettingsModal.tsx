@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CurrencyDTO } from "@/lib/finance";
 import { CURRENCIES, currencyLabel, currencyNoun } from "@/lib/currency";
 import { CURRENCIES_CHANGED_EVENT } from "@/lib/currency-preference";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { Button } from "@/components/ui/button";
 import { Coins, Check } from "lucide-react";
 
@@ -36,6 +38,8 @@ type AccountCounts = Partial<Record<CurrencyDTO, number>>;
  * confirmación: no destruye ninguna posibilidad.
  */
 export default function CurrencySettingsModal({ onClose }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>();
+
   const [selected, setSelected] = useState<CurrencyDTO[]>(["ARS"]);
   const [initial, setInitial] = useState<CurrencyDTO[]>(["ARS"]);
   const [counts, setCounts] = useState<AccountCounts>({});
@@ -164,12 +168,17 @@ export default function CurrencySettingsModal({ onClose }: Props) {
     }
   }
 
-  return (
+  // PORTAL AL BODY, NO ANIDADO EN EL HEADER: el `<header>` tiene
+  // `backdrop-blur`, que crea un *containing block* para `position: fixed`.
+  // Sin el portal, el overlay y el panel se posicionaban respecto del header y
+  // el botón de cerrar (y el primer foco de la trampa) quedaba en y ≈ -115.
+  const dialog = (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Monedas habilitadas"
@@ -315,4 +324,7 @@ export default function CurrencySettingsModal({ onClose }: Props) {
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(dialog, document.body);
 }

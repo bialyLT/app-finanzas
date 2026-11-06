@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { todayCalendar } from "@/lib/dates";
 import type { CardPlanPreviewDTO, CardViewDTO, CategoryDTO } from "@/lib/finance";
 import { formatAmountInput, formatMoney, formatPercent } from "@/lib/format";
@@ -45,6 +46,8 @@ interface Props {
  * clic no manda un segundo POST.
  */
 export default function CardPlanForm({ card, categories, onClose, onSaved }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>();
+
   const [label, setLabel] = useState("");
   const [totalAmount, setTotalAmount] = useState("");
   const [installments, setInstallments] = useState("");
@@ -203,6 +206,7 @@ export default function CardPlanForm({ card, categories, onClose, onSaved }: Pro
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={`Compra en cuotas · ${card.name}`}

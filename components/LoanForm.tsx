@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { addMonths, todayCalendar } from "@/lib/dates";
 import type { AccountBalanceDTO, LoanPreviewDTO } from "@/lib/finance";
 import { AMORTIZATION_SYSTEM_LABEL } from "@/lib/finance";
@@ -82,6 +83,8 @@ interface CreatedLoan {
  * usa selects y botones, que un tap los alcanza sin pelear con el pie.
  */
 export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>();
+
   const [step, setStep] = useState<"form" | "disburse">("form");
 
   const [direction, setDirection] = useState<Direction>("I_OWE");
@@ -522,6 +525,7 @@ export default function LoanForm({ cashAccounts, onClose, onSaved }: Props) {
       onClick={closeOrSkip}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Nuevo préstamo"

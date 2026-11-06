@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cardDaysError } from "@/lib/card-form";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import type { CardViewDTO } from "@/lib/finance";
 import { formatAmountInput, formatMoney } from "@/lib/format";
 import { Settings } from "lucide-react";
@@ -41,6 +42,8 @@ interface Props {
  * queda sin períodos y la pantalla lo dice.
  */
 export default function CardConfigForm({ card, onClose, onSaved }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>();
+
   const [closingDay, setClosingDay] = useState(
     card.closingDay === null ? "" : String(card.closingDay),
   );
@@ -123,6 +126,7 @@ export default function CardConfigForm({ card, onClose, onSaved }: Props) {
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={`Configurar ${card.name}`}

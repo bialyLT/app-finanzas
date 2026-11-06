@@ -13,6 +13,7 @@ import {
   type MovementKindDTO,
 } from "@/lib/finance";
 import { formatMoney } from "@/lib/format";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -53,9 +54,9 @@ function downloadExport(format: "csv" | "json") {
  * Paleta global de comandos (`Ctrl+K` / `Cmd+K`).
  *
  * El componente sólo dibuja y ejecuta; el filtrado, el orden y el wrap-around
- * viven en `lib/command-palette.ts` (testeados sin navegador). El foco queda
- * atrapado adentro y se devuelve a la pantalla al cerrar porque la paleta se
- * desmonta y el navegador devuelve el foco al elemento anterior.
+ * viven en `lib/command-palette.ts` (testeados sin navegador). El foco lo
+ * atrapa `useFocusTrap` (el `Tab` cicla adentro y al cerrar vuelve al
+ * disparador); las flechas y `Enter` siguen siendo de la paleta.
  */
 export default function CommandPalette({
   favorites,
@@ -67,7 +68,7 @@ export default function CommandPalette({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useFocusTrap<HTMLDivElement>();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const actions = useMemo<PaletteAction[]>(() => {
@@ -220,36 +221,13 @@ export default function CommandPalette({
       ?.scrollIntoView({ block: "nearest" });
   }, [activeIndex]);
 
-  // Escape y trampa de foco. Tab cicla por los elementos focusables del
-  // diálogo; sin esto el foco se iría al panel de atrás (que sigue visible).
+  // Escape cierra la paleta. El `Tab` lo maneja `useFocusTrap`: acá sólo
+  // queda la tecla que este componente agrega.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-
-      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'input, button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusable || focusable.length === 0) {
-        event.preventDefault();
-        return;
-      }
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const current = document.activeElement;
-
-      if (event.shiftKey && current === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && current === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
     }
 
     document.addEventListener("keydown", handleKeyDown);

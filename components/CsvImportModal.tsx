@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { CSV_MAX_BYTES, CSV_MAX_ROWS } from "@/lib/csv";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import {
   MOVEMENT_KIND_LABEL,
   type CsvImportResultDTO,
@@ -43,6 +44,8 @@ function byteLength(value: string): number {
  * segunda fuente de verdad.
  */
 export default function CsvImportModal({ onClose, onImported }: Props) {
+  const dialogRef = useFocusTrap<HTMLDivElement>();
+
   const [text, setText] = useState("");
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState<CsvPreviewDTO | null>(null);
@@ -173,6 +176,7 @@ export default function CsvImportModal({ onClose, onImported }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Importar movimientos desde CSV"

@@ -2,6 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { formatMoney } from "@/lib/format";
+import {
+  cancelBudgetDeletion,
+  isBudgetDeletionConfirmed,
+  requestBudgetDeletion,
+} from "@/lib/budget-delete";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -51,14 +56,19 @@ async function fetchBudgets(month: string): Promise<BudgetsData> {
   const dataBudgets = (await resBudgets.json()) as {
     budgets?: BudgetViewItem[] | null;
   };
+  // El endpoint de categorías responde `{ categories: [...] }`; tratarlo como
+  // array hacía que `.map` explotara y la sección quedara con un error en vez
+  // de la lista (y sin lista no hay borrado que confirmar).
   const dataCats = resCategories.ok
-    ? ((await resCategories.json()) as { id: string; name: string }[] | null)
+    ? ((await resCategories.json()) as {
+        categories?: { id: string; name: string }[] | null;
+      } | null)
     : null;
 
   return {
     budgets: dataBudgets.budgets || [],
     categories: dataCats
-      ? dataCats.map((category) => ({
+      ? (dataCats.categories ?? []).map((category) => ({
           id: category.id,
           name: category.name,
         }))
@@ -82,6 +92,12 @@ export function BudgetsSection({ month }: { month: string }) {
   const [selectedCategory, setSelectedCategory] = useState("");
   const [amountStr, setAmountStr] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * El presupuesto que espera el segundo toque. `null` = no hay confirmación
+   * abierta. El borrado NO usa `window.confirm()`: el driver web no tiene un
+   * nodo para contestar y el flujo muere.
+   */
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   /**
    * Carga los datos del mes sin encender el indicador. Es la que dispara el
@@ -143,14 +159,17 @@ export function BudgetsSection({ month }: { month: string }) {
       setSelectedCategory("");
       await loadData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Error al guardar");
+      setError(err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setSubmitting(false);
     }
   };
 
+  /** Segundo paso: el borrado ya se confirmó en la UI. */
   const handleDelete = async (id: string) => {
-    if (!confirm("¿Eliminar este presupuesto mensual?")) return;
+    if (!isBudgetDeletionConfirmed(pendingDeleteId, id)) return;
+    setPendingDeleteId(cancelBudgetDeletion());
+    setError(null);
     try {
       const res = await fetch(`/api/budgets?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -158,7 +177,7 @@ export function BudgetsSection({ month }: { month: string }) {
       if (!res.ok) throw new Error("Error al eliminar");
       await loadData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Error al eliminar");
+      setError(err instanceof Error ? err.message : "Error al eliminar");
     }
   };
 
@@ -234,7 +253,7 @@ export function BudgetsSection({ month }: { month: string }) {
       )}
 
       {!loading && error && (
-        <p className="text-xs text-brand-error" role="alert" aria-live="polite">
+        <p className="text-xs text-brand-error" role="alert">
           {error}
         </p>
       )}
@@ -294,7 +313,7 @@ export function BudgetsSection({ month }: { month: string }) {
                     </span>
                     <button
                       type="button"
-                      onClick={() => handleDelete(b.id)}
+                      onClick={() => setPendingDeleteId(requestBudgetDeletion(b.id))}
                       title="Eliminar presupuesto"
                       aria-label={`Eliminar el presupuesto de ${b.categoryName}`}
                       className="text-fg-muted hover:text-brand-error transition-colors"
@@ -345,6 +364,39 @@ export function BudgetsSection({ month }: { month: string }) {
                     </strong>
                   </span>
                 </div>
+
+                {/* Confirmación en dos pasos, inline: el primer toque en la
+                    papelera sólo ABRE este bloque; el DELETE corre con el
+                    segundo. Sin `window.confirm()` y con "Cancelar" siempre a
+                    la vista. */}
+                {isBudgetDeletionConfirmed(pendingDeleteId, b.id) && (
+                  <div
+                    role="alert"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-2"
+                  >
+                    <p className="text-xs text-fg">
+                      ¿Eliminar este presupuesto mensual?
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setPendingDeleteId(cancelBudgetDeletion())}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => void handleDelete(b.id)}
+                      >
+                        Eliminar
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { cardDaysError } from "@/lib/card-form";
+import { useFocusTrap } from "@/lib/use-focus-trap";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { todayCalendar } from "@/lib/dates";
 import {
@@ -65,6 +66,7 @@ const KIND_HELP: Record<AccountKindDTO, string> = {
 
 export default function AccountForm({ onClose, onSaved, account = null }: Props) {
   const editing = account !== null;
+  const dialogRef = useFocusTrap<HTMLDivElement>();
 
   const [name, setName] = useState(account?.name ?? "");
   const [kind, setKind] = useState<AccountKindDTO>(account?.kind ?? "BANK");
@@ -316,6 +318,7 @@ export default function AccountForm({ onClose, onSaved, account = null }: Props)
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={editing ? "Editar cuenta" : "Nueva cuenta"}
