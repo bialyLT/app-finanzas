@@ -14,6 +14,7 @@ import {
   type CalendarDate,
 } from "@/lib/dates";
 import { cleanName, normalizeCategoryName } from "@/lib/finance";
+import { currencyNoun } from "@/lib/currency";
 import { parseMoneyInput } from "@/lib/money";
 import { describeDatabaseError } from "@/lib/queries";
 import {
@@ -50,6 +51,11 @@ interface RuleFields {
   amount: string;
   accountId: string;
   toAccountId: string | null;
+  /**
+   * Sólo TRANSFER entre cuentas de distinta moneda: cuánto LLEGA a la cuenta de
+   * destino, ya normalizado ("100.00"). `null` en el resto.
+   */
+  toAmount: string | null;
   /** Nombre tal como lo escribió la persona, para el upsert por nombre normalizado. */
   categoryName: string | null;
   /** Categoría ya existente (sólo edición, cuando no se manda un nombre nuevo). */
@@ -72,6 +78,7 @@ interface ExistingRule {
   amount: { toFixed(dp: number): string };
   accountId: string;
   toAccountId: string | null;
+  toAmount: { toFixed(dp: number): string } | null;
   categoryId: string | null;
   freq: RecurFreq;
   interval: number;
@@ -206,6 +213,67 @@ function parseRuleFields(input: {
     // La forma la define el tipo: al dejar de ser TRANSFER, el destino se
     // limpia solo (no tiene sentido conservarlo).
     toAccountId = null;
+  }
+
+  // ── Monto de destino (sólo TRANSFER entre monedas distintas) ───────────────
+  //
+  // Acá se valida la SINTAXIS y el signo. La bicondicional contra las monedas
+  // de las cuentas se resuelve en `accountsProblem`, que es donde se pueden
+  // leer. Mismo criterio que POST /api/transactions: un `null`/"" explícito
+  // limpia el valor, y "no vino" conserva el de la regla en una edición.
+  let toAmount: string | null;
+
+  if (kind === "TRANSFER") {
+    if (body.toAmount !== undefined) {
+      if (body.toAmount === null || body.toAmount === "") {
+        toAmount = null;
+      } else {
+        // `typeof` estricto (no `String(x)` suelto): un array de un número se
+        // convierte en "100" y pasaría como monto real.
+        if (
+          typeof body.toAmount !== "string" &&
+          typeof body.toAmount !== "number"
+        ) {
+          return fail(
+            "El monto de destino no se entiende. Escribilo como 1234,56 o 1.234,56.",
+          );
+        }
+        const parsed = parseMoneyInput(
+          typeof body.toAmount === "number"
+            ? body.toAmount.toFixed(2)
+            : body.toAmount,
+        );
+        if (parsed === null) {
+          return fail(
+            "El monto de destino no se entiende. Escribilo como 1234,56 o 1.234,56.",
+          );
+        }
+        if (parsed.lessThanOrEqualTo(0)) {
+          return fail("El monto de destino tiene que ser mayor a cero.");
+        }
+        toAmount = parsed.toFixed(2);
+      }
+    } else if (existing && existing.kind === "TRANSFER" && existing.toAmount) {
+      toAmount = existing.toAmount.toFixed(2);
+    } else {
+      toAmount = null;
+    }
+  } else {
+    // En un ingreso o un gasto no hay segunda punta: se rechaza cualquier
+    // valor, incluso uno válido, porque aceptarlo en silencio sería guardar un
+    // número que nadie va a leer.
+    if (
+      body.toAmount !== undefined &&
+      body.toAmount !== null &&
+      body.toAmount !== ""
+    ) {
+      return fail(
+        "El monto de destino sólo existe en una transferencia entre cuentas.",
+      );
+    }
+    // La forma la define el tipo: al dejar de ser TRANSFER, el monto de
+    // destino se limpia solo (como el destino y la categoría).
+    toAmount = null;
   }
 
   // ── Categoría ──────────────────────────────────────────────────────────────
@@ -405,6 +473,7 @@ function parseRuleFields(input: {
       amount,
       accountId,
       toAccountId,
+      toAmount,
       categoryName,
       categoryId,
       freq,
@@ -423,12 +492,16 @@ function parseRuleFields(input: {
  * Los problemas de las cuentas de una regla, avisados antes del FK y antes de
  * guardar una promesa que la base no va a poder cumplir.
  *
- * Desde la Fase 4.3 las cuentas tienen moneda. `RecurrenceRule` todavía no tiene
- * `toAmount` (F4.6), así que una transferencia entre monedas distintas es una
- * regla que no puede postear NUNCA: la base la rechaza con el trigger
- * `movement_currency_shape_check` y, como la corrida es una sola transacción,
- * además tumba la materialización de todas las demás reglas. Se rechaza en el
- * alta/edición con un 400 que lo explica, en vez de aceptar una promesa rota.
+ * Desde la Fase 4.6 las reglas pueden unir cuentas de distinta moneda, pero
+ * SÓLO con `toAmount`. La bicondicional es la misma que custodia el trigger
+ * `recurrence_currency_shape_check` y la misma que valida POST /api/transactions:
+ *
+ *   · monedas distintas → hace falta el monto de destino;
+ *   · misma moneda      → el monto de destino no corresponde.
+ *
+ * Se corta acá para dar un 400 con el motivo, en vez del texto del trigger. Si
+ * esta validación faltara, la regla se guardaría y recién al postear se
+ * descubriría que no puede cumplirse.
  */
 async function accountsProblem(fields: RuleFields): Promise<string | null> {
   const ids = [fields.accountId, ...(fields.toAccountId ? [fields.toAccountId] : [])];
@@ -447,11 +520,16 @@ async function accountsProblem(fields: RuleFields): Promise<string | null> {
   const to = fields.toAccountId
     ? found.find((account) => account.id === fields.toAccountId)
     : null;
-  if (from && to && from.currency !== to.currency) {
+  if (from && to && from.currency !== to.currency && fields.toAmount === null) {
     return (
-      "Una regla de transferencia no puede unir cuentas en monedas distintas: " +
-      "todavía no se puede indicar cuánto llega a la cuenta de destino. Programala " +
-      "entre cuentas de la misma moneda o cargá la transferencia a mano."
+      `La cuenta de origen está en ${currencyNoun(from.currency)} y la de destino ` +
+      `en ${currencyNoun(to.currency)}: indicá cuánto llega a la cuenta de destino.`
+    );
+  }
+  if (from && to && from.currency === to.currency && fields.toAmount !== null) {
+    return (
+      `Las dos cuentas están en ${currencyNoun(from.currency)}: el monto de ` +
+      `destino no corresponde.`
     );
   }
 
@@ -468,6 +546,8 @@ async function accountsProblem(fields: RuleFields): Promise<string | null> {
  *     amount: "1234,56",
  *     accountId: "...",
  *     toAccountId: "...",          // SÓLO TRANSFER
+ *     toAmount: "100",             // SÓLO TRANSFER entre monedas distintas:
+ *                                  //   cuánto llega a la cuenta de destino
  *     categoryName: "Vivienda",    // SÓLO INCOME y EXPENSE
  *     freq: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY",
  *     interval: 1,                 // opcional, por defecto 1
@@ -663,6 +743,7 @@ async function createOrUpdateRule(fields: RuleFields, id: string | null) {
       amount: fields.amount,
       accountId: fields.accountId,
       toAccountId: fields.toAccountId,
+      toAmount: fields.toAmount,
       categoryId,
       freq: fields.freq,
       interval: fields.interval,

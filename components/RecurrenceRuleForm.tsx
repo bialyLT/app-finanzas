@@ -9,6 +9,7 @@ import {
 } from "@/lib/category-kind";
 import { clearDateInputIfEmptied } from "@/lib/date-input";
 import { isCalendarDate, todayCalendar } from "@/lib/dates";
+import { isCrossCurrencyTransfer } from "@/lib/currency";
 import {
   POSTING_MODE_LABEL,
   RECUR_FREQ_LABEL,
@@ -97,6 +98,17 @@ export default function RecurrenceRuleForm({
       accounts.find((a) => a.id !== (rule?.account.id ?? accounts[0]?.id))?.id ??
       "",
   );
+  /**
+   * "¿Cuánto llega?": la segunda punta de una transferencia entre monedas (F4.6).
+   *
+   * Se guarda como texto y NO se borra al cambiar de destino a una cuenta de la
+   * misma moneda: la condición se recalcula, el campo desaparece, y si la
+   * persona vuelve a una cuenta en otra moneda lo escrito sigue ahí. Perderlo
+   * obligaría a tipearlo de nuevo por haber probado una opción.
+   */
+  const [toAmount, setToAmount] = useState(
+    () => rule?.toAmount?.replace(".", ",") ?? "",
+  );
   const [categoryName, setCategoryName] = useState(rule?.category?.name ?? "");
   const [freq, setFreq] = useState<RecurFreqDTO>(rule?.freq ?? "MONTHLY");
   const [interval, setInterval] = useState(String(rule?.interval ?? 1));
@@ -164,6 +176,20 @@ export default function RecurrenceRuleForm({
       : (accounts.find((a) => a.id !== effectiveAccountId)?.id ?? "");
 
   const amountPreview = formatAmountInput(amount);
+
+  // ── La segunda punta (F4.6) ────────────────────────────────────────────────
+  // La regla del segundo monto vive en `isCrossCurrencyTransfer`: es la misma
+  // comparación que usan la API y el trigger de la base.
+  const sourceAccount = accounts.find((a) => a.id === effectiveAccountId);
+  const destinationAccount = accounts.find((a) => a.id === effectiveToAccountId);
+  const crossCurrency = isTransfer && isCrossCurrencyTransfer(
+    sourceAccount?.currency,
+    destinationAccount?.currency,
+  );
+  const toAmountPreview = formatAmountInput(
+    toAmount,
+    destinationAccount?.currency,
+  );
 
   const suggestions = useMemo(() => {
     const query = categoryName.trim().toLowerCase();
@@ -234,6 +260,7 @@ export default function RecurrenceRuleForm({
     if (message.startsWith("Elegí la cuenta") || message.startsWith("Elegí una cuenta"))
       return "rec-account";
     if (message.startsWith("Elegí a qué cuenta")) return "rec-to-account";
+    if (message.startsWith("Escribí cuánto llega")) return "rec-to-amount";
     if (
       message.startsWith("Escribí de dónde viene") ||
       message.startsWith("Escribí en qué se gasta") ||
@@ -280,6 +307,15 @@ export default function RecurrenceRuleForm({
     }
     if (isTransfer && !effectiveToAccountId) {
       setError("Elegí a qué cuenta va la plata.");
+      return;
+    }
+    // Entre monedas distintas la segunda punta es obligatoria: sin ella la
+    // regla no podría postear nunca (la base la rechaza). El servidor lo exige
+    // igual; acá se avisa sin ida y vuelta.
+    if (crossCurrency && !toAmountPreview) {
+      setError(
+        "Escribí cuánto llega a la cuenta de destino: las cuentas están en monedas distintas.",
+      );
       return;
     }
     if (!isTransfer && !categoryName.trim()) {
@@ -357,8 +393,14 @@ export default function RecurrenceRuleForm({
       count: countValue,
       postingMode,
     };
-    if (isTransfer) body.toAccountId = effectiveToAccountId;
-    else body.categoryName = categoryName.trim();
+    if (isTransfer) {
+      body.toAccountId = effectiveToAccountId;
+      // Sólo entre monedas distintas. En una transferencia de la MISMA moneda
+      // se manda `null` explícito: si la regla venía de un cambio de moneda,
+      // "no mandar nada" conservaría el `toAmount` viejo y la bicondicional
+      // rechazaría la edición.
+      body.toAmount = crossCurrency ? toAmount : null;
+    } else body.categoryName = categoryName.trim();
     if (editing) body.id = rule.id;
 
     setSaving(true);
@@ -669,6 +711,48 @@ export default function RecurrenceRuleForm({
             </div>
           )}
 
+          {/* ── La segunda punta: sólo si las monedas difieren (F4.6) ─────── */}
+          {/*
+            `amount` es lo que SALE, en la moneda de origen. Sin este campo,
+            una regla de 120.000 pesos a una caja en dólares acreditaría 120.000
+            dólares en cada ocurrencia. La condición es la misma del
+            formulario de transferencia manual; el texto escrito se conserva
+            aunque el campo desaparezca por probar otra cuenta.
+          */}
+          {crossCurrency && (
+            <div>
+              <Label htmlFor="rec-to-amount" className="text-sm font-medium">
+                ¿Cuánto llega? *
+              </Label>
+              <Input
+                id="rec-to-amount"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                {...fieldProps("rec-to-amount")}
+                value={toAmount}
+                onChange={(e) => setToAmount(e.target.value)}
+                placeholder="0,00"
+                className="mt-1 w-full text-xl font-bold rounded-lg border-line-strong bg-transparent px-4 py-3"
+              />
+              <p id="rec-to-amount-help" className="mt-1 text-xs text-fg-muted">
+                {toAmountPreview ? (
+                  <>
+                    Entran <b>{toAmountPreview}</b> a{" "}
+                    {destinationAccount?.name ?? "la cuenta de destino"} en cada
+                    ocurrencia.
+                  </>
+                ) : toAmount.trim() ? (
+                  <span className="text-warning">
+                    No se entiende el monto. Probá con 100 o 1.234,56
+                  </span>
+                ) : (
+                  "Lo que entra a la cuenta de destino, en su moneda. Es obligatorio entre monedas distintas."
+                )}
+              </p>
+            </div>
+          )}
+
           {/* ── Categoría (sólo ingresos y gastos) ────────────────────────── */}
           {!isTransfer && (
             <div>
@@ -906,7 +990,7 @@ export default function RecurrenceRuleForm({
                 id="rec-form-submit"
                 type="submit"
                 variant="secondary"
-                disabled={saving}
+                disabled={saving || (crossCurrency && !toAmountPreview)}
                 className={`flex-1 py-3 font-bold text-primary-fg ${
                   isTransfer
                     ? "bg-transfer hover:bg-transfer/90"

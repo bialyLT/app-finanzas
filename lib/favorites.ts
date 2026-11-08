@@ -20,6 +20,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
 import { categoryKindMessage } from "./category-kind";
+import { currencyNoun } from "./currency";
 import { canReceiveIncome, cleanName, normalizeCategoryName } from "./finance";
 import type { FavoriteDTO } from "./finance";
 import { money, parseMoneyInput, type Money } from "./money";
@@ -50,6 +51,7 @@ export function toFavoriteDTO(favorite: FavoriteRow): FavoriteDTO {
     name: favorite.name,
     kind: favorite.kind,
     amount: favorite.amount === null ? null : favorite.amount.toFixed(2),
+    toAmount: favorite.toAmount === null ? null : favorite.toAmount.toFixed(2),
     description: favorite.description,
     category: favorite.category ? toCategoryDTO(favorite.category) : null,
     account: toAccountDTO(favorite.account),
@@ -74,6 +76,11 @@ export interface FavoriteInput {
   name: string;
   kind: "INCOME" | "EXPENSE" | "TRANSFER";
   amount: string | null;
+  /**
+   * Sólo TRANSFER entre cuentas de distinta moneda: cuánto LLEGA a la cuenta de
+   * destino. `null` en el resto.
+   */
+  toAmount: string | null;
   description: string;
   categoryName: string | null;
   accountId: string;
@@ -167,10 +174,56 @@ export function parseFavoriteInput(
     );
   }
 
+  // ── Monto de destino (sólo TRANSFER entre monedas distintas) ───────────────
+  //
+  // Igual que en el alta de movimientos: acá se valida la forma; la
+  // bicondicional contra las monedas se resuelve en `createFavorite`, que es
+  // donde se pueden leer las cuentas.
+  let toAmount: Money | null = null;
+  const rawToAmount =
+    typeof body.toAmount === "number"
+      ? body.toAmount.toFixed(2)
+      : typeof body.toAmount === "string"
+        ? body.toAmount.trim()
+        : body.toAmount === undefined || body.toAmount === null
+          ? ""
+          : null;
+
+  if (rawToAmount === null) {
+    throw new FavoriteError(
+      "El monto de destino no se entiende. Dejalo vacío o escribí 1234,56.",
+    );
+  }
+
+  if (rawToAmount !== "") {
+    if (kind !== "TRANSFER") {
+      throw new FavoriteError(
+        "El monto de destino sólo existe en una transferencia entre cuentas.",
+      );
+    }
+    const parsed = parseMoneyInput(rawToAmount);
+    if (!parsed) {
+      throw new FavoriteError(
+        "El monto de destino no se entiende. Dejalo vacío o escribí 1234,56.",
+      );
+    }
+    if (parsed.lessThanOrEqualTo(0)) {
+      throw new FavoriteError("El monto de destino tiene que ser mayor a cero.");
+    }
+    if (parsed.decimalPlaces() > 2) {
+      throw new FavoriteError("El monto de destino admite como máximo dos decimales.");
+    }
+    if (parsed.greaterThanOrEqualTo("10000000000000000")) {
+      throw new FavoriteError("El monto de destino es demasiado grande.");
+    }
+    toAmount = parsed;
+  }
+
   return {
     name,
     kind,
     amount: amount ? amount.toFixed(2) : null,
+    toAmount: toAmount ? toAmount.toFixed(2) : null,
     description,
     categoryName: rawCategory || null,
     accountId,
@@ -197,7 +250,9 @@ export async function listFavorites(db: Db): Promise<FavoriteDTO[]> {
  *   · Cuenta existente y NO archivada. Una plantilla que apunta a una cuenta
  *     archivada no se puede usar (el formulario no la ofrece).
  *   · INCOME sólo a cuentas que pueden recibirlo (CASH/BANK).
- *   · TRANSFER: destino existente, no archivado y distinto.
+ *   · TRANSFER: destino existente, no archivado y distinto. Si las monedas
+ *     difieren, `toAmount` es obligatorio (y prohibido si son iguales), igual
+ *     que en el alta de movimientos.
  *   · Categoría opcional: si el nombre existe se reutiliza; si no, se crea con
  *     el tipo de la plantilla. Guardar un favorito no puede dejar la categoría
  *     "a medio crear" para el día que se use.
@@ -240,6 +295,23 @@ export async function createFavorite(
     }
     if (toAccount.id === account.id) {
       throw new FavoriteError("La cuenta de destino tiene que ser distinta a la de origen.");
+    }
+    // ── La bicondicional de las monedas (F4.6) ───────────────────────────────
+    // La misma que custodia el trigger `favorite_currency_shape_check` y la que
+    // valida el alta de movimientos: distinta moneda ⇔ monto de destino.
+    const crossCurrency = account.currency !== toAccount.currency;
+    if (crossCurrency && input.toAmount === null) {
+      throw new FavoriteError(
+        `La cuenta de origen está en ${currencyNoun(account.currency)} y la de ` +
+          `destino en ${currencyNoun(toAccount.currency)}: indicá cuánto llega a ` +
+          `la cuenta de destino.`,
+      );
+    }
+    if (!crossCurrency && input.toAmount !== null) {
+      throw new FavoriteError(
+        `Las dos cuentas están en ${currencyNoun(account.currency)}: el monto de ` +
+          `destino no corresponde.`,
+      );
     }
   }
 
@@ -284,6 +356,7 @@ export async function createFavorite(
         kind: input.kind,
         // `money` acepta string; null significa "sin monto" y no se convierte.
         amount: input.amount === null ? null : money(input.amount),
+        toAmount: input.toAmount === null ? null : money(input.toAmount),
         description: input.description,
         categoryId,
         accountId: input.accountId,

@@ -221,3 +221,21 @@ export function shortcutMovementKind(
   if (key === "i") return "INCOME";
   return null;
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * El texto inicial de "¿Cuánto llega?" cuando se abre una plantilla
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * El valor con el que abre el campo "¿Cuánto llega?" al usar una plantilla.
+ *
+ * La plantilla guarda el monto normalizado ("100.00") y el campo muestra coma
+ * decimal, igual que `amount`: un solo formato visible para el mismo dato. Es
+ * la misma conversión que hace el formulario con el monto principal, extraída
+ * acá para poder probarla sin navegador.
+ */
+export function initialToAmountText(favorite: {
+  toAmount: string | null;
+}): string {
+  return favorite.toAmount ? favorite.toAmount.replace(".", ",") : "";
+}

@@ -592,6 +592,17 @@ model RecurrenceRule {
   toAccountId String?
   toAccount   Account? @relation("RecurrenceRuleToAccount", fields: [toAccountId], references: [id], onDelete: Restrict)
 
+  /// Sólo en TRANSFER entre cuentas de DISTINTA moneda: cuánto LLEGA a la cuenta
+  /// de destino, en la moneda de destino. NULL en todos los demás casos.
+  ///
+  /// Es el mismo dato que `Movement.toAmount` (F4.6): la regla lo promete y el
+  /// generador lo COPIA al movimiento que postea. Con la misma bicondicional,
+  /// custodiada por un trigger (`recurrence_currency_shape_check`): obligatorio
+  /// si las monedas difieren, prohibido si son iguales. Sin él, una regla
+  /// ARS→USD no puede postear nunca: los 100 dólares que entran no se derivan
+  /// de los 120.000 pesos que salen sin una cotización.
+  toAmount Decimal? @db.Decimal(18, 2)
+
   /// Obligatoria en INCOME y EXPENSE, prohibida en TRANSFER (CHECK).
   ///
   /// Es obligatoria por una razón concreta: el movimiento posteado tiene que
@@ -1025,6 +1036,16 @@ model FavoriteTemplate {
   /// Sólo TRANSFER: cuenta de destino, distinta de la de origen (CHECK).
   toAccountId String?
   toAccount   Account? @relation("FavoriteTemplateToAccount", fields: [toAccountId], references: [id], onDelete: Cascade)
+
+  /// Sólo en TRANSFER entre cuentas de DISTINTA moneda: cuánto LLEGA a la cuenta
+  /// de destino, en la moneda de destino. NULL en todos los demás casos.
+  ///
+  /// La plantilla es un formulario guardado: este número SE PRECARGA en el campo
+  /// "¿Cuánto llega?" del alta de movimientos y viaja al `Movement` al guardar.
+  /// Misma bicondicional que `Movement.toAmount`, custodiada por el trigger
+  /// `favorite_currency_shape_check`: obligatorio si las monedas difieren,
+  /// prohibido si son iguales.
+  toAmount Decimal? @db.Decimal(18, 2)
 
   /// Se actualiza SÓLO cuando un movimiento se guarda usando esta plantilla.
   /// Ordena la lista (el último usado primero) sin tocar los totales.

@@ -20,6 +20,7 @@ import { useFocusTrap } from "@/lib/use-focus-trap";
 import {
   browserStorage,
   canBeSourceAccount,
+  initialToAmountText,
   readLastAccountId,
   resolveSourceAccount,
   writeLastAccountId,
@@ -236,7 +237,9 @@ export default function TransactionForm({
    * vuelve a elegir una cuenta en otra moneda lo escrito sigue ahí. Perderlo
    * obligaría a tipearlo de nuevo por haber probado una opción.
    */
-  const [toAmount, setToAmount] = useState("");
+  const [toAmount, setToAmount] = useState(() =>
+    favorite ? initialToAmountText(favorite) : "",
+  );
   const [categoryName, setCategoryName] = useState(
     () => favorite?.category?.name ?? "",
   );
@@ -558,6 +561,9 @@ export default function TransactionForm({
           categoryName: isTransfer ? null : categoryName.trim(),
           accountId,
           toAccountId: isTransfer ? toAccountId : null,
+          // La plantilla guarda la segunda punta igual que el movimiento: sólo
+          // existe entre monedas distintas (la API rechaza lo demás).
+          ...(crossCurrency ? { toAmount } : {}),
         }),
       });
       const data = (await response.json().catch(() => ({}))) as Partial<FavoriteDTO> & {

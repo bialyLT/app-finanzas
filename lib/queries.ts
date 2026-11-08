@@ -1820,6 +1820,57 @@ const DOMAIN_RULES: { marker: string; status: number; message: string }[] = [
     message:
       "La cuenta ya tiene historia: no se puede cambiar su moneda, porque todos sus movimientos pasarían a significar otra cosa. Creá una cuenta nueva en la moneda que necesitás.",
   },
+  // ── El monto de destino en reglas y plantillas (F4.6) ──────────────────────
+  // La API valida antes (y con un mensaje que nombra las monedas); estos
+  // marcadores son la red para lo que se escriba sin pasar por ella, o para la
+  // carrera en la que las monedas cambian entre la validación y el INSERT.
+  // Sin el mapeo, el rechazo de la base llegaba como un 500 genérico.
+  {
+    marker: "recurrence_to_amount_positive",
+    status: 400,
+    message: "El monto de destino de la regla tiene que ser mayor a cero.",
+  },
+  {
+    marker: "recurrence_to_amount_only_on_transfer",
+    status: 400,
+    message:
+      "El monto de destino sólo existe en una regla de transferencia: un ingreso o un gasto no tienen cuenta de destino.",
+  },
+  {
+    marker: "[finanzas:regla_transferencia_entre_monedas_sin_monto_destino]",
+    status: 400,
+    message:
+      "Las cuentas de la regla están en monedas distintas: hace falta indicar cuánto llega a la cuenta de destino.",
+  },
+  {
+    marker: "[finanzas:regla_monto_destino_en_misma_moneda]",
+    status: 400,
+    message:
+      "Las dos cuentas de la regla están en la misma moneda: el monto de destino no corresponde.",
+  },
+  {
+    marker: "favorite_to_amount_positive",
+    status: 400,
+    message: "El monto de destino de la plantilla tiene que ser mayor a cero.",
+  },
+  {
+    marker: "favorite_to_amount_only_on_transfer",
+    status: 400,
+    message:
+      "El monto de destino sólo existe en una plantilla de transferencia: un ingreso o un gasto no tienen cuenta de destino.",
+  },
+  {
+    marker: "[finanzas:plantilla_transferencia_entre_monedas_sin_monto_destino]",
+    status: 400,
+    message:
+      "Las cuentas de la plantilla están en monedas distintas: hace falta indicar cuánto llega a la cuenta de destino.",
+  },
+  {
+    marker: "[finanzas:plantilla_monto_destino_en_misma_moneda]",
+    status: 400,
+    message:
+      "Las dos cuentas de la plantilla están en la misma moneda: el monto de destino no corresponde.",
+  },
   {
     marker: "loan_has_parameters",
     status: 400,

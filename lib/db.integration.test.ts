@@ -94,7 +94,11 @@ import {
   POST as postBudget,
 } from "@/app/api/budgets/route";
 import { POST as postBatch } from "@/app/api/transactions/batch/route";
-import { POST as postRecurrenceRule } from "@/app/api/recurrence/rules/route";
+import { POST as postFavorite } from "@/app/api/favorites/route";
+import {
+  POST as postRecurrenceRule,
+  PATCH as patchRule,
+} from "@/app/api/recurrence/rules/route";
 import { addDays, calendarToDb, dbToCalendar } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule, money } from "./money";
@@ -3710,7 +3714,7 @@ describeDb("Recurrencia · el generador \"desde la última vez\"", () => {
     expect(second.materialized).toBe(101);
     expect(second.capped).toBe(false);
     expect(await db.recurrenceOccurrence.count()).toBe(601);
-  });
+  }, 60_000);
 
   it("pausar y archivar detienen la generación", async () => {
     const { bank, gastos } = await seedBase();
@@ -7963,7 +7967,7 @@ describeDb("Fase 4.3 · escritura con monedas", () => {
   });
 
   describe("Recurrencia entre monedas (F4.3 abrió cuentas en USD)", () => {
-    it("no deja CREAR una regla de transferencia entre monedas distintas", async () => {
+    it("sin monto de destino, una regla cruzada es 400 y no se guarda", async () => {
       const pesos = await createAccount("Caja pesos", "ARS");
       const dolares = await createAccount("Caja dA3lares", "USD");
 
@@ -7981,7 +7985,9 @@ describeDb("Fase 4.3 · escritura con monedas", () => {
       );
 
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toMatch(/monedas distintas/);
+      expect((await res.json()).error).toMatch(
+        /cuánto llega a la cuenta de destino/,
+      );
       expect(await db.recurrenceRule.count()).toBe(0);
     });
 
@@ -7993,18 +7999,33 @@ describeDb("Fase 4.3 · escritura con monedas", () => {
         data: { name: "Gastos rec", normalizedName: "gastos rec", kind: "EXPENSE" },
       });
 
-      const cruzada = await db.recurrenceRule.create({
-        data: {
-          title: "Cruzada",
-          kind: "TRANSFER",
-          amount: "1000",
-          accountId: pesos.id,
-          toAccountId: dolares.id,
-          freq: "MONTHLY",
-          startDate: calendarToDb("2026-01-01"),
-          postingMode: "AUTO",
-        },
-      });
+      // Desde F4.6 la base NO deja crear esta fila: el trigger la rechaza. Se
+      // siembra con el trigger apagado para representar un DATO VIEJO —una
+      // regla anterior a esta fase— y verificar que el generador no tumba la
+      // corrida entera cuando se encuentra con uno.
+      await db.$executeRawUnsafe(
+        'ALTER TABLE "RecurrenceRule" DISABLE TRIGGER "recurrence_currency_shape_check"',
+      );
+      let cruzadaId: string;
+      try {
+        const cruzada = await db.recurrenceRule.create({
+          data: {
+            title: "Cruzada",
+            kind: "TRANSFER",
+            amount: "1000",
+            accountId: pesos.id,
+            toAccountId: dolares.id,
+            freq: "MONTHLY",
+            startDate: calendarToDb("2026-01-01"),
+            postingMode: "AUTO",
+          },
+        });
+        cruzadaId = cruzada.id;
+      } finally {
+        await db.$executeRawUnsafe(
+          'ALTER TABLE "RecurrenceRule" ENABLE TRIGGER "recurrence_currency_shape_check"',
+        );
+      }
       const valida = await db.recurrenceRule.create({
         data: {
           title: "Valida",
@@ -8021,16 +8042,16 @@ describeDb("Fase 4.3 · escritura con monedas", () => {
       const run = await runDueOccurrences(db, { today: "2026-03-01" });
 
       // La cruzada va a la bandeja con el motivo; NO aborta la transacción.
-      expect(run.blocked.map((item) => item.ruleId)).toContain(cruzada.id);
-      expect(run.blocked.find((item) => item.ruleId === cruzada.id)?.reason).toMatch(
-        /monedas distintas|cuenta en pesos/i,
+      expect(run.blocked.map((item) => item.ruleId)).toContain(cruzadaId);
+      expect(run.blocked.find((item) => item.ruleId === cruzadaId)?.reason).toMatch(
+        /monto de destino/,
       );
       expect(
-        await db.movement.count({ where: { recurrenceRuleId: cruzada.id } }),
+        await db.movement.count({ where: { recurrenceRuleId: cruzadaId } }),
       ).toBe(0);
       expect(
         await db.recurrenceOccurrence.count({
-          where: { ruleId: cruzada.id, status: "PENDING" },
+          where: { ruleId: cruzadaId, status: "PENDING" },
         }),
       ).toBe(3);
 
@@ -8510,5 +8531,684 @@ describeDb("Fase 4.4 · presupuestos por moneda en la API", () => {
     }
 
     expect(await db.budget.count()).toBe(0);
+  });
+});
+
+/* ═════════════════════════════════════════════════════════════════════════════
+ * FASE 4.6 · EL MONTO DE DESTINO EN REGLAS Y PLANTILLAS
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * `Movement.toAmount` existe desde F4.1. Una REGLA y una PLANTILLA ahora lo
+ * tienen con la MISMA bicondicional —obligatorio si las monedas difieren,
+ * prohibido si son iguales— y con el mismo mecanismo (CHECK + trigger con
+ * locking reads), para que el invariante no viva sólo en la API.
+ *
+ * Los dos caminos que valen:
+ *
+ *   · la base rechaza por su cuenta, con marcadores propios de cada tabla;
+ *   · la API rechaza antes con un 400 legible —y acepta la regla que ANTES
+ *     rechazaba—, el generador COPIA el monto de destino al movimiento, y los
+ *     saldos quedan exactos.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+describeDb("Fase 4.6 · monto de destino en reglas y plantillas", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+    await db.appSettings.update({
+      where: { id: 1 },
+      data: { enabledCurrencies: ["ARS", "USD"] },
+    });
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({
+      v: 1,
+      iat: 0,
+      exp: 0,
+    });
+    vi.mocked(csrfModule.assertSameOrigin).mockReturnValue(null);
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+    await apiPrisma.$disconnect();
+    await db.$disconnect();
+  });
+
+  function request(method: string, path: string, body?: unknown) {
+    return new Request(`http://localhost:3000${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  async function createAccount(
+    name: string,
+    currency: "ARS" | "USD",
+    kind: "CASH" | "BANK" = "CASH",
+  ) {
+    return db.account.create({ data: { name, kind, currency } });
+  }
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * La base · RecurrenceRule
+   * ──────────────────────────────────────────────────────────────────────── */
+  describe("la base · RecurrenceRule", () => {
+    it("rechaza una transferencia entre monedas SIN monto de destino", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      await expect(
+        db.recurrenceRule.create({
+          data: {
+            title: "Cambio",
+            kind: "TRANSFER",
+            amount: "120000",
+            accountId: pesos.id,
+            toAccountId: dolares.id,
+            freq: "MONTHLY",
+            startDate: calendarToDb("2026-01-01"),
+          },
+        }),
+      ).rejects.toThrow(/regla_transferencia_entre_monedas_sin_monto_destino/);
+      expect(await db.recurrenceRule.count()).toBe(0);
+    });
+
+    it("rechaza el monto de destino en una transferencia de la MISMA moneda", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      await expect(
+        db.recurrenceRule.create({
+          data: {
+            title: "Traspaso",
+            kind: "TRANSFER",
+            amount: "10000",
+            toAmount: "10000",
+            accountId: pesos.id,
+            toAccountId: banco.id,
+            freq: "MONTHLY",
+            startDate: calendarToDb("2026-01-01"),
+          },
+        }),
+      ).rejects.toThrow(/regla_monto_destino_en_misma_moneda/);
+    });
+
+    it("rechaza un monto de destino que no es positivo (0 y negativo)", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      for (const toAmount of ["0", "-5"]) {
+        await expect(
+          db.recurrenceRule.create({
+            data: {
+              title: "Cambio",
+              kind: "TRANSFER",
+              amount: "120000",
+              toAmount,
+              accountId: pesos.id,
+              toAccountId: dolares.id,
+              freq: "MONTHLY",
+              startDate: calendarToDb("2026-01-01"),
+            },
+          }),
+          `toAmount=${toAmount}`,
+        ).rejects.toThrow(/recurrence_to_amount_positive/);
+      }
+    });
+
+    it("rechaza el monto de destino en un gasto", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const { gastos } = await seedCategories();
+
+      await expect(
+        db.recurrenceRule.create({
+          data: {
+            title: "Alquiler",
+            kind: "EXPENSE",
+            amount: "1000",
+            toAmount: "1",
+            accountId: pesos.id,
+            categoryId: gastos.id,
+            freq: "MONTHLY",
+            startDate: calendarToDb("2026-01-01"),
+          },
+        }),
+      ).rejects.toThrow(/recurrence_to_amount_only_on_transfer/);
+    });
+
+    it("acepta ARS → USD con monto de destino, y la misma moneda sin él", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      const cruzada = await db.recurrenceRule.create({
+        data: {
+          title: "Cambio",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb("2026-01-01"),
+        },
+      });
+      expect(cruzada.toAmount?.toFixed(2)).toBe("100.00");
+
+      const misma = await db.recurrenceRule.create({
+        data: {
+          title: "Traspaso",
+          kind: "TRANSFER",
+          amount: "10000",
+          accountId: pesos.id,
+          toAccountId: banco.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb("2026-01-01"),
+        },
+      });
+      expect(misma.toAmount).toBeNull();
+    });
+  });
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * La base · FavoriteTemplate
+   * ──────────────────────────────────────────────────────────────────────── */
+  describe("la base · FavoriteTemplate", () => {
+    it("rechaza una transferencia entre monedas SIN monto de destino", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      await expect(
+        db.favoriteTemplate.create({
+          data: {
+            name: "Cambio guardado",
+            normalizedName: "cambio guardado",
+            kind: "TRANSFER",
+            amount: "120000",
+            accountId: pesos.id,
+            toAccountId: dolares.id,
+          },
+        }),
+      ).rejects.toThrow(
+        /plantilla_transferencia_entre_monedas_sin_monto_destino/,
+      );
+      expect(await db.favoriteTemplate.count()).toBe(0);
+    });
+
+    it("rechaza el monto de destino en una transferencia de la MISMA moneda", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      await expect(
+        db.favoriteTemplate.create({
+          data: {
+            name: "Traspaso guardado",
+            normalizedName: "traspaso guardado",
+            kind: "TRANSFER",
+            amount: "10000",
+            toAmount: "10000",
+            accountId: pesos.id,
+            toAccountId: banco.id,
+          },
+        }),
+      ).rejects.toThrow(/plantilla_monto_destino_en_misma_moneda/);
+    });
+
+    it("rechaza un monto de destino que no es positivo (0 y negativo)", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      for (const toAmount of ["0", "-5"]) {
+        await expect(
+          db.favoriteTemplate.create({
+            data: {
+              name: `Cambio ${toAmount}`,
+              normalizedName: `cambio ${toAmount}`,
+              kind: "TRANSFER",
+              amount: "120000",
+              toAmount,
+              accountId: pesos.id,
+              toAccountId: dolares.id,
+            },
+          }),
+          `toAmount=${toAmount}`,
+        ).rejects.toThrow(/favorite_to_amount_positive/);
+      }
+    });
+
+    it("rechaza el monto de destino en un gasto", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+
+      await expect(
+        db.favoriteTemplate.create({
+          data: {
+            name: "Café",
+            normalizedName: "cafe",
+            kind: "EXPENSE",
+            amount: "5000",
+            toAmount: "1",
+            accountId: pesos.id,
+          },
+        }),
+      ).rejects.toThrow(/favorite_to_amount_only_on_transfer/);
+    });
+
+    it("acepta ARS → USD con monto de destino, y la misma moneda sin él", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      const cruzada = await db.favoriteTemplate.create({
+        data: {
+          name: "Cambio guardado",
+          normalizedName: "cambio guardado",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        },
+      });
+      expect(cruzada.toAmount?.toFixed(2)).toBe("100.00");
+
+      const misma = await db.favoriteTemplate.create({
+        data: {
+          name: "Mismo banco",
+          normalizedName: "mismo banco",
+          kind: "TRANSFER",
+          amount: "10000",
+          accountId: pesos.id,
+          toAccountId: banco.id,
+        },
+      });
+      expect(misma.toAmount).toBeNull();
+    });
+  });
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * La API · reglas
+   * ──────────────────────────────────────────────────────────────────────── */
+  describe("POST/PATCH /api/recurrence/rules", () => {
+    it("crea una regla ARS → USD con `toAmount` (antes era 400) y la devuelve", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const res = await postRecurrenceRule(
+        request("POST", "/api/recurrence/rules", {
+          title: "Compra de dólares",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          freq: "MONTHLY",
+          startDate: "2026-01-01",
+          postingMode: "AUTO",
+        }),
+      );
+
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.amount).toBe("120000.00");
+      expect(body.toAmount).toBe("100.00");
+
+      const fila = await db.recurrenceRule.findUnique({
+        where: { id: body.id },
+      });
+      expect(fila?.toAmount?.toFixed(2)).toBe("100.00");
+    });
+
+    it("con `toAmount` en la MISMA moneda es 400 y no guarda nada", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      const res = await postRecurrenceRule(
+        request("POST", "/api/recurrence/rules", {
+          title: "Traspaso",
+          kind: "TRANSFER",
+          amount: "10000",
+          toAmount: "10000",
+          accountId: pesos.id,
+          toAccountId: banco.id,
+          freq: "MONTHLY",
+          startDate: "2026-01-01",
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(
+        /monto de destino no corresponde/,
+      );
+      expect(await db.recurrenceRule.count()).toBe(0);
+    });
+
+    it("`toAmount` en un gasto es 400, aunque el valor sea válido", async () => {
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      const res = await postRecurrenceRule(
+        request("POST", "/api/recurrence/rules", {
+          title: "Alquiler",
+          kind: "EXPENSE",
+          amount: "1000",
+          toAmount: "5",
+          accountId: banco.id,
+          categoryName: "Vivienda",
+          freq: "MONTHLY",
+          startDate: "2026-01-01",
+        }),
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(
+        /monto de destino sólo existe en una transferencia/,
+      );
+      expect(await db.recurrenceRule.count()).toBe(0);
+    });
+
+    it("un `toAmount` hostil es 400, nunca 500", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const hostiles: unknown[] = [
+        ["100"],
+        { value: "100" },
+        true,
+        "0",
+        "-5",
+        "1" + "0".repeat(20), // 21 dígitos: desborda DECIMAL(18,2)
+      ];
+
+      for (const toAmount of hostiles) {
+        const res = await postRecurrenceRule(
+          request("POST", "/api/recurrence/rules", {
+            title: "Compra",
+            kind: "TRANSFER",
+            amount: "120000",
+            toAmount,
+            accountId: pesos.id,
+            toAccountId: dolares.id,
+            freq: "MONTHLY",
+            startDate: "2026-01-01",
+          }),
+        );
+        expect(res.status, `toAmount=${JSON.stringify(toAmount)}`).toBe(400);
+      }
+
+      expect(await db.recurrenceRule.count()).toBe(0);
+    });
+
+    it("el parser del monto es el MISMO que el de POST /api/transactions", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      // El parser ignora letras y símbolos de moneda a propósito (regla 4 de
+      // `parseMoneyInput`): "USD 1.234,56" es un monto válido. Dos caminos que
+      // leen el mismo dato no pueden discrepar, así que la regla y el alta de
+      // movimientos tienen que interpretarlo IGUAL.
+      const crudo = "USD 1.234,56";
+
+      const regla = await postRecurrenceRule(
+        request("POST", "/api/recurrence/rules", {
+          title: "Compra de dólares",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: crudo,
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          freq: "MONTHLY",
+          startDate: "2026-01-01",
+        }),
+      );
+      expect(regla.status).toBe(201);
+      expect((await regla.json()).toAmount).toBe("1234.56");
+
+      const movimiento = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: crudo,
+          date: "2026-11-05",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        }),
+      );
+      expect(movimiento.status).toBe(201);
+      expect((await movimiento.json()).toAmount).toBe("1234.56");
+    });
+
+    it("PATCH: volver a la misma moneda sin limpiar el monto es 400; con null pasa", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      const creada = await postRecurrenceRule(
+        request("POST", "/api/recurrence/rules", {
+          title: "Compra",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          freq: "MONTHLY",
+          startDate: "2026-01-01",
+        }),
+      );
+      expect(creada.status).toBe(201);
+      const { id } = await creada.json();
+
+      // Cambiar SÓLO el destino a una cuenta en pesos deja `toAmount` en la
+      // regla mezclada: la bicondicional lo rechaza.
+      const sinLimpiar = await patchRule(
+        request("PATCH", "/api/recurrence/rules", {
+          id,
+          toAccountId: banco.id,
+        }),
+      );
+      expect(sinLimpiar.status).toBe(400);
+      expect((await sinLimpiar.json()).error).toMatch(
+        /monto de destino no corresponde/,
+      );
+
+      const limpiando = await patchRule(
+        request("PATCH", "/api/recurrence/rules", {
+          id,
+          toAccountId: banco.id,
+          toAmount: null,
+        }),
+      );
+      expect(limpiando.status).toBe(200);
+      expect((await limpiando.json()).toAmount).toBeNull();
+    });
+
+    it("PATCH: cambiar el tipo a gasto limpia solo el monto y el destino", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const creada = await postRecurrenceRule(
+        request("POST", "/api/recurrence/rules", {
+          title: "Compra",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          freq: "MONTHLY",
+          startDate: "2026-01-01",
+        }),
+      );
+      const { id } = await creada.json();
+
+      const res = await patchRule(
+        request("PATCH", "/api/recurrence/rules", {
+          id,
+          kind: "EXPENSE",
+          categoryName: "Vivienda",
+        }),
+      );
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.toAmount).toBeNull();
+      expect(body.toAccount).toBeNull();
+    });
+  });
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * La corrida · el movimiento posteado copia el monto de destino
+   * ──────────────────────────────────────────────────────────────────────── */
+  describe("la corrida", () => {
+    it("una regla ARS → USD postea con los DOS montos y mueve los saldos exacto", async () => {
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+      const cajaUsd = await createAccount("Caja dólares", "USD");
+
+      const rule = await db.recurrenceRule.create({
+        data: {
+          title: "Compra de dólares",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: banco.id,
+          toAccountId: cajaUsd.id,
+          freq: "MONTHLY",
+          startDate: calendarToDb("2026-01-01"),
+          postingMode: "AUTO",
+        },
+      });
+
+      // 01/01 y 01/02 vencidas: dos ocurrencias posteadas.
+      const run = await runDueOccurrences(db, { today: "2026-02-01" });
+      expect(run.posted).toBe(2);
+      expect(run.blocked).toHaveLength(0);
+
+      const movimientos = await db.movement.findMany({
+        where: { recurrenceRuleId: rule.id },
+        orderBy: { date: "asc" },
+      });
+      expect(movimientos).toHaveLength(2);
+      for (const movimiento of movimientos) {
+        expect(movimiento.amount.toFixed(2)).toBe("120000.00");
+        expect(movimiento.toAmount?.toFixed(2)).toBe("100.00");
+      }
+
+      const balances = await getAccountBalances(db);
+      expect(
+        balances.find((balance) => balance.id === banco.id)?.balance.toFixed(2),
+      ).toBe("-240000.00");
+      expect(
+        balances.find((balance) => balance.id === cajaUsd.id)?.balance.toFixed(2),
+      ).toBe("200.00");
+    });
+  });
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * La API · plantillas
+   * ──────────────────────────────────────────────────────────────────────── */
+  describe("POST /api/favorites", () => {
+    it("guarda `toAmount` y la lista lo devuelve", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const res = await postFavorite(
+        request("POST", "/api/favorites", {
+          name: "Compra de dólares",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        }),
+      );
+
+      expect(res.status).toBe(201);
+      const body = await res.json();
+      expect(body.amount).toBe("120000.00");
+      expect(body.toAmount).toBe("100.00");
+
+      const list = await listFavorites(db);
+      expect(list.find((favorite) => favorite.id === body.id)?.toAmount).toBe(
+        "100.00",
+      );
+    });
+
+    it("entre monedas sin `toAmount` es 400; en la misma moneda con él, 400", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+      const banco = await createAccount("Banco pesos", "ARS", "BANK");
+
+      const sinDestino = await postFavorite(
+        request("POST", "/api/favorites", {
+          name: "Cambio",
+          kind: "TRANSFER",
+          amount: "120000",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        }),
+      );
+      expect(sinDestino.status).toBe(400);
+      expect((await sinDestino.json()).error).toMatch(/cuánto llega/);
+
+      const mismoDestino = await postFavorite(
+        request("POST", "/api/favorites", {
+          name: "Traspaso",
+          kind: "TRANSFER",
+          amount: "10000",
+          toAmount: "10000",
+          accountId: pesos.id,
+          toAccountId: banco.id,
+        }),
+      );
+      expect(mismoDestino.status).toBe(400);
+      expect((await mismoDestino.json()).error).toMatch(
+        /monto de destino no corresponde/,
+      );
+
+      expect(await db.favoriteTemplate.count()).toBe(0);
+    });
+
+    it("la plantilla guardada se usa: el movimiento copia `toAmount` y acredita exacto", async () => {
+      const pesos = await createAccount("Caja pesos", "ARS");
+      const dolares = await createAccount("Caja dólares", "USD");
+
+      const res = await postFavorite(
+        request("POST", "/api/favorites", {
+          name: "Compra de dólares",
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: "100",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+        }),
+      );
+      const favorite = await res.json();
+
+      // El formulario prellena "100,00" desde `favorite.toAmount` (probado en
+      // `quick-entry.test.ts`) y manda el mismo valor al guardar.
+      const movimiento = await postTransaction(
+        request("POST", "/api/transactions", {
+          kind: "TRANSFER",
+          amount: "120000",
+          toAmount: favorite.toAmount,
+          date: "2026-11-05",
+          accountId: pesos.id,
+          toAccountId: dolares.id,
+          favoriteId: favorite.id,
+        }),
+      );
+
+      expect(movimiento.status).toBe(201);
+      const creado = await movimiento.json();
+      expect(creado.toAmount).toBe("100.00");
+
+      const fila = await db.movement.findUnique({ where: { id: creado.id } });
+      expect(fila?.toAmount?.toFixed(2)).toBe("100.00");
+
+      const balances = await getAccountBalances(db);
+      expect(
+        balances.find((balance) => balance.id === pesos.id)?.balance.toFixed(2),
+      ).toBe("-120000.00");
+      expect(
+        balances.find((balance) => balance.id === dolares.id)?.balance.toFixed(
+          2,
+        ),
+      ).toBe("100.00");
+    });
   });
 });

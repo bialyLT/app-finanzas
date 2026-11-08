@@ -915,6 +915,12 @@ export interface FavoriteDTO {
   kind: MovementKindDTO;
   /** Monto típico como string exacto, o `null` si la plantilla no lo fija. */
   amount: string | null;
+  /**
+   * Sólo TRANSFER entre cuentas de distinta moneda: cuánto LLEGA a la cuenta de
+   * destino, en la moneda de destino. Se precarga en el formulario y se manda
+   * al guardar el movimiento. `null` en el resto de los casos.
+   */
+  toAmount: string | null;
   description: string;
   category: CategoryDTO | null;
   account: AccountDTO;
@@ -1054,6 +1060,12 @@ export interface RecurrenceRuleDTO {
   kind: MovementKindDTO;
   /** Monto SIEMPRE positivo, string decimal exacto. El signo lo da `kind`. */
   amount: string;
+  /**
+   * Sólo en una TRANSFER entre cuentas de DISTINTA moneda: cuánto LLEGA a la
+   * cuenta de destino, en la moneda de destino. `null` en todos los demás
+   * casos. El generador lo COPIA al movimiento que postea.
+   */
+  toAmount: string | null;
   freq: RecurFreqDTO;
   /** Cada cuántas unidades de `freq`. Siempre >= 1. */
   interval: number;
@@ -1096,6 +1108,7 @@ export interface PendingOccurrenceDTO {
   title: string;
   kind: MovementKindDTO;
   amount: string;
+  toAmount: string | null;
   account: AccountDTO;
   toAccount: AccountDTO | null;
   category: CategoryDTO | null;

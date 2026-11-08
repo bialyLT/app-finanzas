@@ -221,6 +221,7 @@ function movementDataFromRule(
     title: string;
     kind: "INCOME" | "EXPENSE" | "TRANSFER";
     amount: Prisma.Decimal;
+    toAmount: Prisma.Decimal | null;
     accountId: string;
     toAccountId: string | null;
     categoryId: string | null;
@@ -230,6 +231,11 @@ function movementDataFromRule(
   return {
     kind: rule.kind,
     amount: rule.amount.toFixed(2),
+    // La segunda punta se COPIA de la regla. Sin esto, una regla ARS→USD
+    // postearía un movimiento sin `toAmount` y el trigger de la base lo
+    // rechazaría: la promesa no se podría cumplir nunca. Igual que `amount`,
+    // es una copia: editar la regla no reescribe los movimientos posteados.
+    toAmount: rule.toAmount === null ? null : rule.toAmount.toFixed(2),
     date: calendarToDb(date),
     description: rule.title.slice(0, 200),
     accountId: rule.accountId,
@@ -263,26 +269,41 @@ function movementDataFromRule(
  */
 function autoPostBlocker(rule: {
   kind: "INCOME" | "EXPENSE" | "TRANSFER";
+  toAmount: Prisma.Decimal | null;
   categoryId: string | null;
   category?: { kind: "INCOME" | "EXPENSE"; name: string } | null;
   account: { currency: Currency };
   toAccount?: { currency: Currency } | null;
 }): string | null {
-  // Una transferencia no lleva categoría. Pero desde la Fase 4.3 puede unir
-  // cuentas de distinta moneda, y `RecurrenceRule` todavía no tiene `toAmount`
-  // (F4.6): el trigger de la base rechaza ese movimiento. Antes esa regla no era
-  // alcanzable (la API sólo creaba cuentas en pesos); ahora sí. Si se dejara
-  // postear sola, la corrida ENTERA fallaría y ninguna otra regla se
-  // materializaría — el bug que este bloqueo evita.
+  // Una transferencia no lleva categoría. Desde la Fase 4.6 puede unir cuentas
+  // de distinta moneda SI y sólo si trae `toAmount` (la base lo exige con
+  // `recurrence_currency_shape_check`). El bloqueo queda para el dato imposible
+  // sembrado por fuera de la API —una regla vieja, un script—: si se dejara
+  // postear sola, la corrida ENTERA fallaría contra el trigger y ninguna otra
+  // regla se materializaría.
   if (rule.kind === "TRANSFER") {
-    if (rule.toAccount && rule.account.currency !== rule.toAccount.currency) {
+    const fromCurrency = rule.account.currency;
+    const toCurrency = rule.toAccount ? rule.toAccount.currency : null;
+    const crossCurrency = toCurrency !== null && fromCurrency !== toCurrency;
+
+    if (crossCurrency && rule.toAmount === null) {
       return (
-        `La transferencia une una cuenta en ${currencyNoun(rule.account.currency)} ` +
-        `con una en ${currencyNoun(rule.toAccount.currency)}: todavía no se puede ` +
-        `indicar cuánto llega a la cuenta de destino. Sus ocurrencias esperan en la ` +
-        `bandeja; programala entre cuentas de la misma moneda o cargá la transferencia a mano.`
+        `La transferencia une una cuenta en ${currencyNoun(fromCurrency)} ` +
+        `con una en ${currencyNoun(toCurrency)} y no tiene monto de ` +
+        `destino: no puede postear sola. Sus ocurrencias esperan en la bandeja; ` +
+        `editala y agregá cuánto llega a la cuenta de destino.`
       );
     }
+
+    if (!crossCurrency && rule.toAmount !== null) {
+      return (
+        `Las dos cuentas de la transferencia están en ` +
+        `${currencyNoun(fromCurrency)} y la regla tiene un monto de ` +
+        `destino: no puede postear sola. Sus ocurrencias esperan en la bandeja; ` +
+        `editala y quitá ese monto.`
+      );
+    }
+
     return null;
   }
 
@@ -759,6 +780,7 @@ export function toRecurrenceRuleDTO(
     title: rule.title,
     kind: rule.kind,
     amount: rule.amount.toFixed(2),
+    toAmount: rule.toAmount === null ? null : rule.toAmount.toFixed(2),
     freq: rule.freq,
     interval: rule.interval,
     dayOfMonth: rule.dayOfMonth,
@@ -789,6 +811,7 @@ function toPendingOccurrenceDTO(
     title: rule.title,
     kind: rule.kind,
     amount: rule.amount.toFixed(2),
+    toAmount: rule.toAmount === null ? null : rule.toAmount.toFixed(2),
     account: toAccountDTO(rule.account),
     toAccount: rule.toAccount ? toAccountDTO(rule.toAccount) : null,
     category: rule.category ? toCategoryDTO(rule.category) : null,

@@ -18,6 +18,7 @@ import {
   LAST_ACCOUNT_KEY_PREFIX,
   browserStorage,
   canBeSourceAccount,
+  initialToAmountText,
   lastAccountStorageKey,
   readLastAccountId,
   resolveSourceAccount,
@@ -278,5 +279,17 @@ describe("los atajos T / I", () => {
 describe("browserStorage", () => {
   it("sin window (SSR) devuelve null", () => {
     expect(browserStorage()).toBeNull();
+  });
+});
+
+describe("el prelleno de «¿Cuánto llega?» desde una plantilla (F4.6)", () => {
+  it("convierte el monto canónico a la coma que se escribe en el campo", () => {
+    // Mismo formato que `amount`: un solo formato visible para el mismo dato.
+    expect(initialToAmountText({ toAmount: "100.00" })).toBe("100,00");
+    expect(initialToAmountText({ toAmount: "1234.50" })).toBe("1234,50");
+  });
+
+  it("sin monto de destino deja el campo vacío", () => {
+    expect(initialToAmountText({ toAmount: null })).toBe("");
   });
 });
