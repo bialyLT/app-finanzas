@@ -224,6 +224,70 @@ export async function openUi({
     await loaded;
   };
 
+  /**
+   * Navega y espera de forma TOLERANTE.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * POR QUÉ EXISTE (y por qué no alcanza `navigate`)
+   * `navigate` espera SÓLO `Page.loadEventFired`. Cuando ese evento no llega
+   * (una carga servida desde caché, un contexto que se reemplaza, un evento
+   * que se pierde entre dos navegaciones seguidas), el script muere con
+   * «Timeout esperando el evento Page.loadEventFired» ANTES de medir nada: la
+   * auditoría se cae sin decir qué vista ni qué ancho quedó sin auditar.
+   *
+   * Acá se acepta cualquiera de las dos señales, con un techo:
+   *
+   *   · `Page.loadEventFired` (el camino normal); o
+   *   · `document.readyState === "complete"` del documento NUEVO.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * LA MARCA: CÓMO SE SABE QUE EL DOCUMENTO ES EL NUEVO
+   * `readyState === "complete"` a secas miente: si la navegación todavía no
+   * reemplazó el documento, el poll devuelve el `complete` de la página
+   * ANTERIOR y la medición arranca sobre la vista vieja (con la misma URL es
+   * indistinguible). Por eso, ANTES de navegar, se deja una marca en el
+   * `window` del documento actual; el documento nuevo no la tiene. La espera
+   * termina cuando el documento es nuevo Y está completo (o cuando llega el
+   * evento de carga, que también implica documento nuevo).
+   *
+   * Si igual no llega ninguna señal dentro del techo, el error dice en qué URL
+   * quedó y cuál fue el último estado. El que llama le agrega la vista y el
+   * ancho: un timeout genérico no sirve para arreglar nada.
+   */
+  const navigateRobust = async (url, { timeout = 25000 } = {}) => {
+    // La marca vive en el documento VIEJO: el nuevo no la hereda.
+    let puedeMarcar = true;
+    try {
+      await evalJs(`(window.__auditNavMark = 1) === 1`);
+    } catch {
+      puedeMarcar = false; // about:blank recién abierto: no hay documento.
+    }
+    const inicio = Date.now();
+    const resp = await send("Page.navigate", { url });
+    if (resp?.errorText) {
+      throw new Error(`la navegación devolvió "${resp.errorText}"`);
+    }
+    let ultimo = "";
+    while (Date.now() - inicio < timeout) {
+      try {
+        const estado = await evalJs(
+          `(document.readyState || "") + "|" +
+           (${puedeMarcar ? "window.__auditNavMark === undefined" : "true"} ? "nuevo" : "viejo")`,
+        );
+        ultimo = estado;
+        if (estado === "complete|nuevo") {
+          return { url, ms: Date.now() - inicio, estado };
+        }
+      } catch (error) {
+        ultimo = `contexto en transición (${error.message})`;
+      }
+      await sleep(100);
+    }
+    throw new Error(
+      `la página no terminó de cargar en ${timeout} ms (url=${url}, último estado: ${ultimo || "?"})`,
+    );
+  };
+
   const clickAt = async (x, y) => {
     const p = { x, y, button: "left", clickCount: 1 };
     await send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
@@ -336,6 +400,7 @@ export async function openUi({
     evalJs,
     waitFor,
     navigate,
+    navigateRobust,
     clickAt,
     clickEl,
     centerOf,

@@ -8,11 +8,11 @@
  *   A. EL SELECT NATIVO OCULTO DE RADIX. El informe del dev atribuye 7 "taps
  *      muertos" de `audit-mobile` a un `<select aria-hidden="true"
  *      tabindex="-1">` que Radix monta espejo del trigger. La auditoría lo
- *      cuenta como control interactivo, pero lo reporta TAPADO (`<- p.text-xs`),
- *      no tapando. Acá se verifica con TOQUE REAL (`Input.dispatchMouseEvent`),
- *      no con `elementFromPoint` a secas: ¿el trigger visible responde?, ¿el
- *      oculto aparece como HIT en algún punto de su rectángulo?, ¿el centro de
- *      algún OTRO control cae en él?
+ *      contaba como control interactivo y lo reportaba TAPADO.
+ *      ESTADO: ya está arreglado en las dos puntas (la ronda «select
+ *      fantasma»): la regla de 44 px excluye `[aria-hidden="true"]`/`[hidden]`
+ *      y el auditor ignora lo que no se ve ni se toca. Acá se verifica con
+ *      TOQUE REAL que el espejo no recibe nada y (A5) que ya no se infla.
  *
  *   B. ARS→USD. Caja en USD creada desde la UI; transferencia desde una cuenta
  *      ARS. Sin "¿Cuánto llega?" no se guarda; con 100 el preview dice lo que
@@ -282,11 +282,15 @@ try {
     hiddenInfo.every((s) => s.solapan.length === 0),
     hiddenInfo.map((s) => `${s.name}: [${s.solapan.join(",")}]`).join(" | "),
   );
-  const real44 = hiddenInfo.filter((s) => s.w >= 44 && s.h >= 44).length;
+  // El bug que esta sonda encontró (A5 original: «el espejo SÍ mide 44x44 por
+  // la regla coarse») ya está arreglado: la regla de 44 px excluye lo que no
+  // se ve ni se toca (`:not([hidden]):not([aria-hidden="true"])`). Ahora el
+  // espejo conserva su 1×1 y el rectángulo fantasma NO existe.
+  const fantasmas = hiddenInfo.filter((s) => s.w >= 44 || s.h >= 44);
   checkTrue(
-    "A5 · el espejo SÍ mide 44x44 por la regla coarse (el rectángulo fantasma existe)",
-    real44 >= 1,
-    hiddenInfo.map((s) => `${s.name}: ${s.w}x${s.h} pe=${s.pointerEvents}`).join(" | "),
+    "A5 · el espejo NO se infla con la regla coarse (ya no hay rectángulo fantasma)",
+    fantasmas.length === 0,
+    hiddenInfo.map((s) => `${s.name}: ${s.w}x${s.h}`).join(" | "),
   );
 
   // TOQUE REAL en el trigger visible de moneda: abre y elige USD.

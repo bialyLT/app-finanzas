@@ -176,6 +176,59 @@ describe("check-css-puro", () => {
   });
 
   /* ───────────────────────────────────────────────────────────────────────
+   * LA EXCLUSIÓN DE LO OCULTO (la ronda del `select` fantasma)
+   *
+   * El default táctil tiene que poder decir «…salvo lo que no se ve ni se
+   * toca»: Radix monta un `<select>` espejo `aria-hidden` de 1×1 y la regla
+   * lo inflaba a 44×44. La exclusión necesita atributos (`[hidden]`,
+   * `[aria-hidden="true"]`), así que la capa base admite `:not([…])` sobre un
+   * selector de TIPO — y nada más:
+   *
+   *   · `input[type="text"]` sigue siendo una falla: un atributo suelto elige
+   *     un componente, no describe un default de elemento.
+   *   · `:not(.mi-clase)` y `:not(#id)` siguen siendo una falla: la capa base
+   *     no es la puerta de entrada del estilo de componente.
+   * ─────────────────────────────────────────────────────────────────────── */
+  it("acepta `:not([aria-hidden=\"true\"])` sobre un selector de elemento", () => {
+    const r = contraCss(
+      [
+        `@import "tailwindcss";`,
+        `@layer base {`,
+        `  @media (any-pointer: coarse) {`,
+        `    button:not([hidden]):not([aria-hidden="true"]) {`,
+        `      min-height: 44px;`,
+        `      min-width: 44px;`,
+        `    }`,
+        `  }`,
+        `}`,
+        "",
+      ].join("\n"),
+    );
+    expect(r.salida).not.toMatch(/selector de clase dentro de @layer base/);
+    expect(resultado(r.salida)!.fail).toBe(0);
+    expect(r.code).toBe(0);
+  });
+
+  it("sigue rechazando un selector de ATRIBUTO suelto en `@layer base`", () => {
+    const r = contraCss(
+      `@import "tailwindcss";\n@layer base { input[type="text"] { min-height: 44px; } }\n`,
+    );
+    expect(resultado(r.salida)!.fail).toBeGreaterThan(0);
+    expect(r.code).toBe(1);
+  });
+
+  it("rechaza `:not(.clase)` y `:not(#id)` en `@layer base`", () => {
+    const conClase = contraCss(
+      `@import "tailwindcss";\n@layer base { button:not(.mi-clase) { min-height: 44px; } }\n`,
+    );
+    expect(conClase.code).toBe(1);
+    const conId = contraCss(
+      `@import "tailwindcss";\n@layer base { button:not(#mi-id) { min-height: 44px; } }\n`,
+    );
+    expect(conId.code).toBe(1);
+  });
+
+  /* ───────────────────────────────────────────────────────────────────────
    * LOS BLOQUES DE TOKENS (F1)
    *
    * El `@theme` mapea variables, pero las variables pueden declararse en un

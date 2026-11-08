@@ -49,6 +49,54 @@
  *   - imprime `RESULT ok=N fail=M` en la última línea;
  *   - sale con código 1 si hay alguna falla, 0 si no.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * QUÉ QUEDA EXCLUIDO (y por qué) — targets chicos y taps muertos
+ *
+ * La auditoría mide lo que el DEDO puede alcanzar. Un elemento que no se ve no
+ * es un target (no hay nada que tocar) y un elemento que no se toca no puede
+ * dejar un tap muerto. Las DOS comprobaciones (targets < 44 px y taps muertos)
+ * usan la MISMA definición (`invisibleReason`, en `measure.mjs`) y excluyen:
+ *
+ *   · `aria-hidden="true"` — en el elemento o en un ANCESTRO. Es el caso del
+ *     `<select>` espejo de Radix: existe sólo para el envío de formularios,
+ *     está fuera del árbol accesible y del tab order. Medido con
+ *     `elementFromPoint`: 0/25 puntos de su rectángulo lo alcanzan.
+ *   · `[hidden]` — el atributo que el navegador pinta `display: none`.
+ *   · `display: none` / `visibility: hidden|collapse` — en el elemento o en un
+ *     ancestro: no se pinta.
+ *   · tamaño 0 (ancho o alto).
+ *   · recortado SIN área: `clip: rect(…)` con área cero (el espejo de Radix
+ *     viene con `clip: rect(0, 0, 0, 0)`) o `clip-path` `inset()`/`circle()`/
+ *     `ellipse()` sin área. Un `polygon()` (forma no resoluble sin geometría
+ *     exacta) se trata como VISIBLE: preferimos un falso positivo visible a
+ *     esconder un target roto.
+ *
+ * Lo excluido NO desaparece del reporte: cada línea imprime «ignorados: N» y
+ * el detalle por motivo, para que se vea qué se dejó afuera y por qué.
+ *
+ * Un control de 1×1 SIN recorte y SIN ocultamiento sigue siendo un target
+ * chico (es un bug real): el filtro no es «mide menos», es «mide lo que hay».
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA CORRIDA ES DETERMINISTA (misma build → mismo resultado)
+ * Antes el script dormía ventanas fijas (`sleep`) y medía mientras el modal
+ * todavía se estaba abriendo o la fuente todavía estaba cargando: los conteos
+ * cambiaban entre corridas idénticas. Ahora, antes de cada medición:
+ *
+ *   · la navegación espera el documento NUEVO completo (evento de carga **o**
+ *     `readyState === "complete"` con un techo; ver `navigateRobust`), y si
+ *     falla, el error dice en qué vista y en qué ancho quedó;
+ *   · se espera `document.fonts.ready` (una fuente que llega tarde cambia el
+ *     ancho del texto y el veredicto de «no entra en su caja»);
+ *   · se espera que el DOM y las respuestas de red queden QUIETOS (nada de
+ *     `sleep` a ojo) y que terminen las animaciones finitas — la entrada del
+ *     modal escala el panel, y medir a mitad de la escala inventa desbordes;
+ *   · el modal se espera por NODO (`waitFor` del panel con tamaño > 0), no por
+ *     reloj.
+ *
+ * La emulación de toque sigue siendo obligatoria: si no aplicó, la auditoría
+ * ABORTA (medir sin emulación es peor que no medir).
+ *
  * Uso:
  *   node scripts/responsive/audit-mobile.mjs
  *   node scripts/responsive/audit-mobile.mjs --only=views
@@ -367,7 +415,7 @@ async function applyViewport(ui, vp) {
  * agrandar el viewport de LAYOUT (innerWidth) cuando no puede achicarse,
  * pero el de pantalla lo pone la emulación y nada más.
  */
-async function verifyViewport(ui, vp) {
+async function verifyViewport(ui, vp, contexto = "") {
   const probe = await ui.evalJs(`({
     inner: window.innerWidth,
     screen: window.screen.width,
@@ -379,7 +427,8 @@ async function verifyViewport(ui, vp) {
     probe.screen === vp.width && probe.inner >= vp.width && probe.coarse === true;
   if (!ok) {
     throw new Error(
-      `LA EMULACIÓN NO APLICÓ para ${vp.width}px ` +
+      `LA EMULACIÓN NO APLICÓ para ${vp.width}px` +
+        `${contexto ? ` · ${contexto}` : ""} ` +
         `(screen.width=${probe.screen}, innerWidth=${probe.inner}, ` +
         `availWidth=${probe.avail}, dpr=${probe.dpr}, ` +
         `pointer-coarse=${probe.coarse}). ` +
@@ -389,12 +438,90 @@ async function verifyViewport(ui, vp) {
   return probe;
 }
 
-async function openRoute(ui, path) {
-  await ui.navigate(`${BASE_URL}${path}`);
-  await ui.waitFor("document.readyState === 'complete'", { label: "carga" });
-  await sleep(600);
+/**
+ * Deja la página QUIETA antes de medir (determinismo).
+ *
+ * Tres señales, en orden, con un techo compartido:
+ *
+ *   1. `document.fonts.ready`: una fuente que llega tarde cambia el ancho del
+ *      texto; el check «el contenido entra en su caja» depende de eso.
+ *   2. Silencio: ni mutaciones del DOM ni respuestas de red (PerformanceObserver
+ *      sobre `resource`) durante `quieto` ms. Es lo que reemplaza los `sleep`
+ *      a ojo: se espera el HECHO (la página dejó de cambiar), no el reloj.
+ *   3. Animaciones finitas: la entrada del modal escala el panel; medir a mitad
+ *      de la escala inventa desbordes (y los inventa DISTINTO cada vez).
+ *
+ * Todo con techo: una animación infinita (un spinner) no puede colgar la
+ * auditoría. Si el techo se agota, se mide igual — pero el estado ya es el
+ * estable, no el del primer frame.
+ */
+async function settle(ui, { timeout = 6000, quieto = 300 } = {}) {
+  return ui.evalJs(`(async () => {
+    const TOPE = ${Number(timeout)};
+    const QUIETO = ${Number(quieto)};
+    const conTecho = (promesa) =>
+      Promise.race([promesa, new Promise((r) => setTimeout(() => r("techo"), TOPE))]);
+    try {
+      await conTecho(document.fonts ? document.fonts.ready : Promise.resolve(true));
+    } catch {}
+    await new Promise((resolve) => {
+      let timer = null;
+      let terminado = false;
+      let recursos = null;
+      const fin = () => {
+        if (terminado) return;
+        terminado = true;
+        try { if (recursos) recursos.disconnect(); } catch {}
+        try { observador.disconnect(); } catch {}
+        resolve(true);
+      };
+      const reiniciar = () => {
+        clearTimeout(timer);
+        timer = setTimeout(fin, QUIETO);
+      };
+      const observador = new MutationObserver(reiniciar);
+      try {
+        observador.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        });
+      } catch {}
+      try {
+        recursos = new PerformanceObserver(reiniciar);
+        recursos.observe({ type: "resource" });
+      } catch {}
+      timer = setTimeout(fin, QUIETO);
+      setTimeout(() => { clearTimeout(timer); fin(); }, TOPE);
+    });
+    const corriendo = document.getAnimations
+      ? document.getAnimations().filter((a) => a.playState === "running")
+      : [];
+    if (corriendo.length) {
+      await conTecho(Promise.allSettled(corriendo.map((a) => a.finished)));
+    }
+    return true;
+  })()`);
+}
+
+async function openRoute(ui, path, contexto) {
+  const url = `${BASE_URL}${path}`;
+  // Navegación TOLERANTE: `Page.loadEventFired` o `readyState complete` del
+  // documento nuevo, con techo. Si falla, el error dice vista + ancho.
+  try {
+    const nav = await ui.navigateRobust(url, { timeout: 25000 });
+    if (nav.ms > 8000) {
+      console.log(`  (nota) ${contexto}: ${url} tardó ${nav.ms} ms en cargar`);
+    }
+  } catch (error) {
+    throw new Error(`no se pudo cargar ${url} · ${contexto}: ${error.message}`);
+  }
   if (path !== "/login") await ui.loginIfNeeded();
-  await sleep(400);
+  // Piso corto + quietud real: los datos que piden los componentes de cliente
+  // llegan después del `load` y entran como respuestas de red (se esperan).
+  await sleep(300);
+  await settle(ui);
 }
 
 /**
@@ -410,7 +537,11 @@ async function measureUnit(ui, vp, unit) {
   const scope = unit.scope ?? null;
 
   await ui.evalJs(scrollExpression(scope ?? "body", 0));
-  await sleep(200);
+  // Dos frames: el scroll ya se aplicó y el layout se recalculó. (Un `sleep`
+  // fijo acá metía una carrera con el repintado.)
+  await ui.evalJs(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`,
+  );
 
   const data = await ui.evalJs(
     measureExpression({
@@ -440,6 +571,9 @@ async function measureUnit(ui, vp, unit) {
     scopeScrollWidth: data.scopeScrollWidth,
     scopeClientWidth: data.scopeClientWidth,
     overflowers: data.overflowers ?? [],
+    ignored: data.ignored ?? [],
+    ignoredCount: data.ignoredCount ?? 0,
+    ignoredTaps: taps.ignored ?? [],
   };
 }
 
@@ -452,7 +586,7 @@ async function measureView(ui, vp, route) {
 
   const line =
     `[${vp.name.padEnd(15)}] vista ${route.name.padEnd(12)} device=${vp.width} contenido=${data.scrollWidth} ` +
-    `${overflow ? "DESBORDE" : "ok"} | innerWidth=${data.innerWidth} | tapTargets<${MIN_TARGET}px: ${result.smallTargetCount} | taps muertos: ${result.deadTaps.length} | avisos: ${result.avisos.length} | cortados: ${result.overflowers.length} | ${vp.orientacion ?? "portrait"}`;
+    `${overflow ? "DESBORDE" : "ok"} | innerWidth=${data.innerWidth} | tapTargets<${MIN_TARGET}px: ${result.smallTargetCount} | taps muertos: ${result.deadTaps.length} | ignorados: ${result.ignoredCount} | avisos: ${result.avisos.length} | cortados: ${result.overflowers.length} | ${vp.orientacion ?? "portrait"}`;
 
   report.push({ type: "vista", line, data, result });
 
@@ -482,8 +616,8 @@ async function measureView(ui, vp, route) {
   return result;
 }
 
-async function measureModal(ui, vp, modal) {
-  await openRoute(ui, modal.path);
+async function measureModal(ui, vp, modal, contexto = `modal ${modal.name} en ${vp.name} (${vp.width} px)`) {
+  await openRoute(ui, modal.path, contexto);
 
   // El disparador puede aparecer DESPUÉS del `load`: varias páginas son
   // componentes de cliente que piden sus datos recién al montar (la de
@@ -516,7 +650,11 @@ async function measureModal(ui, vp, modal) {
     );
     return null;
   }
-  await sleep(250);
+  // Dos frames: el `scrollIntoView` ya movió el layout y el rectángulo del
+  // disparador es el definitivo (un `sleep` acá era una carrera).
+  await ui.evalJs(
+    `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`,
+  );
 
   const rect = await ui.centerOf(modal.trigger);
   if (!rect) {
@@ -524,14 +662,30 @@ async function measureModal(ui, vp, modal) {
     return null;
   }
   await ui.clickAt(rect.x, rect.y);
-  await sleep(600);
 
-  const opened = await ui.evalJs(`!!document.querySelector(${JSON.stringify(modal.scope)})`);
+  // Se espera el NODO con tamaño, no un reloj: la apertura de un modal es una
+  // carrera (y era la fuente de los conteos distintos entre corridas). Un
+  // panel que existe pero mide 0 (el `hidden` del nav) todavía no abrió.
+  const opened = await ui
+    .waitFor(
+      `(() => {
+        const el = document.querySelector(${JSON.stringify(modal.scope)});
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      })()`,
+      { timeout: 12000, label: `que aparezca ${modal.scope}` },
+    )
+    .then(() => true)
+    .catch(() => false);
+  // La entrada del modal es una animación de escala: se espera que termine
+  // (con techo) antes de medir, si no el ancho del texto se mide a mitad.
+  if (opened) await settle(ui, { timeout: 4000 });
   if (!opened) {
     check(
       `${vp.name} · modal ${modal.name} · se abre con el disparador ${modal.trigger}`,
       false,
-      `no apareció ${modal.scope}`,
+      `no apareció ${modal.scope} con tamaño`,
     );
     return null;
   }
@@ -571,7 +725,9 @@ async function measureModal(ui, vp, modal) {
       ].join("\\n"));
       ta.dispatchEvent(new Event("input", { bubbles: true }));
     })()`);
-    await sleep(200);
+    await ui.evalJs(
+      `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`,
+    );
     await ui.clickEl("#csv-preview-button");
     const preview = await ui
       .waitFor(`!!document.querySelector("#csv-preview")`, {
@@ -585,7 +741,7 @@ async function measureModal(ui, vp, modal) {
       preview,
       "no apareció #csv-preview",
     );
-    await sleep(300);
+    if (preview) await settle(ui, { timeout: 4000 });
   }
 
   const result = await measureUnit(ui, vp, modal);
@@ -598,7 +754,7 @@ async function measureModal(ui, vp, modal) {
   const line =
     `[${vp.name.padEnd(15)}] ${modal.name.padEnd(18)} device=${vp.width} ` +
     `panel=${result.scopeClientWidth} contenido=${result.scopeScrollWidth} ` +
-    `${innerOverflow ? "DESBORDE DENTRO" : "ok"} | doc=${data.scrollWidth} | tapTargets<${MIN_TARGET}px: ${result.smallTargetCount} | taps muertos: ${result.deadTaps.length} | avisos: ${result.avisos.length} | cortados: ${result.overflowers.length} | ${vp.orientacion ?? "portrait"}`;
+    `${innerOverflow ? "DESBORDE DENTRO" : "ok"} | doc=${data.scrollWidth} | tapTargets<${MIN_TARGET}px: ${result.smallTargetCount} | taps muertos: ${result.deadTaps.length} | ignorados: ${result.ignoredCount} | avisos: ${result.avisos.length} | cortados: ${result.overflowers.length} | ${vp.orientacion ?? "portrait"}`;
 
   report.push({ type: "modal", line, data, result });
 
@@ -679,9 +835,10 @@ async function main() {
         if (filtroAnchos.length && !filtroAnchos.includes(vp.width)) continue;
         for (const route of ROUTES) {
           if (filtroRutas.length && !filtroRutas.includes(route.name)) continue;
+          const contexto = `vista ${route.name} en ${vp.name} (${vp.width} px)`;
           await applyViewport(ui, vp);
-          await openRoute(ui, route.path);
-          await verifyViewport(ui, vp);
+          await openRoute(ui, route.path, contexto);
+          await verifyViewport(ui, vp, contexto);
           const result = await measureView(ui, vp, route);
           if (result) {
             await ui.screenshot(`${outDir}${route.name}-${vp.width}.png`);
@@ -707,10 +864,11 @@ async function main() {
           if (modal.needsCardWithClosing && !tempCardId) {
             tempCardId = await createTempCard();
           }
+          const contexto = `modal ${modal.name} en ${vp.name} (${vp.width} px)`;
           await applyViewport(ui, vp);
-          await openRoute(ui, modal.path);
-          await verifyViewport(ui, vp);
-          const result = await measureModal(ui, vp, modal);
+          await openRoute(ui, modal.path, contexto);
+          await verifyViewport(ui, vp, contexto);
+          const result = await measureModal(ui, vp, modal, contexto);
           if (result) {
             await ui.screenshot(`${outDir}modal-${modal.name}-${vp.width}x${vp.height}.png`);
           }
@@ -746,6 +904,18 @@ async function main() {
     }
     for (const t of (r.result?.avisos ?? []).slice(0, 25)) {
       console.log(`      aviso: en reposo lo tapa ${t.blockedBy} (${t.el}) — scrolleando se alcanza`);
+    }
+    if ((r.result?.ignoredCount ?? 0) > 0) {
+      const porMotivo = {};
+      for (const x of r.result.ignored ?? []) {
+        porMotivo[x.why] = (porMotivo[x.why] ?? 0) + 1;
+      }
+      const detalle = Object.entries(porMotivo)
+        .map(([why, n]) => `${why}: ${n}`)
+        .join(" · ");
+      console.log(
+        `      ignorados (no se ven ni se tocan): ${r.result.ignoredCount} (muestra ≤20 — ${detalle})`,
+      );
     }
     for (const s of (r.data.innerScroll ?? []).slice(0, 10)) {
       console.log(`      scroll horizontal interno: ${s.el} (${s.scrollW} en ${s.clientW})`);

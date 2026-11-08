@@ -830,7 +830,10 @@ outline y los cuatro estados con su tinte al 10 % y borde al 40 %) ·
 - **Targets táctiles:** no se declaran en las variantes. La capa base fuerza
   44 px en `button`/`input`/`select`/`textarea` con `any-pointer: coarse`;
   `h-9` fija `height`, no `min-height`, así que el piso sigue ganando en un
-  teléfono y el escritorio conserva la densidad.
+  teléfono y el escritorio conserva la densidad. **Lo oculto no es un target:**
+  la regla excluye `[hidden]` y `[aria-hidden="true"]` (el `<select>` espejo de
+  Radix, 1×1 y recortado, se inflaba a 44×44 y el auditor lo contaba como
+  target fantasma).
 - **El pie del modal no se pierde:** `Dialog`/`Sheet` son columnas flex
   (`Header` y `Footer` `flex-none`; `DialogBody`/`SheetBody` `flex-1 min-h-0
   overflow-y-auto`). El pie queda fuera del scroller; en F2 se migran los

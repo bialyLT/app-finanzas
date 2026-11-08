@@ -128,13 +128,58 @@ export function esBloqueDeTokens(selector) {
  * `.mi-clase`, `#mi-id`, `input[type="text"]` → no: son selectores de
  * clase/id/atributo, y un selector de clase en la capa base es estilo de
  * componente escrito a mano.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LA EXCEPCIÓN: `:not([…])` SOBRE UN SELECTOR DE TIPO
+ * El default táctil de 44 px necesita decir «…salvo lo que no se ve ni se
+ * toca»: Radix monta un `<select>` espejo `aria-hidden` de 1×1 (recortado y
+ * fuera del tab order) y la regla lo inflaba a 44×44 — un rectángulo fantasma
+ * que sólo existía por el `min-height`. Sin exclusión por atributo, el CSS no
+ * puede expresarlo (`:not()` necesita el atributo adentro).
+ *
+ * La excepción es ANGOSTA y sigue defendiendo el candado:
+ *   · el selector tiene que EMPEZAR por un tipo (`button`, `*`…), así que
+ *     `.mi-clase` y `#mi-id` siguen siendo una falla;
+ *   · el atributo suelto (`input[type="text"]`) sigue siendo una falla: eso
+ *     elige un componente, no describe un default de elemento;
+ *   · dentro de `:not()` sólo se admiten ATRIBUTOS (`[hidden]`,
+ *     `[aria-hidden="true"]`): `:not(.clase)` y `:not(#id)` son una falla.
  */
 export function esDefaultDeElemento(selector) {
-  return selector
+  const partes = selector
     .split(",")
     .map((parte) => parte.trim())
-    .filter((parte) => parte.length > 0)
-    .every((parte) => !/[.#\[]/.test(parte));
+    .filter((parte) => parte.length > 0);
+  return partes.length > 0 && partes.every(esParteDefaultDeElemento);
+}
+
+/** Un tipo (o `*`) seguido de pseudos simples y `:not([…])` con atributos. */
+function esParteDefaultDeElemento(parte) {
+  // El tipo es OPCIONAL: `:focus-visible` es un default de elemento (no elige
+  // un componente). Lo que no puede haber es clase, id ni atributo suelto.
+  const tipo = /^([a-zA-Z][a-zA-Z0-9-]*|\*)?([\s\S]*)$/.exec(parte);
+  let resto = tipo[2];
+  if (resto.length === 0) return Boolean(tipo[1]);
+  while (resto.length > 0) {
+    // `:not([hidden])`, `:not([aria-hidden="true"])` — sólo atributos adentro.
+    const negacionDeAtributos = /^:not\(\s*((?:\[[^\]]*\]\s*)+)\)/.exec(resto);
+    if (negacionDeAtributos) {
+      if (/[.#]/.test(negacionDeAtributos[1])) return false;
+      resto = resto.slice(negacionDeAtributos[0].length);
+      continue;
+    }
+    // Cualquier OTRA forma de `:not()` es una falla: la única admitida en la
+    // capa base es la que excluye por atributo (ver el comentario de arriba).
+    if (/^:not\(/.test(resto)) return false;
+    // Pseudos simples (`:hover`, `:focus-visible`, `:disabled`).
+    const pseudos = /^:[a-zA-Z-]+(\([^()]*\))?/.exec(resto);
+    if (pseudos) {
+      resto = resto.slice(pseudos[0].length);
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 /**

@@ -603,13 +603,35 @@
    `any-pointer: coarse` (y no `pointer: coarse`): la regla es «esta pantalla
    se puede operar CON EL DEDO», y una notebook con pantalla táctil se puede
    aunque su puntero principal sea el mouse. El trade-off (y su límite de
-   medición) están documentados arriba, en la variante `touch`. */
+   medición) están documentados arriba, en la variante `touch`.
+
+   ─────────────────────────────────────────────────────────────────────────────
+   LO OCULTO NO ES UN TARGET (el `select` fantasma de Radix)
+   La regla mide targets: unidades de dedo. Un elemento que no se ve no es una
+   unidad de dedo. Radix `Select` monta un `<select>` ESPEJO —sólo para el
+   envío de formularios— con `aria-hidden="true"`, `tabindex="-1"`, 1×1 y
+   recortado con `clip: rect(0, 0, 0, 0)`. El espejo declara `height: 1px` en
+   línea, pero `min-height` le gana (el alto usado es el mayor): la regla lo
+   inflaba a 44×44. Medido con `elementFromPoint`, el rectángulo no recibe un
+   solo toque (0/25 puntos) y no está en el árbol accesible: era un target
+   fantasma, y además hacía fallar al auditor (que lo contaba como target
+   chico y como tap muerto).
+ 
+   La exclusión es la MÍNIMA que expresa eso: `:not([hidden])` (el atributo que
+   el navegador pinta `display: none`) y `:not([aria-hidden="true"])` (fuera
+   del árbol accesible, invisible también para el dedo). El resto de los
+   controles conserva sus 44 px: la exclusión sólo aplica al elemento que ES
+   `aria-hidden`/`hidden`, no a un botón visible dentro de un contenedor
+   `aria-hidden` (ese caso lo atrapa la auditoría, no el default de tamaño).
+   `check:css` acepta esta forma (`:not([…])` sobre un selector de tipo) y
+   sigue rechazando `input[type="text"]`, `.clase` y `:not(.clase)` en la capa
+   base: el candado no se abrió, se le dio la forma que el caso necesita. */
 @layer base {
   @media (any-pointer: coarse) {
-    button,
-    input,
-    select,
-    textarea {
+    button:not([hidden]):not([aria-hidden="true"]),
+    input:not([hidden]):not([aria-hidden="true"]),
+    select:not([hidden]):not([aria-hidden="true"]),
+    textarea:not([hidden]):not([aria-hidden="true"]) {
       min-height: 44px;
       min-width: 44px;
     }

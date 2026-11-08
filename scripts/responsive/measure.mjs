@@ -40,6 +40,123 @@
  *    alcanzable en otra no es un tap muerto (el usuario scrollea).
  */
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * LO QUE NO SE PUEDE VER NI TOCAR NO SE MIDE
+ *
+ * La auditoría contaba un `<select>` FANTASMA: Radix monta un espejo nativo
+ * oculto (`aria-hidden="true"`, `tabindex="-1"`, 1×1 y recortado con
+ * `clip: rect(0, 0, 0, 0)`) sólo para el envío de formularios. La regla de los
+ * 44 px (`@media (any-pointer: coarse)`) lo inflaba a 44×44 (un `height: 1px`
+ * no le gana a un `min-height: 44px`), y el auditor lo reportaba como target
+ * chico y como tap muerto. El tester lo midió con `elementFromPoint`: 0 de 25
+ * puntos caían en él. El rectángulo era real; el target no existía.
+ *
+ * El criterio es el del dedo: si no se puede ver, no hay target que medir; si
+ * no se puede tocar, no hay tap que se pierda. Se excluye:
+ *
+ *   · `aria-hidden="true"` (en el elemento o en un ancestro): fuera del árbol
+ *     accesible — un control así no se anuncia ni se alcanza.
+ *   · `[hidden]`: el atributo que el navegador pinta display:none.
+ *   · display:none / visibility:hidden|collapse (en el elemento o en un
+ *     ancestro): no se pinta.
+ *   · tamaño 0 (ancho o alto): no hay dónde poner el dedo.
+ *   · recortado sin área: `clip: rect(…)` con área cero (el caso del espejo) o
+ *     clip-path inset()/circle()/ellipse() sin área. Un polygon()
+ *     (u otra forma no resoluble sin layout) se trata como VISIBLE: se
+ *     documenta el límite en vez de esconder un target.
+ *
+ * La fuente es UNA y se inyecta en las DOS comprobaciones (targets chicos y
+ * taps muertos): si la definición viviera duplicada, las dos podrían discrepar
+ * y nadie sabría cuál miente.
+ */
+export const INVISIBLE_HELPERS = `
+  /** Un largo de clip/clip-path: px, % (sobre el total del eje) o auto. */
+  const clipLen = (value, total) => {
+    const v = String(value).trim();
+    if (v === "auto") return total;
+    const n = parseFloat(v);
+    if (!Number.isFinite(n)) return total;
+    return v.endsWith("%") ? (n / 100) * total : n;
+  };
+
+  /** ¿El recorte de clip (rect) deja algo de área? */
+  const clipDejaArea = (el, cs) => {
+    const clip = cs.clip;
+    if (!clip || clip === "auto") return true;
+    const m = /rect\\(([^)]*)\\)/.exec(clip);
+    if (!m) return true;
+    const partes = m[1].split(/[\\s,]+/).filter(Boolean);
+    if (partes.length !== 4) return true;
+    const r = el.getBoundingClientRect();
+    const top = clipLen(partes[0], r.height);
+    const right = clipLen(partes[1], r.width);
+    const bottom = clipLen(partes[2], r.height);
+    const left = clipLen(partes[3], 0);
+    return right - left > 0 && bottom - top > 0;
+  };
+
+  /** ¿El recorte de clip-path deja algo de área? (sólo inset/circle/ellipse) */
+  const clipPathDejaArea = (el, cs) => {
+    const cp = cs.clipPath;
+    if (!cp || cp === "none") return true;
+    const r = el.getBoundingClientRect();
+    const expandir = (vals) => {
+      const v = vals.slice(0, 4);
+      if (v.length === 1) return [v[0], v[0], v[0], v[0]];
+      if (v.length === 2) return [v[0], v[1], v[0], v[1]];
+      if (v.length === 3) return [v[0], v[1], v[2], v[1]];
+      return v;
+    };
+    const inset = /^inset\\(([^)]*)\\)/.exec(cp);
+    if (inset) {
+      const vals = inset[1].split(/\\s+/).filter(Boolean);
+      if (vals.length === 0) return true;
+      const [top, right, bottom, left] = expandir(vals);
+      const t = clipLen(top, r.height);
+      const b = clipLen(bottom, r.height);
+      const l = clipLen(left, r.width);
+      const rr = clipLen(right, r.width);
+      return r.width - l - rr > 0 && r.height - t - b > 0;
+    }
+    const circulo = /^(circle|ellipse)\\(([^)]*)\\)/.exec(cp);
+    if (circulo) {
+      const partes = circulo[2].split(/\\s+at\\s+/)[0].trim().split(/\\s+/).filter(Boolean);
+      if (partes.length === 1) return parseFloat(partes[0]) > 0;
+      return true; // closest-side/farthest-side: no se resuelve sin layout
+    }
+    // polygon() y formas raras: no se puede decidir el área sin geometría
+    // exacta. Se trata como visible (un falso positivo se ve; un falso
+    // negativo esconde un target roto).
+    return true;
+  };
+
+  /**
+   * Por qué este elemento no es un target humano, o null si sí lo es.
+   * Los motivos son estables (texto), para que el reporte sea determinista.
+   */
+  const invisibleReason = (el) => {
+    // 1 · Fuera del árbol accesible: el espejo de Radix es aria-hidden.
+    if (el.closest && el.closest('[aria-hidden="true"]')) return "aria-hidden";
+    // 2 · El atributo hidden: el navegador lo pinta display:none.
+    if (el.closest && el.closest("[hidden]")) return "hidden";
+    // 3 · Estilos que lo sacan del render (en el elemento o en un ancestro).
+    let node = el;
+    while (node && node.nodeType === 1) {
+      const cs = getComputedStyle(node);
+      if (cs.display === "none") return "display-none";
+      if (cs.visibility === "hidden" || cs.visibility === "collapse") return "visibility-hidden";
+      if (!clipDejaArea(node, cs)) return "clip";
+      if (!clipPathDejaArea(node, cs)) return "clip-path";
+      node = node.parentElement;
+    }
+    // 4 · Sin área propia: no hay dónde poner el dedo.
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return "sin-area";
+    return null;
+  };
+`;
+
 /** Etiqueta legible de un elemento (tag + id + clases + texto). */
 const LABEL_FN = `
   const label = (el) => {
@@ -59,7 +176,7 @@ const LABEL_FN = `
  * @param {object} options
  * @param {number} options.deviceWidth  ancho del device emulado (la verdad)
  * @param {string|null} options.scopeSelector  mide sólo este subtree (el
- *        panel de un modal). `null` mide el documento entero.
+ *        panel de un modal). null mide el documento entero.
  * @param {number} options.minTarget  mínimo táctil en px (44)
  */
 export function measureExpression({
@@ -77,6 +194,7 @@ export function measureExpression({
   const SCOPE = ${scopeSelector === null ? "null" : JSON.stringify(scopeSelector)};
   const root = SCOPE ? document.querySelector(SCOPE) : document.documentElement;
   if (SCOPE && !root) return { error: "no se encontro el panel: " + SCOPE };
+  ${INVISIBLE_HELPERS}
   ${LABEL_FN}
   const out = {
     vw: VW,
@@ -90,7 +208,9 @@ export function measureExpression({
     taps: [],
     innerScroll: [],
     overflowers: [],
-    fixed: []
+    fixed: [],
+    ignored: [],
+    ignoredCount: 0
   };
 
   const limit = SCOPE ? root.clientWidth : VW;
@@ -240,6 +360,17 @@ export function measureExpression({
 
     if (!isInteractive(el)) continue;
 
+    // Un control que no se ve ni se toca no es un target: no puede ser «chico»
+    // ni dejar un tap muerto. Se cuenta aparte (para que el reporte diga la
+    // verdad) y se sale: el resto de las comprobaciones de abajo son de layout
+    // y ya se hicieron más arriba para TODOS los elementos.
+    const invisible = invisibleReason(el);
+    if (invisible) {
+      out.ignoredCount += 1;
+      if (out.ignored.length < 20) out.ignored.push({ el: label(el), why: invisible });
+      continue;
+    }
+
     const small = r.width > 0 && r.height > 0 && (r.height < MIN || r.width < MIN);
     if (small) {
       out.smallTargets.push({
@@ -336,8 +467,9 @@ export function deadTapsExpression({ scopeSelector = null, sliver = 8 }) {
   const SCOPE = ${scopeSelector === null ? "null" : JSON.stringify(scopeSelector)};
   const root = SCOPE ? document.querySelector(SCOPE) : document.documentElement;
   if (SCOPE && !root) return { error: "no se encontro el panel: " + SCOPE };
+  ${INVISIBLE_HELPERS}
   ${LABEL_FN}
-  const out = { deadTaps: [], tapados: 0, avisos: [] };
+  const out = { deadTaps: [], tapados: 0, avisos: [], ignored: [] };
 
   const isInteractive = (el) => {
     const tag = el.tagName.toLowerCase();
@@ -403,6 +535,15 @@ export function deadTapsExpression({ scopeSelector = null, sliver = 8 }) {
     if (!isInteractive(el)) continue;
     const r = el.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) continue;
+
+    // Mismo filtro que la comprobación de targets: un control que no se ve ni
+    // se toca no puede dejar un tap muerto (no hay tap que dé). Sin esto, el
+    // espejo oculto de Radix aparecía como «tapado por» su propio label.
+    const invisible = invisibleReason(el);
+    if (invisible) {
+      if (out.ignored.length < 20) out.ignored.push({ el: label(el), why: invisible });
+      continue;
+    }
 
     const vis = visibleRect(el);
     if (vis.empty) continue;
