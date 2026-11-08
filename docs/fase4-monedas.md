@@ -13,11 +13,12 @@ aprobado; el detalle de lo que se desvió está en §5.1 y en los commits.
 | F4.4a | `formatMoney` por moneda, selector en el alta, segundo monto en transferencias | `8bedca1` |
 | F4.4b | `/api/settings`, patrimonio por moneda en el panel, selector global, modal de monedas | `414da11` |
 | F4.5 | Motor de voz con monedas habilitadas | `20e3a7f` |
+| F4.6 | `toAmount` en reglas de recurrencia y plantillas | `5e7a162` |
+| F4.7 | Pago de resumen de tarjeta entre monedas | (esta entrega) |
 | F4.1b | Migración de concurrencia: locking reads en ambos triggers | `aa8c1ae` |
 
-**Diferido**: F4.6 (`toAmount` en `RecurrenceRule`/`FavoriteTemplate`), importación CSV
-en otras monedas, y pago de resumen/cuota entre monedas (la base lo rechaza con 400
-legible).
+**Diferido**: importación CSV en otras monedas y pago de **cuota de préstamo** entre
+monedas (el interés tiene una moneda ambigua y necesita una decisión de producto).
 
 ---
 

@@ -28,8 +28,9 @@
  * cuenta mezcla los dos meses.
  */
 
+import type { Currency } from "@prisma/client";
 import { calendarToLocalDate, clampDayOfMonth, type CalendarDate } from "./dates";
-import { money, round, zero, type Money } from "./money";
+import { money, parseMoneyInput, round, zero, type Money } from "./money";
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
 
@@ -303,6 +304,75 @@ export function minimumPayment(totalDueInput: Money | string): Money {
   const roundedUp = raw.times(100).ceil().dividedBy(100);
 
   return roundedUp.greaterThan(total) ? total : roundedUp;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Pagar un resumen: las dos patas del movimiento
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Por qué no se pueden armar las dos patas de un pago de resumen. */
+export type StatementPaymentAmountProblem =
+  | "missing-amount"
+  | "unexpected-amount"
+  | "invalid-amount"
+  | "non-positive-amount";
+
+/**
+ * Las dos patas de la TRANSFERENCIA que paga un resumen.
+ *
+ *     amount    → lo que SALE de la cuenta de origen, en SU moneda.
+ *     toAmount  → lo que LLEGA a la tarjeta, en la moneda de la tarjeta.
+ *
+ * Con la misma moneda las dos patas son el total del resumen y `toAmount` es
+ * `null` (la base prohíbe un segundo monto cuando no aporta nada). Con monedas
+ * distintas el total del resumen es la pata que LLEGA —es el documento que se
+ * está pagando— y la persona aporta cuánto SALE de su cuenta: no se deriva de
+ * ninguna cotización que la app no conoce.
+ *
+ * Es PURA y no toca la base: la regla se prueba sola con los bordes del
+ * centavo y los cuerpos hostiles, y el servicio sólo traduce el problema a un
+ * `CardError` con el nombre de las monedas.
+ */
+export type StatementPaymentAmounts =
+  | { ok: true; amount: Money; toAmount: Money | null }
+  | { ok: false; reason: StatementPaymentAmountProblem };
+
+/**
+ * Resuelve las dos patas del pago de un resumen.
+ *
+ * `rawAmount` es lo que escribió la persona; sólo se acepta cuando las monedas
+ * difieren. Un `null`, `undefined` o `""` significa "no lo mandó" — igual que
+ * en el resto del borde, un campo vacío no es un monto de cero.
+ */
+export function statementPaymentAmounts(
+  totalDueInput: Money | string,
+  fromCurrency: Currency,
+  cardCurrency: Currency,
+  rawAmount: string | null | undefined,
+): StatementPaymentAmounts {
+  const total =
+    typeof totalDueInput === "string" ? money(totalDueInput) : totalDueInput;
+  const hasAmount =
+    rawAmount !== undefined && rawAmount !== null && rawAmount !== "";
+
+  if (fromCurrency === cardCurrency) {
+    // Misma moneda: se deriva del documento, como siempre. Un segundo monto acá
+    // sería un número sin significado que nadie va a leer.
+    if (hasAmount) return { ok: false, reason: "unexpected-amount" };
+    return { ok: true, amount: total, toAmount: null };
+  }
+
+  if (!hasAmount) return { ok: false, reason: "missing-amount" };
+
+  // `parseMoneyInput` exige `typeof raw === "string"`: un número o un array
+  // colado por el borde no se convierte en monto.
+  const parsed = parseMoneyInput(rawAmount);
+  if (parsed === null) return { ok: false, reason: "invalid-amount" };
+  if (parsed.lessThanOrEqualTo(0)) {
+    return { ok: false, reason: "non-positive-amount" };
+  }
+
+  return { ok: true, amount: parsed, toAmount: total };
 }
 
 /**

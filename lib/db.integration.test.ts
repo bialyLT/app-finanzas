@@ -99,12 +99,14 @@ import {
   POST as postRecurrenceRule,
   PATCH as patchRule,
 } from "@/app/api/recurrence/rules/route";
+import { POST as postPayStatement } from "@/app/api/cards/statements/pay/route";
 import { addDays, calendarToDb, dbToCalendar } from "./dates";
 import { MOVEMENTS_MAX_ROWS } from "./finance";
 import { amortizationSchedule, money } from "./money";
 import { getAccountBalances, getNetWorth, getNetWorthByCurrency } from "./balance";
 import { describeDatabaseError } from "./queries";
 import {
+  CardError,
   createCardPlan,
   deleteCardPlan,
   getCardsView,
@@ -4128,6 +4130,53 @@ describeDb("Tarjetas · compras en cuotas, resúmenes y pago", () => {
     return { bank, card, gastos };
   }
 
+  /**
+   * Banco en pesos con 120.000 y tarjeta en dólares con un resumen de US$ 100.
+   *
+   * El resumen nace de un gasto directo en dólares dentro del período que
+   * cierra el 25 de octubre; la corrida lo emite con `today` fijo el 26.
+   */
+  async function seedCrossCurrency() {
+    const { gastos } = await seedCategories();
+
+    const bank = await db.account.create({
+      data: {
+        name: "Banco pesos",
+        kind: "BANK",
+        currency: "ARS",
+        openingBalance: "120000",
+      },
+    });
+
+    const card = await db.account.create({
+      data: {
+        name: "Visa USD",
+        kind: "CREDIT_CARD",
+        currency: "USD",
+        closingDay: 25,
+        dueDay: 5,
+        creditLimit: "600000",
+      },
+    });
+
+    await db.movement.create({
+      data: {
+        kind: "EXPENSE",
+        amount: "100",
+        date: calendarToDb("2026-10-17"),
+        description: "Compra en dólares",
+        accountId: card.id,
+        categoryId: gastos.id,
+      },
+    });
+
+    await runCardStatements(db, { today: "2026-10-26" });
+    const statement = await db.statement.findFirstOrThrow();
+    expect(statement.totalDue.toFixed(2)).toBe("100.00");
+
+    return { bank, card, statement };
+  }
+
   it("una compra en 12 cuotas es UN gasto por el total y 12 cuotas asignadas", async () => {
     const { card } = await seedBase();
 
@@ -4594,6 +4643,206 @@ describeDb("Tarjetas · compras en cuotas, resúmenes y pago", () => {
     expect(corrida.skipped[0].cardId).toBe(sinCierre.id);
     expect(corrida.skipped[0].reason).toMatch(/cierre/);
     expect(corrida.skipped[0].cardName).toBe("Visa sin cierre");
+  });
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * F4.7 · Pagar el resumen de una tarjeta en otra moneda
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  it("pagar entre monedas: sale `amount` de la cuenta y llega el total del resumen", async () => {
+    const { bank, card, statement } = await seedCrossCurrency();
+
+    const pago = await payStatement(
+      db,
+      {
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        // 120.000 pesos por un resumen de US$ 100.
+        amount: "120000",
+      },
+      { today: "2026-10-27" },
+    );
+
+    expect(pago.created).toBe(true);
+    expect(pago.movement.kind).toBe("TRANSFER");
+    expect(pago.movement.amount).toBe("120000.00");
+    expect(pago.movement.toAmount).toBe("100.00");
+    expect(pago.movement.account.id).toBe(bank.id);
+    expect(pago.movement.toAccount?.id).toBe(card.id);
+    expect(pago.statement.paid).toBe(true);
+
+    // Las dos patas quedan exactas en la fila.
+    const fila = await db.movement.findUniqueOrThrow({
+      where: { id: pago.movement.id },
+    });
+    expect(fila.amount.toFixed(2)).toBe("120000.00");
+    expect(fila.toAmount?.toFixed(2)).toBe("100.00");
+
+    // El resumen queda pagado y enlazado a ESE movimiento.
+    const resumen = await db.statement.findUniqueOrThrow({
+      where: { id: statement.id },
+    });
+    expect(resumen.paidMovementId).toBe(pago.movement.id);
+
+    // Saldo exacto en las dos cuentas: la de pesos cae a cero y la deuda en
+    // dólares también (el toAmount es lo que acredita la tarjeta).
+    const balances = await getAccountBalances(db);
+    expect(
+      balances.find((balance) => balance.id === bank.id)?.balance.toFixed(2),
+    ).toBe("0.00");
+    expect(
+      balances.find((balance) => balance.id === card.id)?.debt?.toFixed(2),
+    ).toBe("0.00");
+
+    // Pagar no crea un gasto nuevo: sigue habiendo UN solo EXPENSE (la compra).
+    expect(await db.movement.count({ where: { kind: "EXPENSE" } })).toBe(1);
+  });
+
+  it("pagar entre monedas sin `amount` es 400, no escribe nada y el resumen sigue impago", async () => {
+    const { bank, statement } = await seedCrossCurrency();
+
+    const error = await payStatement(
+      db,
+      { statementId: statement.id, fromAccountId: bank.id },
+      { today: "2026-10-27" },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CardError);
+    expect((error as CardError).status).toBe(400);
+    expect((error as CardError).message).toMatch(/cuánto sale de la cuenta/);
+
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(0);
+    const resumen = await db.statement.findUniqueOrThrow({
+      where: { id: statement.id },
+    });
+    expect(resumen.paidMovementId).toBeNull();
+  });
+
+  it("misma moneda con `amount` es 400: el monto de origen no corresponde", async () => {
+    const { bank, card } = await seedBase();
+
+    await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Heladera",
+        totalAmount: "120000",
+        installments: 12,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+    await runCardStatements(db, { today: "2026-10-26" });
+    const statement = await db.statement.findFirstOrThrow();
+
+    const error = await payStatement(
+      db,
+      {
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        amount: "10000",
+      },
+      { today: "2026-10-27" },
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CardError);
+    expect((error as CardError).status).toBe(400);
+    expect((error as CardError).message).toMatch(/no corresponde/);
+
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(0);
+    expect(
+      (await db.statement.findFirstOrThrow()).paidMovementId,
+    ).toBeNull();
+  });
+
+  it("misma moneda sin `amount` sigue pagando como hoy (deriva el total del resumen)", async () => {
+    const { bank, card } = await seedBase();
+
+    await createCardPlan(
+      db,
+      {
+        cardId: card.id,
+        label: "Heladera",
+        totalAmount: "120000",
+        installments: 12,
+        purchaseDate: "2026-10-17",
+        categoryName: "Hogar",
+      },
+      { today: TODAY },
+    );
+    await runCardStatements(db, { today: "2026-10-26" });
+    const statement = await db.statement.findFirstOrThrow();
+
+    const pago = await payStatement(
+      db,
+      { statementId: statement.id, fromAccountId: bank.id },
+      { today: "2026-10-27" },
+    );
+
+    expect(pago.created).toBe(true);
+    expect(pago.movement.amount).toBe("10000.00");
+    expect(pago.movement.toAmount).toBeNull();
+  });
+
+  it("pagar entre monedas con un `amount` hostil es 400 y no guarda nada", async () => {
+    const { bank, statement } = await seedCrossCurrency();
+
+    const hostiles: unknown[] = [
+      "0",
+      "-5",
+      "abc",
+      "   ",
+      [120000],
+      { amount: 120000 },
+      true,
+    ];
+
+    for (const amount of hostiles) {
+      const error = await payStatement(
+        db,
+        {
+          statementId: statement.id,
+          fromAccountId: bank.id,
+          amount: amount as string,
+        },
+        { today: "2026-10-27" },
+      ).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(CardError);
+      expect((error as CardError).status, `amount=${String(amount)}`).toBe(400);
+    }
+
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(0);
+    expect(
+      (await db.statement.findUniqueOrThrow({ where: { id: statement.id } }))
+        .paidMovementId,
+    ).toBeNull();
+  });
+
+  it("un resumen ya pagado devuelve el pago existente aunque el segundo intento no traiga `amount`", async () => {
+    const { bank, statement } = await seedCrossCurrency();
+
+    const primero = await payStatement(
+      db,
+      {
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        amount: "120000",
+      },
+      { today: "2026-10-27" },
+    );
+
+    // La idempotencia manda: no se revalida el body de un pago que ya existe.
+    const repetido = await payStatement(
+      db,
+      { statementId: statement.id, fromAccountId: bank.id },
+      { today: "2026-10-28" },
+    );
+
+    expect(repetido.created).toBe(false);
+    expect(repetido.movement.id).toBe(primero.movement.id);
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(1);
   });
 });
 
@@ -9210,5 +9459,260 @@ describeDb("Fase 4.6 · monto de destino en reglas y plantillas", () => {
         ),
       ).toBe("100.00");
     });
+  });
+});
+
+/* ═════════════════════════════════════════════════════════════════════════════
+ * FASE 4.7 · POST /api/cards/statements/pay CON `amount`
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * El handler de verdad, con `Request` reales: el servicio ya está probado en el
+ * bloque de tarjetas, pero el borde es el que decide si `amount` es un monto o
+ * basura. Todo lo que no sea string/número finito tiene que salir 400 con
+ * mensaje, nunca 500.
+ * ═════════════════════════════════════════════════════════════════════════════ */
+describeDb("Fase 4.7 · pago de resumen entre monedas", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+    vi.mocked(dalModule.requireApiSession).mockResolvedValue({
+      v: 1,
+      iat: 0,
+      exp: 0,
+    });
+    vi.mocked(csrfModule.assertSameOrigin).mockReturnValue(null);
+    await db.appSettings.update({
+      where: { id: 1 },
+      data: { enabledCurrencies: ["ARS", "USD"] },
+    });
+  });
+
+  afterAll(async () => {
+    await resetDatabase();
+  });
+
+  function request(body: unknown) {
+    return new Request("http://localhost:3000/api/cards/statements/pay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Banco en pesos y tarjeta en dólares con un resumen de US$ 100. */
+  async function seedCrossCurrency() {
+    const bank = await db.account.create({
+      data: {
+        name: "Banco pesos",
+        kind: "BANK",
+        currency: "ARS",
+        openingBalance: "120000",
+      },
+    });
+    const card = await db.account.create({
+      data: {
+        name: "Visa USD",
+        kind: "CREDIT_CARD",
+        currency: "USD",
+        closingDay: 25,
+        dueDay: 5,
+        creditLimit: "600000",
+      },
+    });
+    const statement = await db.statement.create({
+      data: {
+        accountId: card.id,
+        periodYear: 2026,
+        periodMonth: 10,
+        closingDate: calendarToDb("2026-10-25"),
+        dueDate: calendarToDb("2026-11-05"),
+        totalDue: "100",
+        minimumDue: "10",
+      },
+    });
+    return { bank, card, statement };
+  }
+
+  /** Banco y tarjeta en pesos con un resumen de $ 10.000. */
+  async function seedSameCurrency() {
+    const bank = await db.account.create({
+      data: {
+        name: "Banco pesos",
+        kind: "BANK",
+        currency: "ARS",
+        openingBalance: "10000",
+      },
+    });
+    const card = await db.account.create({
+      data: {
+        name: "Visa pesos",
+        kind: "CREDIT_CARD",
+        currency: "ARS",
+        closingDay: 25,
+        dueDay: 5,
+      },
+    });
+    const statement = await db.statement.create({
+      data: {
+        accountId: card.id,
+        periodYear: 2026,
+        periodMonth: 10,
+        closingDate: calendarToDb("2026-10-25"),
+        dueDate: calendarToDb("2026-11-05"),
+        totalDue: "10000",
+        minimumDue: "500",
+      },
+    });
+    return { bank, card, statement };
+  }
+
+  it("entre monedas: 201 con `amount` de origen y `toAmount` del resumen", async () => {
+    const { bank, card, statement } = await seedCrossCurrency();
+
+    const res = await postPayStatement(
+      request({
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        amount: "120000",
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.created).toBe(true);
+    expect(body.movement.kind).toBe("TRANSFER");
+    expect(body.movement.amount).toBe("120000.00");
+    expect(body.movement.toAmount).toBe("100.00");
+    expect(body.movement.account.id).toBe(bank.id);
+    expect(body.movement.toAccount.id).toBe(card.id);
+    expect(body.statement.paid).toBe(true);
+
+    const fila = await db.movement.findUniqueOrThrow({
+      where: { id: body.movement.id },
+    });
+    expect(fila.amount.toFixed(2)).toBe("120000.00");
+    expect(fila.toAmount?.toFixed(2)).toBe("100.00");
+  });
+
+  it("entre monedas sin `amount`: 400 accionable y no escribe nada", async () => {
+    const { bank, statement } = await seedCrossCurrency();
+
+    const res = await postPayStatement(
+      request({ statementId: statement.id, fromAccountId: bank.id }),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/cuánto sale de la cuenta/);
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(0);
+    expect(
+      (await db.statement.findUniqueOrThrow({ where: { id: statement.id } }))
+        .paidMovementId,
+    ).toBeNull();
+  });
+
+  it("misma moneda con `amount`: 400 y no escribe nada", async () => {
+    const { bank, statement } = await seedSameCurrency();
+
+    const res = await postPayStatement(
+      request({
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        amount: "10000",
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/no corresponde/);
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(0);
+  });
+
+  it("misma moneda sin `amount`: 201 como siempre, con `toAmount: null`", async () => {
+    const { bank, statement } = await seedSameCurrency();
+
+    const res = await postPayStatement(
+      request({ statementId: statement.id, fromAccountId: bank.id }),
+    );
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.movement.amount).toBe("10000.00");
+    expect(body.movement.toAmount).toBeNull();
+    expect(body.statement.paid).toBe(true);
+  });
+
+  it("acepta `amount` numérico (borde) y lo normaliza a string exacto", async () => {
+    const { bank, statement } = await seedCrossCurrency();
+
+    const res = await postPayStatement(
+      request({
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        amount: 120000,
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect((await res.json()).movement.amount).toBe("120000.00");
+  });
+
+  it("cuerpos hostiles en `amount` son 400 con mensaje, nunca 500", async () => {
+    const { bank, statement } = await seedCrossCurrency();
+
+    const hostiles: unknown[] = [
+      "0",
+      "-5",
+      "abc",
+      "   ",
+      // 20 dígitos: no entra en NUMERIC(18,2). La base responde 22003 y la
+      // ruta lo traduce a 400, no a un 500 que culpe al servidor.
+      "99999999999999999999",
+      [120000],
+      { amount: 120000 },
+      true,
+      null,
+      undefined,
+    ];
+
+    for (const amount of hostiles) {
+      const res = await postPayStatement(
+        request({
+          statementId: statement.id,
+          fromAccountId: bank.id,
+          amount,
+        }),
+      );
+
+      // `null` y `undefined` no son "monto inválido": son "no vino" y la regla
+      // entre monedas los rechaza igual, con el mensaje de "indicá cuánto sale".
+      expect(res.status, `amount=${String(amount)}`).toBe(400);
+      const body = await res.json();
+      expect(typeof body.error).toBe("string");
+      expect(body.error.length).toBeGreaterThan(0);
+    }
+
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(0);
+  });
+
+  it("un segundo pago devuelve el existente con 200 y `created: false`", async () => {
+    const { bank, statement } = await seedCrossCurrency();
+
+    const primero = await postPayStatement(
+      request({
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        amount: "120000",
+      }),
+    );
+    expect(primero.status).toBe(201);
+
+    const segundo = await postPayStatement(
+      request({
+        statementId: statement.id,
+        fromAccountId: bank.id,
+        amount: "120000",
+      }),
+    );
+    expect(segundo.status).toBe(200);
+    expect((await segundo.json()).created).toBe(false);
+    expect(await db.movement.count({ where: { kind: "TRANSFER" } })).toBe(1);
   });
 });

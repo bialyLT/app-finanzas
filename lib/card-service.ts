@@ -29,7 +29,7 @@
  * resúmenes y planes).
  */
 
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Currency, Prisma, PrismaClient } from "@prisma/client";
 import type { Db } from "./balance";
 import { getAccountBalances, type AccountBalance } from "./balance";
 import { categoryKindMessage } from "./category-kind";
@@ -48,9 +48,12 @@ import {
   periodKey,
   periodWindow,
   statementPeriodOf,
+  statementPaymentAmounts,
   utilizationPercent,
+  type StatementPaymentAmountProblem,
   type StatementPeriod,
 } from "./cards";
+import { currencyNoun } from "./currency";
 import { calendarToDb, dbToCalendar, type CalendarDate } from "./dates";
 import type {
   AccountDTO,
@@ -852,6 +855,53 @@ export async function runCardStatements(
 export interface PayStatementInput {
   statementId: string;
   fromAccountId: string;
+  /**
+   * Lo que SALE de la cuenta de origen, en su moneda.
+   *
+   * Sólo cuando la cuenta y la tarjeta están en monedas distintas: ahí el
+   * total del resumen (en la moneda de la tarjeta) no es el número que se
+   * debita del banco. Con la misma moneda se ignora/prohíbe — la pata que sale
+   * se deriva del resumen, como siempre.
+   */
+  amount?: string | null;
+}
+
+/**
+ * Traduce el problema de las dos patas a un `CardError` 400 accionable.
+ *
+ * Los mensajes nombran las monedas ("pesos", "dólares") en vez de los códigos
+ * del enum: quien está pagando no debería traducir "ARS".
+ */
+function statementPaymentAmountError(
+  reason: StatementPaymentAmountProblem,
+  fromCurrency: Currency,
+  cardCurrency: Currency,
+): CardError {
+  const from = currencyNoun(fromCurrency);
+  const card = currencyNoun(cardCurrency);
+
+  switch (reason) {
+    case "missing-amount":
+      return new CardError(
+        400,
+        `La cuenta de origen está en ${from} y la tarjeta en ${card}: indicá cuánto sale de la cuenta.`,
+      );
+    case "unexpected-amount":
+      return new CardError(
+        400,
+        `La cuenta y la tarjeta están en ${from}: el monto que sale de la cuenta no corresponde, se paga el total del resumen.`,
+      );
+    case "invalid-amount":
+      return new CardError(
+        400,
+        "El monto que sale de la cuenta no se entiende. Escribilo como 1234,56 o 1.234,56.",
+      );
+    case "non-positive-amount":
+      return new CardError(
+        400,
+        "El monto que sale de la cuenta tiene que ser mayor a cero.",
+      );
+  }
 }
 
 /**
@@ -870,16 +920,28 @@ export interface PayStatementInput {
  * cuánto se paga y eso es lo que sale del banco.
  *
  * ─────────────────────────────────────────────────────────────────────────────
+ * MONEDAS DISTINTAS (F4.7)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Si la cuenta de origen y la tarjeta no comparten moneda, el total del
+ * resumen ya no es lo que sale de la cuenta: está en la moneda de la tarjeta.
+ * La pata que LLEGA sigue siendo el total del documento (`toAmount`) y la que
+ * SALE la aporta la persona en `amount`, porque el modelo no guarda ninguna
+ * cotización. Sin `amount` la transferencia quedaría diciendo que salieron 100
+ * pesos donde el banco debitó 120.000, y la base la rechaza.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
  * IDEMPOTENCIA
  * ─────────────────────────────────────────────────────────────────────────────
  * Si el resumen ya está pago, devuelve el pago existente con `created: false`
- * (un doble clic no genera una segunda transferencia). La carrera real se
- * resuelve con el `updateMany` condicionado a `paidMovementId = NULL`: sólo una
- * transacción puede reclamar el resumen, y `paidMovementId @unique` lo garantiza
- * en la base.
+ * (un doble clic no genera una segunda transferencia) — incluso si el segundo
+ * intento trae otro `amount`: lo que manda es el pago que ya existe. La carrera
+ * real se resuelve con el `updateMany` condicionado a `paidMovementId = NULL`:
+ * sólo una transacción puede reclamar el resumen, y `paidMovementId @unique` lo
+ * garantiza en la base.
  *
- * @throws CardError 404 resumen inexistente, 400 cuenta de origen inválida,
- *         409 resumen sin saldo o reclamado por otra operación.
+ * @throws CardError 404 resumen inexistente, 400 cuenta de origen inválida o
+ *         monto de origen faltante/inválido/sobrante, 409 resumen sin saldo o
+ *         reclamado por otra operación.
  */
 export async function payStatement(
   db: PrismaClient,
@@ -934,10 +996,34 @@ export async function payStatement(
       );
     }
 
+    // ── Las dos patas del pago (F4.7) ──────────────────────────────────────
+    //
+    // `amount` es lo que sale de la cuenta; `toAmount` es lo que llega a la
+    // tarjeta. Con la misma moneda las dos son el total del documento. Con
+    // monedas distintas el documento manda la pata que LLEGA (es lo que se
+    // paga) y la persona aporta la que SALE: no hay cotización en el modelo
+    // para derivarla.
+    const amounts = statementPaymentAmounts(
+      statement.totalDue,
+      from.currency,
+      statement.account.currency,
+      input.amount,
+    );
+
+    if (!amounts.ok) {
+      throw statementPaymentAmountError(
+        amounts.reason,
+        from.currency,
+        statement.account.currency,
+      );
+    }
+
     const movement = await tx.movement.create({
       data: {
         kind: "TRANSFER",
-        amount: statement.totalDue.toFixed(2),
+        amount: amounts.amount.toFixed(2),
+        toAmount:
+          amounts.toAmount === null ? null : amounts.toAmount.toFixed(2),
         date: calendarToDb(today),
         description: `Pago resumen ${statement.account.name} ${cardPeriodLabel(
           { year: statement.periodYear, month: statement.periodMonth },

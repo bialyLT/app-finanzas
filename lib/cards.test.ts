@@ -26,6 +26,7 @@ import {
   periodKey,
   periodWindow,
   STATEMENT_MINIMUM_PERCENT,
+  statementPaymentAmounts,
   statementPeriodOf,
   utilizationPercent,
   type StatementPeriod,
@@ -321,5 +322,92 @@ describe("cardPeriodLabel", () => {
     const label = cardPeriodLabel(period(2026, 10));
     expect(label).toContain("2026");
     expect(label.toLowerCase()).toContain("octubre");
+  });
+});
+
+describe("statementPaymentAmounts · las dos patas del pago (F4.7)", () => {
+  it("misma moneda: deriva la pata que sale del total y no acepta un segundo monto", () => {
+    const pago = statementPaymentAmounts("10000", "ARS", "ARS", null);
+
+    expect(pago.ok).toBe(true);
+    if (!pago.ok) throw new Error("esperaba un pago válido");
+    expect(pago.amount.toFixed(2)).toBe("10000.00");
+    expect(pago.toAmount).toBeNull();
+
+    // Un monto vacío es "no mandó nada": no es un segundo monto.
+    expect(statementPaymentAmounts("10000", "ARS", "ARS", "")).toMatchObject({
+      ok: true,
+    });
+    expect(
+      statementPaymentAmounts("10000", "ARS", "ARS", "10000"),
+    ).toEqual({ ok: false, reason: "unexpected-amount" });
+  });
+
+  it("monedas distintas: el resumen manda lo que LLEGA y la persona lo que SALE", () => {
+    const pago = statementPaymentAmounts("100", "ARS", "USD", "120000");
+
+    if (!pago.ok) throw new Error("esperaba un pago válido");
+    expect(pago.amount.toFixed(2)).toBe("120000.00");
+    expect(pago.toAmount?.toFixed(2)).toBe("100.00");
+  });
+
+  it("monedas distintas: entiende coma decimal y separador de miles", () => {
+    const pago = statementPaymentAmounts("100", "ARS", "USD", "1.234,56");
+    if (!pago.ok) throw new Error("esperaba un pago válido");
+    expect(pago.amount.toFixed(2)).toBe("1234.56");
+  });
+
+  it("normaliza el monto con el mismo `toFixed(2)` que el resto de los movimientos", () => {
+    // Mismo camino que `POST /api/transactions`: el Decimal se guarda con dos
+    // decimales. La vista previa del formulario es una ayuda, no otro cálculo.
+    const pago = statementPaymentAmounts("100", "ARS", "USD", "100,015");
+    if (!pago.ok) throw new Error("esperaba un pago válido");
+    expect(pago.amount.toFixed(2)).toBe("100.02");
+
+    const crudo = statementPaymentAmounts("100", "ARS", "USD", "  $ 1.234,5 ");
+    if (!crudo.ok) throw new Error("esperaba un pago válido");
+    expect(crudo.amount.toFixed(2)).toBe("1234.50");
+  });
+
+  it("monedas distintas sin monto es 'missing-amount' (no un cero implícito)", () => {
+    for (const raw of [undefined, null, ""]) {
+      expect(statementPaymentAmounts("100", "ARS", "USD", raw)).toEqual({
+        ok: false,
+        reason: "missing-amount",
+      });
+    }
+  });
+
+  it("rechaza montos que no son un número positivo", () => {
+    expect(statementPaymentAmounts("100", "ARS", "USD", "0")).toEqual({
+      ok: false,
+      reason: "non-positive-amount",
+    });
+    expect(statementPaymentAmounts("100", "ARS", "USD", "-5")).toEqual({
+      ok: false,
+      reason: "non-positive-amount",
+    });
+    expect(statementPaymentAmounts("100", "ARS", "USD", "abc")).toEqual({
+      ok: false,
+      reason: "invalid-amount",
+    });
+    // Hostiles que llegan por el borde con el tipo ya perdido: no se convierten.
+    for (const hostile of [[120000], { amount: 120000 }, true] as unknown[]) {
+      expect(
+        statementPaymentAmounts(
+          "100",
+          "ARS",
+          "USD",
+          hostile as unknown as string,
+        ),
+      ).toEqual({ ok: false, reason: "invalid-amount" });
+    }
+  });
+
+  it("distingue USD de origen y ARS de tarjeta: el total del resumen es la pata que llega", () => {
+    const pago = statementPaymentAmounts("120000", "USD", "ARS", "100");
+    if (!pago.ok) throw new Error("esperaba un pago válido");
+    expect(pago.amount.toFixed(2)).toBe("100.00");
+    expect(pago.toAmount?.toFixed(2)).toBe("120000.00");
   });
 });

@@ -15,11 +15,13 @@ import type {
   StatementDTO,
   StatementPayResponseDTO,
 } from "@/lib/finance";
-import { formatLiability, formatMoney, formatPercent } from "@/lib/format";
+import { formatAmountInput, formatLiability, formatMoney, formatPercent } from "@/lib/format";
+import { isCrossCurrencyTransfer } from "@/lib/currency";
 import { CreditCard, Receipt, Settings, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /**
@@ -120,6 +122,14 @@ export default function CardsPage() {
   /** Resumen cuyo bloque de pago está abierto (y con qué cuenta se pagaría). */
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payFromId, setPayFromId] = useState<string | null>(null);
+  /**
+   * Cuánto SALE de la cuenta cuando paga un resumen en otra moneda (F4.7).
+   *
+   * El texto se conserva al cambiar a una cuenta de la misma moneda: el campo
+   * desaparece —con monedas iguales se paga el total del documento— y si la
+   * persona vuelve a elegir una cuenta en otra moneda lo escrito sigue ahí.
+   */
+  const [payAmount, setPayAmount] = useState("");
 
   /** Borrado de un plan en dos pasos, sin `window.confirm`. */
   const [confirmPlanId, setConfirmPlanId] = useState<string | null>(null);
@@ -190,12 +200,14 @@ export default function CardsPage() {
     const bank = payOrigins.find((account) => account.kind === "BANK");
     setPayingId(statementId);
     setPayFromId(bank?.id ?? payOrigins[0]?.id ?? null);
+    setPayAmount("");
   }
 
   function toggleArchived() {
     const next = !includeArchived;
     setIncludeArchived(next);
     setPayingId(null);
+    setPayAmount("");
     setConfirmPlanId(null);
     setPlanNotice(null);
     showFlash("");
@@ -271,8 +283,26 @@ export default function CardsPage() {
   }
 
   // ── Pagar un resumen ───────────────────────────────────────────────────────
-  async function pay(statement: StatementDTO) {
+  async function pay(statement: StatementDTO, card: CardViewDTO) {
     if (busyId || !payFromId) return;
+
+    const origin = accounts.find((account) => account.id === payFromId) ?? null;
+    const crossCurrency = isCrossCurrencyTransfer(
+      origin?.currency,
+      card.currency,
+    );
+    const amountPreview = formatAmountInput(payAmount, origin?.currency);
+
+    // Misma validación que el campo: sin el monto de origen no se puede armar
+    // la pata que sale del banco. Se avisa antes de tocar la red.
+    if (crossCurrency && amountPreview === null) {
+      showFlash(
+        `Indicá cuánto sale de ${origin?.name ?? "la cuenta"}: está en una moneda distinta a la de la tarjeta.`,
+        true,
+      );
+      return;
+    }
+
     setBusyId(`pay-${statement.id}`);
     showFlash("");
     try {
@@ -282,6 +312,9 @@ export default function CardsPage() {
         body: JSON.stringify({
           statementId: statement.id,
           fromAccountId: payFromId,
+          // Con la misma moneda el campo no existe y no se manda: la pata que
+          // sale se deriva del total del resumen.
+          ...(crossCurrency ? { amount: payAmount } : {}),
         }),
       });
       const data = (await response.json().catch(() => ({}))) as
@@ -301,7 +334,9 @@ export default function CardsPage() {
       showFlash(
         result.created === false
           ? "El resumen ya estaba pago: no se duplicó la transferencia."
-          : `Resumen de ${statement.periodLabel} pagado: se transfirieron ${formatMoney(statement.totalDue)} desde ${fromName}.`,
+          : crossCurrency && amountPreview !== null
+            ? `Resumen de ${statement.periodLabel} pagado: salieron ${amountPreview} de ${fromName} y llegaron ${formatMoney(statement.totalDue, { currency: card.currency })} a ${card.name}.`
+            : `Resumen de ${statement.periodLabel} pagado: se transfirieron ${formatMoney(statement.totalDue, { currency: card.currency })} desde ${fromName}.`,
       );
       setPayingId(null);
       await load({ archived: includeArchived });
@@ -569,6 +604,18 @@ export default function CardsPage() {
                   <div className="mt-2 flex flex-col gap-2">
                     {card.statements.map((statement) => {
                       const payBusy = busyId === `pay-${statement.id}`;
+                      const payOrigin =
+                        payOrigins.find(
+                          (account) => account.id === payFromId,
+                        ) ?? null;
+                      const payCrossCurrency = isCrossCurrencyTransfer(
+                        payOrigin?.currency,
+                        card.currency,
+                      );
+                      const payAmountPreview = formatAmountInput(
+                        payAmount,
+                        payOrigin?.currency,
+                      );
                       return (
                         <div
                           key={statement.id}
@@ -585,8 +632,14 @@ export default function CardsPage() {
                                 vence el {formatCalendar(statement.dueDate)}.
                               </p>
                               <p className="text-sm mt-0.5">
-                                Total: {formatMoney(statement.totalDue)} ·
-                                mínimo: {formatMoney(statement.minimumDue)}.
+                                Total:{" "}
+                                {formatMoney(statement.totalDue, {
+                                  currency: card.currency,
+                                })}{" "}
+                                · mínimo:{" "}
+                                {formatMoney(statement.minimumDue, {
+                                  currency: card.currency,
+                                })}.
                               </p>
                             </div>
                             <p
@@ -624,9 +677,9 @@ export default function CardsPage() {
                               className="mt-2 rounded-md bg-success/10 px-3 py-3"
                             >
                               <p className="text-sm text-success ">
-                                Se transfieren{" "}
-                                {formatMoney(statement.totalDue)} a {card.name}{" "}
-                                desde:
+                                {payCrossCurrency
+                                  ? `Llegan ${formatMoney(statement.totalDue, { currency: card.currency })} a ${card.name} desde:`
+                                  : `Se transfieren ${formatMoney(statement.totalDue, { currency: card.currency })} a ${card.name} desde:`}
                               </p>
 
                               {payOrigins.length === 0 ? (
@@ -655,6 +708,60 @@ export default function CardsPage() {
                                 </Select>
                               )}
 
+                              {/*
+                                La pata que SALE, sólo entre monedas distintas.
+                                Con la misma moneda el campo no existe: se paga
+                                el total del documento. Es la misma pieza visual
+                                que la transferencia entre monedas (F4.4a).
+                              */}
+                              {payCrossCurrency && (
+                                <div className="mt-2">
+                                  <Label
+                                    htmlFor={`stmt-pay-amount-${statement.id}`}
+                                    className="text-sm font-medium"
+                                  >
+                                    ¿Cuánto sale de la cuenta? *
+                                  </Label>
+                                  <Input
+                                    id={`stmt-pay-amount-${statement.id}`}
+                                    type="text"
+                                    inputMode="decimal"
+                                    autoComplete="off"
+                                    value={payAmount}
+                                    onChange={(event) =>
+                                      setPayAmount(event.target.value)
+                                    }
+                                    aria-invalid={
+                                      payAmount.trim() !== "" &&
+                                      payAmountPreview === null
+                                        ? true
+                                        : undefined
+                                    }
+                                    aria-describedby={`stmt-pay-amount-help-${statement.id}`}
+                                    placeholder="0,00"
+                                    className="mt-1 w-full text-xl font-bold rounded-lg border-line-strong bg-transparent px-4 py-3"
+                                  />
+                                  <p
+                                    id={`stmt-pay-amount-help-${statement.id}`}
+                                    className="mt-1 text-xs text-success "
+                                  >
+                                    {payAmountPreview ? (
+                                      <>
+                                        Salen <b>{payAmountPreview}</b> de{" "}
+                                        {payOrigin?.name ?? "la cuenta"}.
+                                      </>
+                                    ) : payAmount.trim() ? (
+                                      <span className="text-warning">
+                                        No se entiende el monto. Probá con 100
+                                        o 1.234,56
+                                      </span>
+                                    ) : (
+                                      "Lo que se debita de la cuenta, en su moneda. Es obligatorio porque la tarjeta está en otra moneda."
+                                    )}
+                                  </p>
+                                </div>
+                              )}
+
                               <p className="mt-1 text-xs text-success ">
                                 Es una transferencia entre tus cuentas: baja la
                                 deuda de la tarjeta y no se cuenta como gasto
@@ -667,8 +774,13 @@ export default function CardsPage() {
                                     id={`stmt-pay-go-${statement.id}`}
                                     variant="default"
                                     size="sm"
-                                    onClick={() => pay(statement)}
-                                    disabled={busyId !== null || !payFromId}
+                                    onClick={() => pay(statement, card)}
+                                    disabled={
+                                      busyId !== null ||
+                                      !payFromId ||
+                                      (payCrossCurrency &&
+                                        payAmountPreview === null)
+                                    }
                                     className="flex-1 bg-success hover:bg-success/90 text-primary-fg"
                                   >
                                     {payBusy ? "Pagando…" : "Confirmar pago"}
